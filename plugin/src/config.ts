@@ -862,6 +862,9 @@ export interface ModelContextWindowRule {
 export const MODEL_CONTEXT_WINDOWS: ReadonlyArray<ModelContextWindowRule> = [
   // Fable 5 ships a 1M-token context window.
   { match: 'fable', windowTokens: 1_000_000 },
+  // Opus 5 — base window 200k; the 1M variant is requested via the [1m]
+  // marker (checked BEFORE this table), exactly like Opus 4.8.
+  { match: 'claude-opus-5', windowTokens: 200_000 },
   // Opus 4.x (any minor) — 200k.
   { match: 'claude-opus-4', windowTokens: 200_000 },
   // Sonnet 5 / Sonnet 4 — 200k (see note above re: Sonnet-5).
@@ -877,6 +880,68 @@ export const MODEL_CONTEXT_WINDOWS: ReadonlyArray<ModelContextWindowRule> = [
 // under-reported as 200k. Matches the bracketed form and a standalone `1m`
 // token (word-boundaried so it never trips on unrelated ids).
 const ONE_MILLION_MARKER = /\[1m\]|(?:^|[^a-z0-9])1m(?:[^a-z0-9]|$)/i
+
+// The 1M marker is NOT always echoed back by the API. Claude Code launched as
+// `claude --model claude-opus-5[1m]` serves turns whose transcript `model` is
+// the BARE id `claude-opus-5` — the marker survives only in the CLI argv. So a
+// transcript id alone cannot tell a 200k Opus-5 session from a 1M one, and the
+// family table (honest 200k default) under-reports the window by 5x. The launch
+// flag is the missing fact: when it carries the marker AND names the same model
+// the transcript reports, the session IS the 1M variant.
+//
+// Parse the model id out of a Claude Code argv array (`--model <id>` or
+// `--model=<id>`). PURE. Returns undefined when the flag is absent or has no
+// value. The LAST occurrence wins, matching CLI flag semantics.
+export function parseLaunchModelFlag(argv: readonly string[]): string | undefined {
+  let found: string | undefined
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === undefined) continue
+    // `--` ends option parsing; everything after it is positional (codex LOW).
+    if (arg === '--') break
+    if (arg === '--model') {
+      // Reset FIRST: a later malformed `--model` overrides an earlier good one,
+      // matching real CLI semantics — the flag was re-specified (codex LOW).
+      found = undefined
+      const next = argv[i + 1]
+      // A bare trailing `--model`, or one followed by another flag, has no value.
+      if (next !== undefined && next.length > 0 && !next.startsWith('-')) found = next
+      continue
+    }
+    if (arg.startsWith('--model=')) {
+      const value = arg.slice('--model='.length)
+      found = value.length > 0 ? value : undefined
+    }
+  }
+  return found
+}
+
+// Strip an explicit window marker from a model id, leaving the bare id used to
+// compare a launch flag against a transcript-reported model.
+function stripWindowMarker(id: string): string {
+  return id.replace(/\[1m\]/gi, '').trim()
+}
+
+// Does `launchModel` prove that `id` (a transcript model id, lowercased, with no
+// marker of its own) is running the 1M variant? Only when the launch flag both
+// carries the marker AND names EXACTLY the model the transcript reports.
+//
+// Exact equality, not a family match: a family match in either direction lets a
+// short alias (`--model opus[1m]`) claim a 1M window for every Opus id the
+// session might later serve, which is not proof of anything (codex HIGH,
+// 2026-08-18).
+//
+// KNOWN LIMIT: a mid-session `/model` switch BETWEEN the 1M and 200k variants of
+// the SAME model is invisible here — both serve the identical bare transcript id
+// (`claude-opus-5`), so the launch flag stays the only evidence and the HUD keeps
+// reporting 1M until restart. Switching to any OTHER model is handled correctly
+// (different id → no match). The operator override remains the escape hatch.
+function launchProvesOneMillion(id: string, launchModel: string | undefined): boolean {
+  if (launchModel === undefined || launchModel.length === 0) return false
+  const launch = launchModel.toLowerCase()
+  if (!ONE_MILLION_MARKER.test(launch)) return false
+  return stripWindowMarker(launch) === id
+}
 
 // Normalize an operator-supplied window value to a usable token count, or
 // undefined when it is unusable. Floor FIRST, then accept only >= 1 — the
@@ -918,8 +983,12 @@ function matchesModelFamily(id: string, family: string): boolean {
  *     / `JARVIS_CONTEXT_WINDOW`). ALWAYS wins so a wrong table guess is fixable
  *     without a code change.
  *  2. An explicit `[1m]` / `1m` window marker on the model id → 1M.
- *  3. The MODEL_CONTEXT_WINDOWS family table (first token-boundary match).
- *  4. `opts.fallback` (defaults to DEFAULT_CONTEXT_WINDOW_TOKENS = 200k) —
+ *  3. `opts.launchModel` — the CLI `--model` flag — when it carries the marker
+ *     and names the SAME model the transcript reports → 1M. Covers the ids the
+ *     API returns bare (e.g. `claude-opus-5` served by `--model
+ *     claude-opus-5[1m]`), where the marker exists only in the launch argv.
+ *  4. The MODEL_CONTEXT_WINDOWS family table (first token-boundary match).
+ *  5. `opts.fallback` (defaults to DEFAULT_CONTEXT_WINDOW_TOKENS = 200k) —
  *     unknown or absent model.
  *
  * PURE. Never throws, never returns 0 / negative — an honest 200k fallback is
@@ -927,7 +996,11 @@ function matchesModelFamily(id: string, family: string): boolean {
  */
 export function resolveContextWindowForModel(
   model: string | undefined,
-  opts?: { override?: number | undefined; fallback?: number | undefined },
+  opts?: {
+    override?: number | undefined
+    fallback?: number | undefined
+    launchModel?: string | undefined
+  },
 ): number {
   const fallback = normalizeWindowValue(opts?.fallback) ?? DEFAULT_CONTEXT_WINDOW_TOKENS
   const override = normalizeWindowValue(opts?.override)
@@ -935,6 +1008,7 @@ export function resolveContextWindowForModel(
   if (model === undefined || model.length === 0) return fallback
   const id = model.toLowerCase()
   if (ONE_MILLION_MARKER.test(id)) return 1_000_000
+  if (launchProvesOneMillion(id, opts?.launchModel)) return 1_000_000
   for (const rule of MODEL_CONTEXT_WINDOWS) {
     if (matchesModelFamily(id, rule.match)) return rule.windowTokens
   }

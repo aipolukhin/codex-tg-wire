@@ -42,6 +42,8 @@ MCP elicitation поддерживает стандартные `form` и `url` 
 
 `/cwd` намеренно не принимает filesystem path: project id и его `cwd` должны заранее находиться в `projects[]` конфигурации. Переключение запрещено, пока в текущем проекте есть `ACTIVE` или `UNKNOWN` turn. Выбранный проект хранится отдельно для каждого bot/chat, а model/effort/sandbox/approval — отдельно для каждого bot/chat/project. `/status` показывает эффективные настройки текущего проекта даже до создания первого thread.
 
+Project также задаёт статическую execution policy: optional `sandboxMode`, список дополнительных `writableRoots` и `networkAccess` (default `false`). `cwd` автоматически входит в writable roots. Эти поля переходят в `turn/start.sandboxPolicy`; Telegram-команды не могут подставить новый root или включить сеть. Relative roots считаются от директории config file.
+
 Bridge-managed Codex threads хранятся отдельно от текущего binding:
 
 - `/new` отвязывает current thread, но не забывает его; при `UNKNOWN` нужен явный `/new force`;
@@ -140,4 +142,6 @@ export GROQ_API_KEY='...'
 - вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
 - MCP URL разрешён только по HTTPS без embedded credentials; `openai/form` не согласовывается, а secret-like form schema не превращается в Telegram-карточку.
 
-Это personal alpha: durable recovery kernel и M4 UX/media slice закрыты. Следующий этап — M5 production hardening: doctor, retention/scrub, backup/restore, health/watchdog, rate limits, chaos/load и release supply-chain.
+M5 implementation закрыт: production doctor, project policy, retention/scrub, online backup/offline restore, readiness/systemd watchdog, Telegram rate limits, replay gates, chaos/load harness, lockfile, license audit, CycloneDX и release checksums находятся в коде. Операционный runbook: [docs/codex-production.md](docs/codex-production.md).
+
+Gate M5 остаётся временным: короткий soak и fault suite пройдены, но перед RC нужен полный 72-часовой live canary с настоящими Telegram и Codex App Server. До него статус — hardened alpha, не RC.

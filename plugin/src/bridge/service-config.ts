@@ -262,6 +262,7 @@ export function loadBridgeRuntimeConfig(
   }
 
   const baseDirectory = dirname(configPath)
+  const envCodexBinary = env.CODEX_BINARY_PATH?.trim()
   return {
     ...parsed,
     configPath,
@@ -273,6 +274,12 @@ export function loadBridgeRuntimeConfig(
     outboundMedia: {
       ...parsed.outboundMedia,
       directory: absoluteFrom(baseDirectory, parsed.outboundMedia.directory),
+    },
+    codex: {
+      ...parsed.codex,
+      ...(parsed.codex.binary === undefined && envCodexBinary
+        ? { binary: envCodexBinary }
+        : {}),
     },
     projects: parsed.projects.map((project) => ({
       ...project,

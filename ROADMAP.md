@@ -229,18 +229,18 @@ Gate M4: **пройден.** Telegram mutations доступны только wo
 
 ### M5 — production hardening
 
-- Owner bootstrap без утечки bot token; deny-by-default allowlist.
-- Явный выбор writable roots, sandbox и network policy на project.
-- Config validation и `doctor` с actionable diagnostics.
-- Log redaction, payload retention и scrub после delivery/expiry.
-- SQLite backup/restore, migrations forward-only и тест upgrade с предыдущего релиза.
-- Health endpoints/systemd watchdog, incident lifecycle и алерты без message body.
-- Rate limiting и защита inline callbacks/replayed commands.
-- Chaos tests App Server/Telegram/SQLite/process restarts.
-- Load/soak: длинный turn, burst updates, Telegram 429, network timeouts, disk full/read-only.
-- SBOM, dependency/license audit, release signing/checksums по возможности.
+- [x] Owner bootstrap без утечки bot token; deny-by-default allowlist.
+- [x] Явный выбор writable roots, sandbox и network policy на project.
+- [x] Config validation и `doctor` с actionable diagnostics.
+- [x] Log redaction, payload retention и scrub после delivery/expiry.
+- [x] SQLite backup/restore, migrations forward-only и тест upgrade с предыдущего релиза.
+- [x] Health endpoints/systemd watchdog, incident lifecycle и алерты без message body.
+- [x] Rate limiting и защита inline callbacks/replayed commands.
+- [x] Chaos tests App Server/Telegram/SQLite/process restarts.
+- [x] Load/soak automation: длинный turn, burst updates, Telegram 429, network timeouts, disk full/read-only; короткий gate пройден.
+- [x] Lockfile, CycloneDX SBOM, vulnerability/dependency/license audit, reproducible artifact и checksums; signing оставлен release CI/оператору.
 
-Gate M5: 72-часовой soak без потерянных acknowledged updates, скрытых worker crashes и бесконечных retry loops.
+Gate M5: **ожидает 72-часовой live soak.** Harness и короткий restart smoke готовы; RC нельзя объявлять до 72 часов без потерянных acknowledged updates, скрытых worker crashes и бесконечных retry loops.
 
 ### M6 — `v1.0`
 

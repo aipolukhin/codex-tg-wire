@@ -1,6 +1,6 @@
 # dashi-channel
 
-> Новый standalone-мост Telegram → **Codex App Server** развивается рядом с legacy Claude channel runtime. Инструкция personal alpha: [CODEX_BRIDGE.md](CODEX_BRIDGE.md), запуск — `bun run start:codex`.
+> Новый standalone-мост Telegram → **Codex App Server** развивается рядом с legacy Claude channel runtime. Инструкция hardened alpha: [CODEX_BRIDGE.md](CODEX_BRIDGE.md), production/recovery runbook: [docs/codex-production.md](docs/codex-production.md), запуск — `bun run start:codex`.
 
 Custom Claude Code channel plugin для Telegram-агентов. Замена Python `claude -p` gateway с multichat, durable delivery и безопасными controls.
 

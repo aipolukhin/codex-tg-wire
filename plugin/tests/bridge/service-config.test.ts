@@ -49,6 +49,24 @@ describe('loadBridgeServiceConfig', () => {
     expect('voiceApiKey' in config).toBeFalse()
   })
 
+  test('uses CODEX_BINARY_PATH only when JSON has no explicit binary', () => {
+    const inherited = fixture()
+    expect(loadBridgeRuntimeConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: inherited.path,
+        CODEX_BINARY_PATH: '/opt/codex/bin/codex',
+      },
+    }).codex.binary).toBe('/opt/codex/bin/codex')
+
+    const explicit = fixture({ codex: { binary: '/configured/codex' } })
+    expect(loadBridgeRuntimeConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: explicit.path,
+        CODEX_BINARY_PATH: '/ignored/codex',
+      },
+    }).codex.binary).toBe('/configured/codex')
+  })
+
   test('resolves state and project paths from the config file directory', () => {
     const { root, path } = fixture()
     const config = loadBridgeServiceConfig({

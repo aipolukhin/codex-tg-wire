@@ -25,6 +25,8 @@
     "release:codex": "bun run scripts/build-release-artifacts.ts",
     "soak:codex": "bun run scripts/codex-bridge-soak.ts --duration-seconds 259200 --rate 20",
     "soak:codex:smoke": "bun run scripts/codex-bridge-soak.ts --duration-seconds 5 --rate 30",
+    "acceptance:codex": "bun run scripts/codex-bridge-acceptance.ts",
+    "acceptance:codex:artifact": "bun run scripts/codex-bridge-artifact-gate.ts",
     "codex:smoke": "bun run scripts/codex-app-server-smoke.ts",
     "codex:schema:check": "bun run scripts/check-codex-schema.ts"
   },

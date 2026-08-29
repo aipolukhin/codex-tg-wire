@@ -16,6 +16,7 @@
     "test:codex": "bun test tests/codex",
     "typecheck": "tsc --noEmit",
     "init:codex": "bun run scripts/codex-bridge-init.ts",
+    "manage:codex": "bun run scripts/codex-bridge-release-manager.ts",
     "doctor:codex": "bun run scripts/codex-bridge-doctor.ts",
     "backup:codex": "bun run scripts/codex-bridge-backup.ts",
     "restore:codex": "bun run scripts/codex-bridge-restore.ts",

@@ -1,0 +1,16 @@
+codex-tg-wire
+Copyright 2026 Leon Polukhin
+
+This product contains software derived from dashi-plugin-claude-code:
+Copyright 2026 Dashi Eshiev (qwwiwi)
+https://github.com/qwwiwi/dashi-plugin-claude-code
+Licensed under the Apache License, Version 2.0.
+
+The durable delivery design is informed by Telemax:
+Copyright 2026 Leon Polukhin
+https://github.com/aipolukhin/telemax
+Licensed under the Apache License, Version 2.0.
+
+OpenAI, Codex, Telegram and other names are trademarks of their respective
+owners. codex-tg-wire is an independent project and is not endorsed by or
+affiliated with OpenAI or Telegram.

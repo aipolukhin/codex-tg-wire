@@ -50,7 +50,7 @@ try {
     ...(values.has('--project-id') ? { projectId: required('--project-id') } : {}),
   })
   process.stdout.write([
-    'Dashi Codex bridge configuration initialized.',
+    'codex-tg-wire configuration initialized.',
     `Config: ${result.configPath}`,
     `Environment: ${result.environmentPath}`,
     `Telegram credential: ${result.telegramCredentialPath} (empty; fill privately)`,

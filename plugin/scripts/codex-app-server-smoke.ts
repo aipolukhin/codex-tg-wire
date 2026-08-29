@@ -12,7 +12,7 @@ try {
   const initialized = await client.initialize({
     clientInfo: {
       name: 'dashi_codex_bridge',
-      title: 'Dashi Codex Bridge',
+      title: 'codex-tg-wire',
       version: compatibility.bridgeVersion,
     },
     capabilities: null,

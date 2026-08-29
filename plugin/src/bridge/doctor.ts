@@ -383,7 +383,7 @@ export function formatBridgeDoctorReport(
   secrets: readonly string[] = [],
 ): string {
   const labels: Record<DoctorStatus, string> = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' }
-  const lines = ['Dashi Codex bridge doctor']
+  const lines = ['codex-tg-wire doctor']
   for (const item of report.checks) {
     lines.push(`[${labels[item.status]}] ${item.id}: ${redactSecrets(item.message, secrets)}`)
   }

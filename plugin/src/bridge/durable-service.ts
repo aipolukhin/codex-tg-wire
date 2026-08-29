@@ -155,7 +155,7 @@ export async function bootstrapDurableBridgeService(
     await codexClient.initialize({
       clientInfo: {
         name: 'dashi_codex_bridge',
-        title: 'Dashi Codex Telegram Bridge',
+        title: 'codex-tg-wire',
         version: compatibility.bridgeVersion,
       },
       capabilities: null,

@@ -1,4 +1,4 @@
-# Dashi Codex Telegram Bridge — personal alpha
+# codex-tg-wire — hardened pre-release
 
 Это отдельный durable bridge-сервис, а не Claude Code channel runtime. Он принимает Telegram update в SQLite, запускает turn через Codex App Server и выполняет Telegram mutations только через durable outbox. Markdown финального ответа преобразуется в проверенный Telegram HTML; длинный ответ становится упорядоченной цепочкой сообщений до 4000 символов каждое. Media/file jobs используют content-addressed private spool и повторно проверяются перед каждой попыткой.
 

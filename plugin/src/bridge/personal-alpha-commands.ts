@@ -76,7 +76,7 @@ export class PersonalAlphaCommands implements CommandHandler {
       case 'start':
         return {
           text: [
-            'Dashi Codex bridge готов.',
+            'codex-tg-wire готов.',
             'Отправь текст, чтобы запустить turn.',
             '/new — новый thread · /status — состояние · /stop — остановить turn',
             '/steer <текст> — уточнить задачу внутри активного turn',

@@ -1,7 +1,7 @@
-# Dashi × Codex × Telemax: roadmap гибридного моста
+# codex-tg-wire: roadmap durable Telegram ↔ Codex bridge
 
 Статус: M6 implementation complete; public `v1.0` ждёт live canary
-Цель первого стабильного релиза: self-hosted Telegram-клиент для Codex с UX Dashi и гарантиями доставки Telemax.
+Цель первого стабильного релиза: self-hosted Telegram-клиент для Codex с UX-паттернами Dashi и гарантиями доставки, перенесёнными из Telemax.
 
 ## Статус реализации — 2026-08-29
 

@@ -63,7 +63,12 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.attachments.directory).toBe(join(root, 'state', 'attachments'))
     expect(config.attachments.maxBytes).toBe(20 * 1024 * 1024)
     expect(config.attachments.allowedMimeTypes).toContain('image/jpeg')
-    expect(config.projects).toEqual([{ id: 'main', cwd: join(root, 'workspace') }])
+    expect(config.projects).toEqual([{
+      id: 'main',
+      cwd: join(root, 'workspace'),
+      writableRoots: [],
+      networkAccess: false,
+    }])
     expect(config.telegram.allowedUserIds).toEqual(['123456789'])
     expect(config.telegram.allowedChatIds).toEqual(['123456789', '-1001234567890'])
     expect(config.telegram.rateLimit).toEqual({
@@ -166,6 +171,39 @@ describe('loadBridgeServiceConfig', () => {
         },
       }),
     ).toThrow('must be included in codex.allowedSandboxModes')
+  })
+
+  test('resolves and validates per-project execution policy', () => {
+    const valid = fixture({
+      projects: [{
+        id: 'main',
+        cwd: './workspace',
+        sandboxMode: 'workspace-write',
+        writableRoots: ['./cache'],
+        networkAccess: true,
+      }],
+    })
+    const config = loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: valid.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+      },
+    })
+    expect(config.projects[0]).toMatchObject({
+      sandboxMode: 'workspace-write',
+      writableRoots: [join(valid.root, 'cache')],
+      networkAccess: true,
+    })
+
+    const invalid = fixture({
+      projects: [{ id: 'main', cwd: './workspace', sandboxMode: 'danger-full-access' }],
+    })
+    expect(() => loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: invalid.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+      },
+    })).toThrow('must be included in codex.allowedSandboxModes')
   })
 
   test('validates attachment MIME policy and byte ceiling', () => {

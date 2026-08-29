@@ -1,5 +1,6 @@
 import type {
   AgentBackend,
+  AgentSandboxMode,
   AgentSettingsProvider,
   AgentTurnSettings,
   AgentTurnUxObserver,
@@ -17,6 +18,9 @@ import { safeErrorSummary } from './retry-policy.js'
 export interface ProjectDefinition {
   id: string
   cwd: string
+  sandboxMode?: AgentSandboxMode
+  writableRoots?: readonly string[]
+  networkAccess?: boolean
 }
 
 export interface ProjectResolver {
@@ -161,22 +165,27 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     if (prepared.binding !== null && prepared.binding.state !== 'ACTIVE') {
       throw new TurnRecoveryRequiredError(prepared.turn)
     }
-    return this.dispatch(prepared, operation, project.cwd)
+    return this.dispatch(prepared, operation, project)
   }
 
   private async dispatch(
     prepared: PreparedTextOperation,
     operation: TextTurnOperation,
-    cwd: string,
+    project: ProjectDefinition,
   ): Promise<TextTurnResult> {
     let dispatching = false
     let readyThreadId: string | null = null
     let startedTurnId: string | null = null
-    const settings: AgentTurnSettings = this.settingsProvider?.getTurnSettings(
+    const overrides: AgentTurnSettings = this.settingsProvider?.getTurnSettings(
       operation.botId,
       operation.chatId,
       operation.projectId,
     ) ?? {}
+    const settings: AgentTurnSettings = {
+      ...overrides,
+      sandbox: overrides.sandbox ?? project.sandboxMode ?? 'workspace-write',
+    }
+    const writableRoots = [...new Set([project.cwd, ...(project.writableRoots ?? [])])]
     this.notifyUx(() => this.uxObserver?.onPreparing(operation, settings))
     try {
       const result = await this.backend.runTextTurn(
@@ -184,12 +193,16 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           operationKey: operation.operationKey,
           threadId: prepared.binding?.threadId ?? null,
           projectId: operation.projectId,
-          cwd,
+          cwd: project.cwd,
           text: operation.text,
           ...(operation.attachments === undefined || operation.attachments.length === 0
             ? {}
             : { attachments: operation.attachments }),
           settings,
+          executionPolicy: {
+            writableRoots,
+            networkAccess: project.networkAccess ?? false,
+          },
         },
         {
           onThreadReady: (threadId, created) => {

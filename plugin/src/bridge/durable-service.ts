@@ -186,7 +186,13 @@ export async function bootstrapDurableBridgeService(
       codexClient,
       telegramApi: telegram,
       botId: identity.botId,
-      projects: config.projects,
+      projects: config.projects.map((project) => ({
+        id: project.id,
+        cwd: project.cwd,
+        writableRoots: project.writableRoots,
+        networkAccess: project.networkAccess,
+        ...(project.sandboxMode === undefined ? {} : { sandboxMode: project.sandboxMode }),
+      })),
       telegram: {
         allowedUserIds: config.telegram.allowedUserIds,
         allowedChatIds: config.telegram.allowedChatIds,

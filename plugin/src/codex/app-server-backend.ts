@@ -1,6 +1,7 @@
 import type {
   AgentBackend,
   AgentActivity,
+  AgentExecutionPolicy,
   AgentEventDiagnostics,
   AgentModel,
   AgentSandboxMode,
@@ -131,15 +132,16 @@ export class CodexTurnTimeoutError extends Error {
 
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000
 
-function sandboxPolicy(mode: AgentSandboxMode) {
+function sandboxPolicy(mode: AgentSandboxMode, executionPolicy?: AgentExecutionPolicy) {
+  const networkAccess = executionPolicy?.networkAccess ?? false
   switch (mode) {
     case 'read-only':
-      return { type: 'readOnly' as const, networkAccess: false }
+      return { type: 'readOnly' as const, networkAccess }
     case 'workspace-write':
       return {
         type: 'workspaceWrite' as const,
-        writableRoots: [],
-        networkAccess: false,
+        writableRoots: [...(executionPolicy?.writableRoots ?? [])],
+        networkAccess,
         excludeTmpdirEnvVar: false,
         excludeSlashTmp: false,
       }
@@ -424,7 +426,7 @@ export class CodexAppServerBackend implements AgentBackend {
           : { approvalPolicy: input.settings.approvalPolicy }),
         ...(input.settings?.sandbox === undefined
           ? {}
-          : { sandboxPolicy: sandboxPolicy(input.settings.sandbox) }),
+          : { sandboxPolicy: sandboxPolicy(input.settings.sandbox, input.executionPolicy) }),
         threadId,
         clientUserMessageId: input.operationKey,
         input: turnInputs(input),

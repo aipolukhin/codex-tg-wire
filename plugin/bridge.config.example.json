@@ -3,7 +3,10 @@
   "projects": [
     {
       "id": "main",
-      "cwd": "."
+      "cwd": ".",
+      "sandboxMode": "workspace-write",
+      "writableRoots": [],
+      "networkAccess": false
     }
   ],
   "defaultProjectId": "main",

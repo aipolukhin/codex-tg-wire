@@ -284,15 +284,33 @@ export async function runBridgeDoctor(
     )
   }
 
-  const projectWritable = config.codex.sandboxMode !== 'read-only'
   for (const project of config.projects) {
+    const sandboxMode = project.sandboxMode ?? config.codex.sandboxMode
     checks.push(
       inspectDirectory(
         `project.${project.id}`,
         project.cwd,
         `project ${project.id}`,
         true,
-        projectWritable,
+        sandboxMode !== 'read-only',
+      ),
+    )
+    for (const [index, root] of project.writableRoots.entries()) {
+      checks.push(
+        inspectDirectory(
+          `project.${project.id}.writable.${index}`,
+          root,
+          `project ${project.id} writable root ${index + 1}`,
+          true,
+          true,
+        ),
+      )
+    }
+    checks.push(
+      check(
+        `project.${project.id}.network`,
+        'pass',
+        `project ${project.id} network access is explicitly ${project.networkAccess ? 'enabled' : 'disabled'}`,
       ),
     )
   }

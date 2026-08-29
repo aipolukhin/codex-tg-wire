@@ -181,6 +181,11 @@ export interface AgentTurnSettings {
   approvalPolicy?: AgentApprovalPolicy
 }
 
+export interface AgentExecutionPolicy {
+  writableRoots: readonly string[]
+  networkAccess: boolean
+}
+
 export interface AgentModel {
   id: string
   model: string
@@ -215,6 +220,7 @@ export interface AgentTextTurnInput {
   text: string
   attachments?: readonly AgentLocalAttachment[]
   settings?: AgentTurnSettings
+  executionPolicy?: AgentExecutionPolicy
 }
 
 export interface AgentTurnLifecycle {

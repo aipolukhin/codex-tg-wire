@@ -269,6 +269,10 @@ describe('CodexAppServerBackend text turns', () => {
         sandbox: 'read-only',
         approvalPolicy: 'never',
       },
+      executionPolicy: {
+        writableRoots: ['/workspace/project', '/workspace/cache'],
+        networkAccess: true,
+      },
     })
     await waitForTurnStart(client)
 
@@ -282,7 +286,32 @@ describe('CodexAppServerBackend text turns', () => {
       model: 'gpt-a',
       effort: 'high',
       approvalPolicy: 'never',
-      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+      sandboxPolicy: { type: 'readOnly', networkAccess: true },
+    })
+    emitCompleted(client, 'thread-1', 'turn-1', 'done')
+    await running
+    backend.close()
+  })
+
+  test('applies explicit writable roots and disabled network to workspace sandbox', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    const running = backend.runTextTurn({
+      ...turnInput(),
+      settings: { sandbox: 'workspace-write' },
+      executionPolicy: {
+        writableRoots: ['/workspace/project', '/workspace/generated'],
+        networkAccess: false,
+      },
+    })
+    await waitForTurnStart(client)
+
+    expect(client.turnStarts[0]?.sandboxPolicy).toEqual({
+      type: 'workspaceWrite',
+      writableRoots: ['/workspace/project', '/workspace/generated'],
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
     })
     emitCompleted(client, 'thread-1', 'turn-1', 'done')
     await running

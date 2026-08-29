@@ -219,7 +219,15 @@ describe('DurableSessionCoordinator', () => {
     const binding = sessions.getBinding(turn!.sessionId)
     expect(binding?.threadId).toBe('codex-thread-1')
     expect(binding?.state).toBe('ACTIVE')
-    expect(backend.calls[0]).toMatchObject({ threadId: null, cwd: '/srv/workspace' })
+    expect(backend.calls[0]).toMatchObject({
+      threadId: null,
+      cwd: '/srv/workspace',
+      settings: { sandbox: 'workspace-write' },
+      executionPolicy: {
+        writableRoots: ['/srv/workspace'],
+        networkAccess: false,
+      },
+    })
   })
 
   test('returns the cached terminal result when an inbox update is replayed', async () => {

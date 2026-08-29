@@ -20,6 +20,9 @@ const ProjectSchema = z
   .object({
     id: z.string().trim().min(1),
     cwd: z.string().trim().min(1),
+    sandboxMode: z.enum(['read-only', 'workspace-write', 'danger-full-access']).optional(),
+    writableRoots: z.array(z.string().trim().min(1)).default([]),
+    networkAccess: z.boolean().default(false),
   })
   .strict()
 
@@ -161,6 +164,18 @@ export const BridgeConfigFileSchema = z
         message: 'must reference one of projects[].id',
       })
     }
+    for (const [index, project] of config.projects.entries()) {
+      if (
+        project.sandboxMode !== undefined &&
+        !config.codex.allowedSandboxModes.includes(project.sandboxMode)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['projects', index, 'sandboxMode'],
+          message: 'must be included in codex.allowedSandboxModes',
+        })
+      }
+    }
     if (config.codex.interactionTimeoutMs >= config.codex.turnTimeoutMs) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -262,6 +277,7 @@ export function loadBridgeRuntimeConfig(
     projects: parsed.projects.map((project) => ({
       ...project,
       cwd: absoluteFrom(baseDirectory, project.cwd),
+      writableRoots: project.writableRoots.map((root) => absoluteFrom(baseDirectory, root)),
     })),
   }
 }

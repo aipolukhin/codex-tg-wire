@@ -140,6 +140,27 @@ describe('SqliteInboxRepository', () => {
       accepted.update.id,
     )
   })
+
+  test('renews a live lease but never resurrects an expired one', () => {
+    const inbox = new SqliteInboxRepository(database)
+    const accepted = inbox.ingest({ botId: 'primary', updateId: 45, payload: {}, receivedAtMs: NOW })
+    inbox.claimNext({ workerId: 'worker-a', nowMs: NOW, leaseDurationMs: LEASE_MS })
+
+    const renewed = inbox.renewLease(accepted.update.id, {
+      workerId: 'worker-a',
+      nowMs: NOW + 20_000,
+      leaseDurationMs: LEASE_MS,
+    })
+    expect(renewed.leaseExpiresAtMs).toBe(NOW + 50_000)
+    expect(inbox.recoverExpiredLeases(NOW + LEASE_MS + 1)).toBe(0)
+    expect(() =>
+      inbox.renewLease(accepted.update.id, {
+        workerId: 'worker-a',
+        nowMs: NOW + 50_000,
+        leaseDurationMs: LEASE_MS,
+      }),
+    ).toThrow(LeaseConflictError)
+  })
 })
 
 describe('SqliteOutboxRepository', () => {
@@ -164,6 +185,33 @@ describe('SqliteOutboxRepository', () => {
     expect(duplicate.created).toBe(false)
     expect(duplicate.job.id).toBe('job-1')
     expect(duplicate.job.payload).toEqual({ chatId: '1001', text: 'first' })
+  })
+
+  test('renews only a live delivery lease owned by the same worker', () => {
+    const outbox = new SqliteOutboxRepository(database)
+    outbox.enqueue({
+      id: 'heartbeat',
+      sourceKey: 'test:heartbeat',
+      kind: 'send_text',
+      payload: {},
+      createdAtMs: NOW,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs: NOW, leaseDurationMs: LEASE_MS })
+
+    expect(
+      outbox.renewLease('heartbeat', {
+        workerId: 'sender-a',
+        nowMs: NOW + 20_000,
+        leaseDurationMs: LEASE_MS,
+      }).leaseExpiresAtMs,
+    ).toBe(NOW + 50_000)
+    expect(() =>
+      outbox.renewLease('heartbeat', {
+        workerId: 'sender-b',
+        nowMs: NOW + 20_001,
+        leaseDurationMs: LEASE_MS,
+      }),
+    ).toThrow(LeaseConflictError)
   })
 
   test('retries a crash before send_started but quarantines a crash after it', () => {

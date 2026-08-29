@@ -13,6 +13,7 @@ import {
   safeErrorSummary,
   type RetryPolicy,
 } from './retry-policy.js'
+import { LeaseHeartbeatError, withLeaseHeartbeat } from './lease-heartbeat.js'
 
 export type InboxRunResult =
   | { outcome: 'idle' }
@@ -24,6 +25,7 @@ export type InboxRunResult =
 export interface InboxProcessingWorkerOptions {
   workerId: string
   leaseDurationMs?: number
+  leaseHeartbeatMs?: number
   retryPolicy?: RetryPolicy
   now?: () => number
   errorSummary?: (error: unknown) => string
@@ -39,6 +41,7 @@ function operationKey(update: InboxUpdate): string {
 export class InboxProcessingWorker {
   private readonly workerId: string
   private readonly leaseDurationMs: number
+  private readonly leaseHeartbeatMs: number
   private readonly retryPolicy: RetryPolicy
   private readonly now: () => number
   private readonly errorSummary: (error: unknown) => string
@@ -53,10 +56,18 @@ export class InboxProcessingWorker {
   ) {
     this.workerId = options.workerId
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_MS
+    this.leaseHeartbeatMs = options.leaseHeartbeatMs ?? Math.max(1, Math.floor(this.leaseDurationMs / 3))
     this.retryPolicy = options.retryPolicy ?? exponentialRetryPolicy()
     this.now = options.now ?? Date.now
     this.errorSummary = options.errorSummary ?? safeErrorSummary
     this.commandHandler = options.commandHandler
+    if (
+      !Number.isSafeInteger(this.leaseHeartbeatMs) ||
+      this.leaseHeartbeatMs <= 0 ||
+      this.leaseHeartbeatMs > this.leaseDurationMs
+    ) {
+      throw new TypeError('leaseHeartbeatMs must be positive and no greater than leaseDurationMs')
+    }
   }
 
   async runOnce(): Promise<InboxRunResult> {
@@ -69,69 +80,86 @@ export class InboxProcessingWorker {
     if (update === null) return { outcome: 'idle' }
 
     try {
-      const command = this.telegram.extractCommand?.(update) ?? null
-      if (command !== null && this.commandHandler !== undefined) {
-        const commandKey = `${operationKey(update)}:command:${command.name}`
-        const result = await this.commandHandler.handleCommand({
-          operationKey: commandKey,
-          botId: update.botId,
-          inboxUpdateId: update.id,
-          updateId: update.updateId,
-          command,
-        })
-        const completedAtMs = this.now()
-        const buildDelivery = this.telegram.buildCommandDelivery
-        if (buildDelivery === undefined) {
-          throw new Error('Telegram gateway cannot build command replies')
-        }
-        const enqueue = this.outbox.enqueue({
-          ...buildDelivery.call(this.telegram, {
-            update,
-            command,
-            result,
-            sourceKey: `${commandKey}:reply`,
-            nowMs: completedAtMs,
-          }),
-          sourceKey: `${commandKey}:reply`,
-          createdAtMs: completedAtMs,
-        })
-        this.inbox.markProcessed(update.id, this.workerId, completedAtMs)
-        return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
-      }
+      return await withLeaseHeartbeat(
+        {
+          intervalMs: this.leaseHeartbeatMs,
+          renew: () => {
+            this.inbox.renewLease(update.id, {
+              workerId: this.workerId,
+              nowMs: this.now(),
+              leaseDurationMs: this.leaseDurationMs,
+            })
+          },
+        },
+        () => this.processClaimed(update),
+      )
+    } catch (error) {
+      if (error instanceof LeaseHeartbeatError) throw error
+      return this.handleFailure(update, error)
+    }
+  }
 
-      const message = this.telegram.extractText(update)
-      if (message === null) {
-        this.inbox.markProcessed(update.id, this.workerId, this.now())
-        return { outcome: 'ignored', updateId: update.id }
-      }
-
-      const turnKey = operationKey(update)
-      const result = await this.coordinator.runTextTurn({
-        operationKey: turnKey,
-        inboxUpdateId: update.id,
+  private async processClaimed(update: InboxUpdate): Promise<InboxRunResult> {
+    const command = this.telegram.extractCommand?.(update) ?? null
+    if (command !== null && this.commandHandler !== undefined) {
+      const commandKey = `${operationKey(update)}:command:${command.name}`
+      const result = await this.commandHandler.handleCommand({
+        operationKey: commandKey,
         botId: update.botId,
+        inboxUpdateId: update.id,
         updateId: update.updateId,
-        chatId: message.chatId,
-        projectId: message.projectId,
-        text: message.text,
+        command,
       })
       const completedAtMs = this.now()
+      const buildDelivery = this.telegram.buildCommandDelivery
+      if (buildDelivery === undefined) {
+        throw new Error('Telegram gateway cannot build command replies')
+      }
       const enqueue = this.outbox.enqueue({
-        ...this.telegram.buildFinalTextDelivery({
+        ...buildDelivery.call(this.telegram, {
           update,
-          message,
+          command,
           result,
-          sourceKey: `${turnKey}:final`,
+          sourceKey: `${commandKey}:reply`,
           nowMs: completedAtMs,
         }),
-        sourceKey: `${turnKey}:final`,
+        sourceKey: `${commandKey}:reply`,
         createdAtMs: completedAtMs,
       })
       this.inbox.markProcessed(update.id, this.workerId, completedAtMs)
       return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
-    } catch (error) {
-      return this.handleFailure(update, error)
     }
+
+    const message = this.telegram.extractText(update)
+    if (message === null) {
+      this.inbox.markProcessed(update.id, this.workerId, this.now())
+      return { outcome: 'ignored', updateId: update.id }
+    }
+
+    const turnKey = operationKey(update)
+    const result = await this.coordinator.runTextTurn({
+      operationKey: turnKey,
+      inboxUpdateId: update.id,
+      botId: update.botId,
+      updateId: update.updateId,
+      chatId: message.chatId,
+      projectId: message.projectId,
+      text: message.text,
+    })
+    const completedAtMs = this.now()
+    const enqueue = this.outbox.enqueue({
+      ...this.telegram.buildFinalTextDelivery({
+        update,
+        message,
+        result,
+        sourceKey: `${turnKey}:final`,
+        nowMs: completedAtMs,
+      }),
+      sourceKey: `${turnKey}:final`,
+      createdAtMs: completedAtMs,
+    })
+    this.inbox.markProcessed(update.id, this.workerId, completedAtMs)
+    return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
   }
 
   private handleFailure(update: InboxUpdate, error: unknown): InboxRunResult {

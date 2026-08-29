@@ -167,6 +167,19 @@ export class SqliteInboxRepository implements InboxRepository {
     }).immediate()
   }
 
+  renewLease(id: number, options: LeaseOptions): InboxUpdate {
+    validateLease(options)
+    const result = this.database.run(
+      `UPDATE telegram_updates
+       SET lease_expires_at_ms = ?
+       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+         AND lease_expires_at_ms > ?`,
+      [options.nowMs + options.leaseDurationMs, id, options.workerId, options.nowMs],
+    )
+    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+    return this.require(id)
+  }
+
   markProcessed(id: number, workerId: string, nowMs: number): InboxUpdate {
     const result = this.database.run(
       `UPDATE telegram_updates
@@ -292,6 +305,25 @@ export class SqliteOutboxRepository implements OutboxRepository {
       )
       return this.get(candidate.id)
     }).immediate()
+  }
+
+  renewLease(id: string, options: LeaseOptions): DeliveryJob {
+    validateLease(options)
+    const result = this.database.run(
+      `UPDATE delivery_jobs
+       SET lease_expires_at_ms = ?, updated_at_ms = ?
+       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+         AND lease_expires_at_ms > ?`,
+      [
+        options.nowMs + options.leaseDurationMs,
+        options.nowMs,
+        id,
+        options.workerId,
+        options.nowMs,
+      ],
+    )
+    if (result.changes !== 1) throw new LeaseConflictError('delivery job', id)
+    return this.require(id)
   }
 
   markSendStarted(id: string, workerId: string, nowMs: number): DeliveryJob {

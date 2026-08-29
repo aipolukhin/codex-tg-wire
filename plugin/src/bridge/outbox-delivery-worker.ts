@@ -5,6 +5,7 @@ import {
   safeErrorSummary,
   type RetryPolicy,
 } from './retry-policy.js'
+import { LeaseHeartbeatError, withLeaseHeartbeat } from './lease-heartbeat.js'
 
 export type DeliveryRunResult =
   | { outcome: 'idle' }
@@ -16,6 +17,7 @@ export type DeliveryRunResult =
 export interface OutboxDeliveryWorkerOptions {
   workerId: string
   leaseDurationMs?: number
+  leaseHeartbeatMs?: number
   retryPolicy?: RetryPolicy
   now?: () => number
   errorSummary?: (error: unknown) => string
@@ -26,6 +28,7 @@ const DEFAULT_LEASE_MS = 60_000
 export class OutboxDeliveryWorker<PreparedDelivery = unknown> {
   private readonly workerId: string
   private readonly leaseDurationMs: number
+  private readonly leaseHeartbeatMs: number
   private readonly retryPolicy: RetryPolicy
   private readonly now: () => number
   private readonly errorSummary: (error: unknown) => string
@@ -37,9 +40,17 @@ export class OutboxDeliveryWorker<PreparedDelivery = unknown> {
   ) {
     this.workerId = options.workerId
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_MS
+    this.leaseHeartbeatMs = options.leaseHeartbeatMs ?? Math.max(1, Math.floor(this.leaseDurationMs / 3))
     this.retryPolicy = options.retryPolicy ?? exponentialRetryPolicy()
     this.now = options.now ?? Date.now
     this.errorSummary = options.errorSummary ?? safeErrorSummary
+    if (
+      !Number.isSafeInteger(this.leaseHeartbeatMs) ||
+      this.leaseHeartbeatMs <= 0 ||
+      this.leaseHeartbeatMs > this.leaseDurationMs
+    ) {
+      throw new TypeError('leaseHeartbeatMs must be positive and no greater than leaseDurationMs')
+    }
   }
 
   async runOnce(): Promise<DeliveryRunResult> {
@@ -52,18 +63,20 @@ export class OutboxDeliveryWorker<PreparedDelivery = unknown> {
 
     let prepared: PreparedDelivery
     try {
-      prepared = await this.telegram.prepareDelivery(job)
+      prepared = await this.withHeartbeat(job, () => this.telegram.prepareDelivery(job))
     } catch (error) {
+      if (error instanceof LeaseHeartbeatError) throw error
       return this.failBeforeSend(job, error)
     }
 
     this.outbox.markSendStarted(job.id, this.workerId, this.now())
     let remoteId: string
     try {
-      const proof = await this.telegram.executeDelivery(prepared)
+      const proof = await this.withHeartbeat(job, () => this.telegram.executeDelivery(prepared))
       remoteId = proof.remoteId
       if (remoteId.trim().length === 0) throw new TypeError('Telegram returned empty delivery proof')
     } catch (error) {
+      if (error instanceof LeaseHeartbeatError) throw error
       const failure = this.outbox.failLease(
         job.id,
         this.workerId,
@@ -78,6 +91,22 @@ export class OutboxDeliveryWorker<PreparedDelivery = unknown> {
 
     const delivered = this.outbox.markDelivered(job.id, this.workerId, remoteId, this.now())
     return { outcome: 'delivered', jobId: job.id, remoteId: delivered.remoteId as string }
+  }
+
+  private withHeartbeat<T>(job: DeliveryJob, operation: () => Promise<T>): Promise<T> {
+    return withLeaseHeartbeat(
+      {
+        intervalMs: this.leaseHeartbeatMs,
+        renew: () => {
+          this.outbox.renewLease(job.id, {
+            workerId: this.workerId,
+            nowMs: this.now(),
+            leaseDurationMs: this.leaseDurationMs,
+          })
+        },
+      },
+      operation,
+    )
   }
 
   private failBeforeSend(job: DeliveryJob, error: unknown): DeliveryRunResult {

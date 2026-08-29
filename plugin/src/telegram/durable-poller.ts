@@ -8,7 +8,7 @@ export interface TelegramGetUpdatesOptions {
 }
 
 export interface TelegramUpdateSource {
-  getUpdates(options: TelegramGetUpdatesOptions): Promise<unknown[]>
+  getUpdates(options: TelegramGetUpdatesOptions, signal?: AbortSignal): Promise<unknown[]>
 }
 
 export interface DurableUpdateSink {
@@ -66,14 +66,14 @@ export class DurableTelegramPoller {
     }
   }
 
-  async pollOnce(): Promise<DurablePollResult> {
+  async pollOnce(signal?: AbortSignal): Promise<DurablePollResult> {
     const current = this.cursors.get(this.botId)
     const request: TelegramGetUpdatesOptions = {
       timeout: this.timeoutSeconds,
       allowed_updates: this.allowedUpdates,
       ...(current === null ? {} : { offset: current.nextUpdateId }),
     }
-    const fetched = await this.source.getUpdates(request)
+    const fetched = await this.source.getUpdates(request, signal)
     const ordered = fetched
       .map((update) => ({ update, updateId: updateId(update) }))
       .sort((left, right) => left.updateId - right.updateId)

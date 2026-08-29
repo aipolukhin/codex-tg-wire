@@ -6,6 +6,7 @@ import {
   type CodexAppServerBackendOptions,
 } from '../codex/app-server-backend.js'
 import type { TelegramUpdateInput, IngestResult } from '../durable/contracts.js'
+import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
   SqliteInboxRepository,
   SqliteOutboxRepository,
@@ -49,6 +50,7 @@ export interface DurableTextRuntime {
   ingest(update: unknown, receivedAtMs?: number): IngestResult
   processInboundOnce(): Promise<InboxRunResult>
   deliverOutboundOnce(): Promise<DeliveryRunResult>
+  recoverExpiredLeases(): LeaseRecoverySweep
   close(): void
 }
 
@@ -100,6 +102,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...options.outboxWorker,
     workerId: options.outboxWorker?.workerId ?? 'outbox-1',
   })
+  const reaper = new DurableLeaseReaper(inbox, outbox)
 
   return {
     ingest(update: unknown, receivedAtMs = Date.now()): IngestResult {
@@ -113,6 +116,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     },
     processInboundOnce: () => inbound.runOnce(),
     deliverOutboundOnce: () => outbound.runOnce(),
+    recoverExpiredLeases: () => reaper.runOnce(),
     close(): void {
       backend.close()
     },

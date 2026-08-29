@@ -39,6 +39,7 @@ export interface InboxRepository {
   ingest(input: TelegramUpdateInput): IngestResult
   get(id: number): InboxUpdate | null
   claimNext(options: LeaseOptions): InboxUpdate | null
+  renewLease(id: number, options: LeaseOptions): InboxUpdate
   markProcessed(id: number, workerId: string, nowMs: number): InboxUpdate
   retry(id: number, workerId: string, error: string, availableAtMs: number): InboxUpdate
   fail(id: number, workerId: string, error: string, nowMs: number): InboxUpdate
@@ -108,6 +109,7 @@ export interface OutboxRepository {
   get(id: string): DeliveryJob | null
   getBySourceKey(sourceKey: string): DeliveryJob | null
   claimNext(options: LeaseOptions): DeliveryJob | null
+  renewLease(id: string, options: LeaseOptions): DeliveryJob
   markSendStarted(id: string, workerId: string, nowMs: number): DeliveryJob
   markDelivered(id: string, workerId: string, remoteId: string, nowMs: number): DeliveryJob
   failLease(id: string, workerId: string, error: string, nowMs: number, retryAtMs?: number): LeaseFailure

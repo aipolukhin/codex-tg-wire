@@ -20,7 +20,7 @@
 - [x] Добавлены deny-by-default Telegram text gateway и composition root полного text slice.
 - [x] Добавлен polling ingress с SQLite cursor: durable insert всегда предшествует offset advance.
 - [x] Добавлены durable-команды personal alpha: `/start`, `/new`, `/status`, `/stop`.
-- [ ] Добавить supervisor loops, lease reaper и graceful shutdown.
+- [x] Добавлены lease heartbeat, periodic reaper и supervisor loops с graceful drain.
 
 ## 1. Что именно мы строим
 

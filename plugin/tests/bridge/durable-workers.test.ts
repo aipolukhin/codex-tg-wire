@@ -34,9 +34,11 @@ class FakeCoordinator implements SessionCoordinator {
   readonly calls: TextTurnOperation[] = []
   readonly started = new Map<string, TextTurnResult>()
   failure: Error | undefined
+  gate: Promise<void> | undefined
 
   async runTextTurn(operation: TextTurnOperation): Promise<TextTurnResult> {
     this.calls.push(operation)
+    await this.gate
     if (this.failure !== undefined) throw this.failure
     const existing = this.started.get(operation.operationKey)
     if (existing !== undefined) return existing
@@ -62,6 +64,7 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
   executeFailure: Error | undefined
   remoteId = 'telegram:message:101'
   onExecute: (() => void) | undefined
+  executeGate: Promise<void> | undefined
 
   extractText(update: InboxUpdate): IncomingTextMessage | null {
     const payload = update.payload as {
@@ -93,6 +96,7 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
   async executeDelivery(prepared: PreparedDelivery): Promise<{ remoteId: string }> {
     this.executed.push(prepared)
     this.onExecute?.()
+    await this.executeGate
     if (this.executeFailure !== undefined) throw this.executeFailure
     return { remoteId: this.remoteId }
   }
@@ -261,6 +265,26 @@ describe('durable text vertical slice', () => {
     expect(inbox.get(accepted.update.id)?.lastError).toBe('Error')
     expect(inbox.get(accepted.update.id)?.lastError).not.toContain('secret-value')
   })
+
+  test('keeps a long Codex turn leased while the lease reaper runs', async () => {
+    const accepted = inbox.ingest({ ...textUpdate(505), receivedAtMs: Date.now() })
+    let release: (() => void) | undefined
+    coordinator.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const worker = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-a',
+      leaseDurationMs: 30,
+      leaseHeartbeatMs: 5,
+    })
+
+    const running = worker.runOnce()
+    await Bun.sleep(70)
+    expect(inbox.recoverExpiredLeases(Date.now())).toBe(0)
+    release?.()
+    expect((await running).outcome).toBe('enqueued')
+    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+  })
 })
 
 describe('OutboxDeliveryWorker failure boundaries', () => {
@@ -333,5 +357,35 @@ describe('OutboxDeliveryWorker failure boundaries', () => {
 
     expect(await worker.runOnce()).toEqual({ outcome: 'failed', jobId: 'bounded' })
     expect(outbox.get('bounded')?.state).toBe('FAILED')
+  })
+
+  test('keeps an in-flight Telegram send leased instead of quarantining it early', async () => {
+    outbox.enqueue({
+      id: 'slow-send',
+      sourceKey: 'test:slow-send',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'slow-send' },
+      createdAtMs: Date.now(),
+    })
+    let release: (() => void) | undefined
+    telegram.executeGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const worker = new OutboxDeliveryWorker(outbox, telegram, {
+      workerId: 'sender-a',
+      leaseDurationMs: 30,
+      leaseHeartbeatMs: 5,
+    })
+
+    const running = worker.runOnce()
+    await Bun.sleep(70)
+    expect(outbox.recoverExpiredLeases(Date.now())).toEqual({
+      retryable: 0,
+      ambiguous: 0,
+      expired: 0,
+    })
+    release?.()
+    expect((await running).outcome).toBe('delivered')
+    expect(outbox.get('slow-send')?.state).toBe('DELIVERED')
   })
 })

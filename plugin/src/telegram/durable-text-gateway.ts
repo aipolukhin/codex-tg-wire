@@ -44,6 +44,7 @@ export interface DurableTelegramTextGatewayOptions {
   extraSecrets?: readonly string[]
   maxTextLength?: number
   botUsername?: string
+  projectIdForChat?: (chatId: string) => string
 }
 
 export type PreparedTextDelivery = {
@@ -155,6 +156,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly extraSecrets: readonly string[]
   private readonly maxTextLength: number
   private readonly botUsername: string | null
+  private readonly projectIdForChat: (chatId: string) => string
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -166,6 +168,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.extraSecrets = options.extraSecrets ?? []
     this.maxTextLength = options.maxTextLength ?? TELEGRAM_TEXT_LIMIT
     this.botUsername = options.botUsername?.replace(/^@/, '').toLowerCase() ?? null
+    this.projectIdForChat = options.projectIdForChat ?? (() => this.defaultProjectId)
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -182,21 +185,21 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     if (message === null) return null
     const trimmed = message.text.trim()
     if (trimmed.length === 0 || trimmed.startsWith('/')) return null
-    return { chatId: message.chatId, projectId: this.defaultProjectId, text: message.text }
+    return { chatId: message.chatId, projectId: this.projectIdForChat(message.chatId), text: message.text }
   }
 
   extractCommand(update: InboxUpdate): IncomingCommand | null {
     const message = this.authorizedMessage(update)
     if (message === null) return null
     const match = message.text.trim().match(
-      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
+      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume|model|effort|sandbox|approval|cwd)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
     )
     if (match === null || match[1] === undefined) return null
     const addressedUsername = match[2]?.toLowerCase()
     if (addressedUsername !== undefined && addressedUsername !== this.botUsername) return null
     return {
       chatId: message.chatId,
-      projectId: this.defaultProjectId,
+      projectId: this.projectIdForChat(message.chatId),
       name: match[1].toLowerCase() as PersonalAlphaCommandName,
       args: match[3]?.trim() ?? '',
     }

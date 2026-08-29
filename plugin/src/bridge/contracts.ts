@@ -20,6 +20,11 @@ export type PersonalAlphaCommandName =
   | 'threads'
   | 'switch'
   | 'resume'
+  | 'model'
+  | 'effort'
+  | 'sandbox'
+  | 'approval'
+  | 'cwd'
 
 export interface IncomingCommand {
   chatId: string
@@ -102,6 +107,29 @@ export interface TextTurnResult {
   finalText: string
 }
 
+export type AgentApprovalPolicy = 'untrusted' | 'on-request' | 'never'
+export type AgentSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
+export interface AgentTurnSettings {
+  model?: string
+  effort?: string
+  sandbox?: AgentSandboxMode
+  approvalPolicy?: AgentApprovalPolicy
+}
+
+export interface AgentModel {
+  id: string
+  model: string
+  displayName: string
+  isDefault: boolean
+  supportedEfforts: string[]
+  defaultEffort: string | null
+}
+
+export interface AgentSettingsProvider {
+  getTurnSettings(botId: string, chatId: string, projectId: string): AgentTurnSettings
+}
+
 /**
  * Owns durable session/thread binding and must treat operationKey as
  * idempotent. Replaying the same operation after a bridge crash must reconcile
@@ -117,6 +145,7 @@ export interface AgentTextTurnInput {
   projectId: string
   cwd: string
   text: string
+  settings?: AgentTurnSettings
 }
 
 export interface AgentTurnLifecycle {
@@ -125,6 +154,7 @@ export interface AgentTurnLifecycle {
 }
 
 export interface AgentBackend {
+  listModels(): Promise<AgentModel[]>
   runTextTurn(input: AgentTextTurnInput, lifecycle?: AgentTurnLifecycle): Promise<TextTurnResult>
   interruptTurn(threadId: string, turnId: string): Promise<void>
   steerTurn(input: {

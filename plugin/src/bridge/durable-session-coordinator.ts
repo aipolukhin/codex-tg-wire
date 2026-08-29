@@ -1,5 +1,6 @@
 import type {
   AgentBackend,
+  AgentSettingsProvider,
   SessionCoordinator,
   TextTurnOperation,
   TextTurnResult,
@@ -101,12 +102,14 @@ function cachedResult(turn: TurnRecord): TextTurnResult {
 export interface DurableSessionCoordinatorOptions {
   now?: () => number
   backendName?: string
+  settingsProvider?: AgentSettingsProvider
 }
 
 export class DurableSessionCoordinator implements SessionCoordinator {
   private readonly active = new Map<string, Promise<TextTurnResult>>()
   private readonly now: () => number
   private readonly backendName: string
+  private readonly settingsProvider: AgentSettingsProvider | undefined
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -116,6 +119,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
   ) {
     this.now = options.now ?? Date.now
     this.backendName = options.backendName ?? 'codex'
+    this.settingsProvider = options.settingsProvider
   }
 
   runTextTurn(operation: TextTurnOperation): Promise<TextTurnResult> {
@@ -171,6 +175,11 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           projectId: operation.projectId,
           cwd,
           text: operation.text,
+          settings: this.settingsProvider?.getTurnSettings(
+            operation.botId,
+            operation.chatId,
+            operation.projectId,
+          ) ?? {},
         },
         {
           onThreadReady: (threadId, created) => {

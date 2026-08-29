@@ -129,6 +129,14 @@ describe('DurableTelegramTextGateway inbound', () => {
       name: 'switch',
       args: 'thread-1',
     })
+    expect(gateway.extractCommand(make('/model gpt-test'))).toMatchObject({
+      name: 'model',
+      args: 'gpt-test',
+    })
+    expect(gateway.extractCommand(make('/cwd@my_bot other'))).toMatchObject({
+      name: 'cwd',
+      args: 'other',
+    })
     expect(gateway.extractCommand(make('/stop@other_bot'))).toBeNull()
     expect(gateway.extractCommand(make('/unknown'))).toBeNull()
   })

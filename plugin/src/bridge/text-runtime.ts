@@ -11,6 +11,7 @@ import type {
   IngestResult,
   UpdateRoutingClass,
 } from '../durable/contracts.js'
+import { SqliteAgentSettingsRepository } from '../durable/settings-repository.js'
 import { SqliteCodexInteractionRepository } from '../durable/interaction-repository.js'
 import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
@@ -39,6 +40,7 @@ import {
   type OutboxDeliveryWorkerOptions,
 } from './outbox-delivery-worker.js'
 import { PersonalAlphaCommands } from './personal-alpha-commands.js'
+import type { AgentApprovalPolicy, AgentSandboxMode } from './contracts.js'
 
 export interface DurableTextRuntimeOptions {
   database: Database
@@ -47,7 +49,10 @@ export interface DurableTextRuntimeOptions {
   botId: string
   projects: readonly ProjectDefinition[]
   telegram: DurableTelegramTextGatewayOptions
-  codex?: CodexAppServerBackendOptions & { interactionTimeoutMs?: number }
+  codex?: CodexAppServerBackendOptions & {
+    interactionTimeoutMs?: number
+    allowedSandboxModes?: readonly AgentSandboxMode[]
+  }
   inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId' | 'commandHandler'> & { workerId?: string }
   outboxWorker?: Omit<OutboxDeliveryWorkerOptions, 'workerId'> & { workerId?: string }
 }
@@ -114,6 +119,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const inbox = new SqliteInboxRepository(options.database)
   const outbox = new SqliteOutboxRepository(options.database)
   const sessions = new SqliteSessionRepository(options.database)
+  const settings = new SqliteAgentSettingsRepository(options.database)
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
   const backendOptions: CodexAppServerBackendOptions = {
     ...(options.codex?.turnTimeoutMs === undefined ? {} : { turnTimeoutMs: options.codex.turnTimeoutMs }),
@@ -133,13 +139,34 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     outbox,
     interactionTimeoutMs === undefined ? {} : { interactionTimeoutMs },
   )
-  const telegram = new DurableTelegramTextGateway(options.telegramApi, options.telegram)
+  const telegram = new DurableTelegramTextGateway(options.telegramApi, {
+    ...options.telegram,
+    projectIdForChat: (chatId) => {
+      const selected = settings.getSelectedProject(options.botId, chatId)
+      return selected !== null && projectIds.has(selected)
+        ? selected
+        : options.telegram.defaultProjectId
+    },
+  })
   const coordinator = new DurableSessionCoordinator(
     sessions,
     backend,
     new StaticProjectResolver(options.projects),
+    { settingsProvider: settings },
   )
-  const commands = new PersonalAlphaCommands(sessions, backend, outbox)
+  const approvalDefault = options.codex?.turnDefaults?.approvalPolicy
+  const sandboxDefault = options.codex?.threadStartDefaults?.sandbox
+  const commands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
+    projects: options.projects,
+    defaultProjectId: options.telegram.defaultProjectId,
+    defaultApprovalPolicy: typeof approvalDefault === 'string'
+      ? approvalDefault as AgentApprovalPolicy
+      : 'on-request',
+    defaultSandbox: sandboxDefault ?? 'workspace-write',
+    ...(options.codex?.allowedSandboxModes === undefined
+      ? {}
+      : { allowedSandboxModes: options.codex.allowedSandboxModes }),
+  })
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',

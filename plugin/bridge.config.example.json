@@ -13,6 +13,8 @@
   },
   "codex": {
     "approvalPolicy": "on-request",
+    "sandboxMode": "workspace-write",
+    "allowedSandboxModes": ["read-only", "workspace-write"],
     "interactionTimeoutMs": 600000
   }
 }

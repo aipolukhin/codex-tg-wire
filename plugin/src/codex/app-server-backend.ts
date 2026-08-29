@@ -1,5 +1,7 @@
 import type {
   AgentBackend,
+  AgentModel,
+  AgentSandboxMode,
   AgentTextTurnInput,
   AgentTurnLifecycle,
   TextTurnResult,
@@ -8,6 +10,8 @@ import { AppServerClosedError, type CodexAppServerClient } from './app-server-cl
 import { textInput } from './protocol.js'
 import type {
   ServerNotification,
+  ModelListParams,
+  ModelListResult,
   ThreadResumeParams,
   ThreadResult,
   ThreadStartParams,
@@ -25,6 +29,7 @@ interface CodexBackendClient {
   startTurn(params: TurnStartParams): Promise<TurnStartResult>
   interruptTurn(params: TurnInterruptParams): Promise<void>
   steerTurn(params: TurnSteerParams): Promise<TurnSteerResult>
+  listModels(params?: ModelListParams): Promise<ModelListResult>
   onNotification(listener: (notification: ServerNotification) => void): () => void
   onClose(listener: (close: TransportClose) => void): () => void
 }
@@ -114,6 +119,23 @@ export class CodexTurnTimeoutError extends Error {
 
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000
 
+function sandboxPolicy(mode: AgentSandboxMode) {
+  switch (mode) {
+    case 'read-only':
+      return { type: 'readOnly' as const, networkAccess: false }
+    case 'workspace-write':
+      return {
+        type: 'workspaceWrite' as const,
+        writableRoots: [],
+        networkAccess: false,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false,
+      }
+    case 'danger-full-access':
+      return { type: 'dangerFullAccess' as const }
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -200,6 +222,32 @@ export class CodexAppServerBackend implements AgentBackend {
     this.unsubscribeClose = client.onClose((close) => this.handleClose(close))
   }
 
+  async listModels(): Promise<AgentModel[]> {
+    const models = new Map<string, AgentModel>()
+    const seenCursors = new Set<string>()
+    let cursor: string | null = null
+    for (let page = 0; page < 100; page += 1) {
+      const result = await this.client.listModels({ cursor, limit: 100, includeHidden: false })
+      for (const model of result.data) {
+        if (model.hidden) continue
+        models.set(model.model, {
+          id: model.id,
+          model: model.model,
+          displayName: model.displayName,
+          isDefault: model.isDefault,
+          supportedEfforts: (model.supportedReasoningEfforts ?? [])
+            .map((option) => option.reasoningEffort),
+          defaultEffort: model.defaultReasoningEffort ?? null,
+        })
+      }
+      cursor = result.nextCursor
+      if (cursor === null) return [...models.values()]
+      if (seenCursors.has(cursor)) throw new CodexTurnProtocolError('model/list cursor loop detected')
+      seenCursors.add(cursor)
+    }
+    throw new CodexTurnProtocolError('model/list exceeded 100 pages')
+  }
+
   async runTextTurn(
     input: AgentTextTurnInput,
     lifecycle: AgentTurnLifecycle = {},
@@ -217,6 +265,14 @@ export class CodexAppServerBackend implements AgentBackend {
       await lifecycle.onThreadReady?.(threadId, thread.created)
       const started = await this.client.startTurn({
         ...this.turnDefaults,
+        ...(input.settings?.model === undefined ? {} : { model: input.settings.model }),
+        ...(input.settings?.effort === undefined ? {} : { effort: input.settings.effort }),
+        ...(input.settings?.approvalPolicy === undefined
+          ? {}
+          : { approvalPolicy: input.settings.approvalPolicy }),
+        ...(input.settings?.sandbox === undefined
+          ? {}
+          : { sandboxPolicy: sandboxPolicy(input.settings.sandbox) }),
         threadId,
         clientUserMessageId: input.operationKey,
         input: [textInput(input.text)],
@@ -293,12 +349,22 @@ export class CodexAppServerBackend implements AgentBackend {
     if (input.threadId === null) {
       const started = await this.client.startThread({
         ...this.threadStartDefaults,
+        ...(input.settings?.model === undefined ? {} : { model: input.settings.model }),
+        ...(input.settings?.approvalPolicy === undefined
+          ? {}
+          : { approvalPolicy: input.settings.approvalPolicy }),
+        ...(input.settings?.sandbox === undefined ? {} : { sandbox: input.settings.sandbox }),
         cwd: input.cwd,
       })
       return { id: started.thread.id, created: true }
     }
     const resumed = await this.client.resumeThread({
       ...this.threadResumeDefaults,
+      ...(input.settings?.model === undefined ? {} : { model: input.settings.model }),
+      ...(input.settings?.approvalPolicy === undefined
+        ? {}
+        : { approvalPolicy: input.settings.approvalPolicy }),
+      ...(input.settings?.sandbox === undefined ? {} : { sandbox: input.settings.sandbox }),
       threadId: input.threadId,
       cwd: input.cwd,
     })

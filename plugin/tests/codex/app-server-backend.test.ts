@@ -13,6 +13,8 @@ import {
   CodexTurnTimeoutError,
 } from '../../src/codex/app-server-backend.js'
 import type {
+  ModelListParams,
+  ModelListResult,
   ServerNotification,
   ThreadResumeParams,
   ThreadResult,
@@ -31,11 +33,18 @@ class FakeBackendClient {
   readonly turnStarts: TurnStartParams[] = []
   readonly interrupts: TurnInterruptParams[] = []
   readonly steers: TurnSteerParams[] = []
+  readonly modelLists: ModelListParams[] = []
   readonly notificationListeners = new Set<(notification: ServerNotification) => void>()
   readonly closeListeners = new Set<(close: TransportClose) => void>()
   threadIds = ['thread-1']
   turnIds = new Map<string, string>([['thread-1', 'turn-1']])
   emitDuringTurnStart: (() => void) | undefined
+  modelPages: ModelListResult[] = [{ data: [], nextCursor: null }]
+
+  async listModels(_params: ModelListParams = {}): Promise<ModelListResult> {
+    this.modelLists.push(_params)
+    return this.modelPages.shift() ?? { data: [], nextCursor: null }
+  }
 
   async startThread(params: ThreadStartParams): Promise<ThreadResult> {
     this.threadStarts.push(params)
@@ -127,6 +136,83 @@ async function waitForTurnStart(client: FakeBackendClient, count = 1): Promise<v
 }
 
 describe('CodexAppServerBackend text turns', () => {
+  test('paginates the live model catalog and exposes reasoning capabilities', async () => {
+    const client = new FakeBackendClient()
+    client.modelPages = [
+      {
+        data: [{
+          id: 'gpt-a-id',
+          model: 'gpt-a',
+          displayName: 'GPT A',
+          hidden: false,
+          isDefault: true,
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low', description: 'Fast' },
+            { reasoningEffort: 'high', description: 'Deep' },
+          ],
+          defaultReasoningEffort: 'high',
+        }],
+        nextCursor: 'page-2',
+      },
+      {
+        data: [{
+          id: 'hidden-id',
+          model: 'hidden',
+          displayName: 'Hidden',
+          hidden: true,
+          isDefault: false,
+        }],
+        nextCursor: null,
+      },
+    ]
+    const backend = new CodexAppServerBackend(client)
+
+    expect(await backend.listModels()).toEqual([{
+      id: 'gpt-a-id',
+      model: 'gpt-a',
+      displayName: 'GPT A',
+      isDefault: true,
+      supportedEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+    }])
+    expect(client.modelLists).toEqual([
+      { cursor: null, limit: 100, includeHidden: false },
+      { cursor: 'page-2', limit: 100, includeHidden: false },
+    ])
+    backend.close()
+  })
+
+  test('applies per-project settings to thread and turn protocol calls', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    const running = backend.runTextTurn({
+      ...turnInput(),
+      settings: {
+        model: 'gpt-a',
+        effort: 'high',
+        sandbox: 'read-only',
+        approvalPolicy: 'never',
+      },
+    })
+    await waitForTurnStart(client)
+
+    expect(client.threadStarts).toEqual([{
+      model: 'gpt-a',
+      approvalPolicy: 'never',
+      sandbox: 'read-only',
+      cwd: '/workspace/project',
+    }])
+    expect(client.turnStarts[0]).toMatchObject({
+      model: 'gpt-a',
+      effort: 'high',
+      approvalPolicy: 'never',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    })
+    emitCompleted(client, 'thread-1', 'turn-1', 'done')
+    await running
+    backend.close()
+  })
+
   test('creates a thread, correlates terminal events and returns final_answer text', async () => {
     const client = new FakeBackendClient()
     const backend = new CodexAppServerBackend(client, {

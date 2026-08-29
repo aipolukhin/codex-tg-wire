@@ -1,5 +1,8 @@
 import type {
   AgentBackend,
+  AgentApprovalPolicy,
+  AgentModel,
+  AgentSandboxMode,
   CommandHandler,
   CommandOperation,
   CommandResult,
@@ -11,11 +14,17 @@ import type {
   DeliveryProblemState,
   OutboxRepository,
 } from '../durable/contracts.js'
+import { SqliteAgentSettingsRepository } from '../durable/settings-repository.js'
 import type { SqliteSessionRepository } from '../durable/session-repository.js'
 
 export interface PersonalAlphaCommandsOptions {
   backendName?: string
   now?: () => number
+  projects: readonly { id: string; cwd: string }[]
+  defaultProjectId: string
+  defaultApprovalPolicy?: AgentApprovalPolicy
+  defaultSandbox?: AgentSandboxMode
+  allowedSandboxModes?: readonly AgentSandboxMode[]
 }
 
 const PROBLEM_LIST_LIMIT = 10
@@ -28,15 +37,34 @@ function problemLine(job: DeliveryJob): string {
 export class PersonalAlphaCommands implements CommandHandler {
   private readonly backendName: string
   private readonly now: () => number
+  private readonly projects: ReadonlyMap<string, { id: string; cwd: string }>
+  private readonly defaultProjectId: string
+  private readonly defaultApprovalPolicy: AgentApprovalPolicy
+  private readonly defaultSandbox: AgentSandboxMode
+  private readonly allowedSandboxModes: ReadonlySet<AgentSandboxMode>
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
     private readonly backend: AgentBackend,
     private readonly outbox: OutboxRepository,
-    options: PersonalAlphaCommandsOptions = {},
+    private readonly settings: SqliteAgentSettingsRepository,
+    options: PersonalAlphaCommandsOptions,
   ) {
     this.backendName = options.backendName ?? 'codex'
     this.now = options.now ?? Date.now
+    this.projects = new Map(options.projects.map((project) => [project.id, project]))
+    this.defaultProjectId = options.defaultProjectId
+    this.defaultApprovalPolicy = options.defaultApprovalPolicy ?? 'on-request'
+    this.defaultSandbox = options.defaultSandbox ?? 'workspace-write'
+    this.allowedSandboxModes = new Set(
+      options.allowedSandboxModes ?? ['read-only', 'workspace-write'],
+    )
+    if (!this.projects.has(this.defaultProjectId)) {
+      throw new TypeError(`default project is not configured: ${this.defaultProjectId}`)
+    }
+    if (!this.allowedSandboxModes.has(this.defaultSandbox)) {
+      throw new TypeError('default sandbox must be included in allowedSandboxModes')
+    }
   }
 
   async handleCommand(operation: CommandOperation): Promise<CommandResult> {
@@ -49,6 +77,7 @@ export class PersonalAlphaCommands implements CommandHandler {
             '/new — новый thread · /status — состояние · /stop — остановить turn',
             '/steer <текст> — уточнить задачу внутри активного turn',
             '/threads — сохранённые Codex threads',
+            '/model · /effort · /sandbox · /approval · /cwd — настройки',
             '/failed · /ambiguous — problem center доставки',
           ].join('\n'),
         }
@@ -76,11 +105,26 @@ export class PersonalAlphaCommands implements CommandHandler {
         return { text: this.selectThread(operation, false) }
       case 'resume':
         return { text: this.selectThread(operation, true) }
+      case 'model':
+        return { text: await this.model(operation) }
+      case 'effort':
+        return { text: await this.effort(operation) }
+      case 'sandbox':
+        return { text: this.sandbox(operation) }
+      case 'approval':
+        return { text: this.approval(operation) }
+      case 'cwd':
+        return { text: this.cwd(operation) }
     }
   }
 
   private status(operation: CommandOperation): string {
     const command = operation.command
+    const settings = this.settings.getProjectSettings(
+      operation.botId,
+      command.chatId,
+      command.projectId,
+    )
     const overview = this.sessions.getOverview(
       operation.botId,
       command.chatId,
@@ -88,7 +132,14 @@ export class PersonalAlphaCommands implements CommandHandler {
       this.backendName,
     )
     if (overview.session === null) {
-      return `Проект: ${command.projectId}\nThread ещё не создан.`
+      return [
+        `Проект: ${command.projectId}`,
+        'Thread ещё не создан.',
+        `Model: ${settings?.model ?? 'Codex default'}`,
+        `Effort: ${settings?.effort ?? 'model default'}`,
+        `Sandbox: ${settings?.sandbox ?? this.defaultSandbox}`,
+        `Approval: ${settings?.approvalPolicy ?? this.defaultApprovalPolicy}`,
+      ].join('\n')
     }
     const thread = overview.binding === null
       ? 'не создан'
@@ -96,7 +147,15 @@ export class PersonalAlphaCommands implements CommandHandler {
     const turn = overview.latestTurn === null
       ? 'нет'
       : `${overview.latestTurn.backendTurnId ?? overview.latestTurn.id} (${overview.latestTurn.state})`
-    return `Проект: ${command.projectId}\nThread: ${thread}\nПоследний turn: ${turn}`
+    return [
+      `Проект: ${command.projectId}`,
+      `Thread: ${thread}`,
+      `Последний turn: ${turn}`,
+      `Model: ${settings?.model ?? 'Codex default'}`,
+      `Effort: ${settings?.effort ?? 'model default'}`,
+      `Sandbox: ${settings?.sandbox ?? this.defaultSandbox}`,
+      `Approval: ${settings?.approvalPolicy ?? this.defaultApprovalPolicy}`,
+    ].join('\n')
   }
 
   private reset(operation: CommandOperation): string {
@@ -295,6 +354,229 @@ export class PersonalAlphaCommands implements CommandHandler {
           ? `Thread ${targetId} архивирован и отвязан. Следующее сообщение создаст новый.`
           : `Thread ${targetId} архивирован.`
     }
+  }
+
+  private async model(operation: CommandOperation): Promise<string> {
+    const requested = operation.command.args.trim()
+    if (requested.toLowerCase() === 'default') {
+      this.settings.updateProjectSettings(
+        operation.botId,
+        operation.command.chatId,
+        operation.command.projectId,
+        { model: null, effort: null },
+        this.now(),
+      )
+      return 'Model и effort сброшены к значениям Codex по умолчанию.'
+    }
+    const models = await this.backend.listModels()
+    const current = this.settings.getProjectSettings(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+    )
+    if (requested.length === 0) return this.formatModels(models, current?.model ?? null)
+    const normalized = requested.toLowerCase()
+    const selected = models.find(
+      (model) => model.model.toLowerCase() === normalized || model.id.toLowerCase() === normalized,
+    )
+    if (selected === undefined) {
+      return `Model ${requested} отсутствует в текущем Codex model/list. Используй /model.`
+    }
+    const keepEffort = current?.effort !== null && current?.effort !== undefined &&
+      selected.supportedEfforts.includes(current.effort)
+      ? current.effort
+      : null
+    this.settings.updateProjectSettings(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      { model: selected.model, effort: keepEffort },
+      this.now(),
+    )
+    return `Model для проекта ${operation.command.projectId}: ${selected.model}.`
+  }
+
+  private formatModels(models: readonly AgentModel[], current: string | null): string {
+    if (models.length === 0) return 'Codex не вернул доступных моделей.'
+    const lines = models.slice(0, 20).map((model) => {
+      const marker = current === model.model || (current === null && model.isDefault) ? '●' : '○'
+      const efforts = model.supportedEfforts.length === 0
+        ? ''
+        : ` · effort: ${model.supportedEfforts.join(',')}`
+      return `${marker} ${model.model} — ${model.displayName}${efforts}`
+    })
+    if (models.length > 20) lines.push(`…ещё ${models.length - 20}`)
+    lines.push('/model <id> · /model default')
+    return lines.join('\n')
+  }
+
+  private async effort(operation: CommandOperation): Promise<string> {
+    const requested = operation.command.args.trim()
+    if (requested.toLowerCase() === 'default') {
+      this.settings.updateProjectSettings(
+        operation.botId,
+        operation.command.chatId,
+        operation.command.projectId,
+        { effort: null },
+        this.now(),
+      )
+      return 'Effort сброшен к значению выбранной модели по умолчанию.'
+    }
+    const models = await this.backend.listModels()
+    const current = this.settings.getProjectSettings(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+    )
+    const selectedModel = current?.model === null || current?.model === undefined
+      ? models.find((model) => model.isDefault) ?? models[0]
+      : models.find((model) => model.model === current.model || model.id === current.model)
+    if (selectedModel === undefined) return 'Сначала выбери доступную модель через /model.'
+    if (requested.length === 0) {
+      const values = selectedModel.supportedEfforts
+      if (values.length === 0) return `Model ${selectedModel.model} не объявила варианты effort.`
+      return [
+        `Model: ${selectedModel.model}`,
+        ...values.map((value) => {
+          const active = current?.effort === value ||
+            (current?.effort == null && selectedModel.defaultEffort === value)
+          return `${active ? '●' : '○'} ${value}`
+        }),
+        '/effort <value> · /effort default',
+      ].join('\n')
+    }
+    const effort = selectedModel.supportedEfforts.find(
+      (value) => value.toLowerCase() === requested.toLowerCase(),
+    )
+    if (effort === undefined) {
+      return `Effort ${requested} не поддерживается model ${selectedModel.model}. Используй /effort.`
+    }
+    this.settings.updateProjectSettings(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      { effort },
+      this.now(),
+    )
+    return `Effort для ${selectedModel.model}: ${effort}.`
+  }
+
+  private sandbox(operation: CommandOperation): string {
+    const requested = operation.command.args.trim().toLowerCase()
+    if (requested.length === 0) {
+      const current = this.settings.getProjectSettings(
+        operation.botId,
+        operation.command.chatId,
+        operation.command.projectId,
+      )?.sandbox ?? this.defaultSandbox
+      return [
+        `Sandbox: ${current}`,
+        ...[...this.allowedSandboxModes].map((value) => `${value === current ? '●' : '○'} ${value}`),
+        '/sandbox <mode> · /sandbox default',
+      ].join('\n')
+    }
+    if (requested === 'default') {
+      this.settings.updateProjectSettings(
+        operation.botId,
+        operation.command.chatId,
+        operation.command.projectId,
+        { sandbox: null },
+        this.now(),
+      )
+      return `Sandbox сброшен к default: ${this.defaultSandbox}.`
+    }
+    if (
+      requested !== 'read-only' &&
+      requested !== 'workspace-write' &&
+      requested !== 'danger-full-access'
+    ) {
+      return 'Неизвестный sandbox mode. Используй /sandbox.'
+    }
+    if (!this.allowedSandboxModes.has(requested)) {
+      return `Sandbox ${requested} запрещён конфигурацией bridge.`
+    }
+    this.settings.updateProjectSettings(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      { sandbox: requested },
+      this.now(),
+    )
+    return `Sandbox для проекта ${operation.command.projectId}: ${requested}.`
+  }
+
+  private approval(operation: CommandOperation): string {
+    const requested = operation.command.args.trim().toLowerCase()
+    const values: readonly AgentApprovalPolicy[] = ['untrusted', 'on-request', 'never']
+    if (requested.length === 0) {
+      const current = this.settings.getProjectSettings(
+        operation.botId,
+        operation.command.chatId,
+        operation.command.projectId,
+      )?.approvalPolicy ?? this.defaultApprovalPolicy
+      return [
+        `Approval: ${current}`,
+        ...values.map((value) => `${value === current ? '●' : '○'} ${value}`),
+        '/approval <policy> · /approval default',
+      ].join('\n')
+    }
+    if (requested === 'default') {
+      this.settings.updateProjectSettings(
+        operation.botId,
+        operation.command.chatId,
+        operation.command.projectId,
+        { approvalPolicy: null },
+        this.now(),
+      )
+      return `Approval сброшен к default: ${this.defaultApprovalPolicy}.`
+    }
+    if (requested !== 'untrusted' && requested !== 'on-request' && requested !== 'never') {
+      return 'Неизвестная approval policy. Используй /approval.'
+    }
+    this.settings.updateProjectSettings(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      { approvalPolicy: requested },
+      this.now(),
+    )
+    return `Approval policy для проекта ${operation.command.projectId}: ${requested}.`
+  }
+
+  private cwd(operation: CommandOperation): string {
+    const requested = operation.command.args.trim()
+    const selected = this.settings.getSelectedProject(
+      operation.botId,
+      operation.command.chatId,
+    ) ?? this.defaultProjectId
+    if (requested.length === 0) {
+      return [
+        `Текущий проект: ${selected}`,
+        ...[...this.projects.values()].map(
+          (project) => `${project.id === selected ? '●' : '○'} ${project.id}`,
+        ),
+        '/cwd <project-id>',
+      ].join('\n')
+    }
+    const project = this.projects.get(requested)
+    if (project === undefined) return `Проект ${requested} не разрешён. Используй /cwd.`
+    if (project.id === selected) return `Проект ${project.id} уже выбран.`
+    const overview = this.sessions.getOverview(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      this.backendName,
+    )
+    if (overview.activeTurn !== null) {
+      return `Нельзя сменить проект: turn ${overview.activeTurn.backendTurnId ?? overview.activeTurn.id} имеет состояние ${overview.activeTurn.state}.`
+    }
+    this.settings.selectProject(
+      operation.botId,
+      operation.command.chatId,
+      project.id,
+      this.now(),
+    )
+    return `Текущий проект: ${project.id}. Следующее сообщение использует разрешённый cwd этого проекта.`
   }
 
   private formatProblemAction(

@@ -191,6 +191,11 @@ export interface ModelSummary {
   displayName: string
   hidden: boolean
   isDefault: boolean
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    description: string
+  }>
+  defaultReasoningEffort?: string
   [key: string]: unknown
 }
 

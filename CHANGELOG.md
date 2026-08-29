@@ -30,6 +30,10 @@ server identity reads `package.json` at runtime. Release process:
   the previous binding, `/threads` lists current/available/archived entries,
   `/switch` selects an available thread, and `/resume` explicitly restores a
   locally archived thread after restart.
+- Added restart-safe, per-project Codex settings. `/model` and `/effort`
+  validate against the live App Server model catalog, `/sandbox` and
+  `/approval` override turn policy, and `/cwd` selects only a configured
+  project id instead of accepting a path from Telegram.
 
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists
@@ -40,6 +44,9 @@ server identity reads `package.json` at runtime. Release process:
 - Secret user-input requests are rejected instead of being copied into
   Telegram; stale or repeated interaction callbacks cannot resolve a new or
   already-closed App Server request.
+- Sandbox switching is constrained by an operator allowlist. The default
+  configuration permits only `read-only` and `workspace-write`; enabling
+  `danger-full-access` requires an explicit bridge configuration change.
 
 ### Changed
 - Added the standalone Codex App Server backend (`bun run start:codex`) next to

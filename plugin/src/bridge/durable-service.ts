@@ -144,8 +144,15 @@ export async function bootstrapDurableBridgeService(
       codex: {
         turnTimeoutMs: config.codex.turnTimeoutMs,
         interactionTimeoutMs: config.codex.interactionTimeoutMs,
-        threadStartDefaults: { approvalPolicy: config.codex.approvalPolicy },
-        threadResumeDefaults: { approvalPolicy: config.codex.approvalPolicy },
+        threadStartDefaults: {
+          approvalPolicy: config.codex.approvalPolicy,
+          sandbox: config.codex.sandboxMode,
+        },
+        threadResumeDefaults: {
+          approvalPolicy: config.codex.approvalPolicy,
+          sandbox: config.codex.sandboxMode,
+        },
+        allowedSandboxModes: config.codex.allowedSandboxModes,
         turnDefaults: { approvalPolicy: config.codex.approvalPolicy },
       },
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },

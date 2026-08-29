@@ -101,7 +101,10 @@ beforeEach(async () => {
     codexClient: client,
     telegramApi: telegram,
     botId: 'primary',
-    projects: [{ id: 'workspace', cwd: '/srv/workspace' }],
+    projects: [
+      { id: 'workspace', cwd: '/srv/workspace' },
+      { id: 'other', cwd: '/srv/other' },
+    ],
     telegram: {
       allowedUserIds: ['7001'],
       allowedChatIds: ['7001'],
@@ -249,5 +252,53 @@ describe('durable text runtime composition', () => {
     expect(telegram.sent[0]?.text).toContain(problemId)
     expect(telegram.sent[0]?.text).not.toContain('private body')
     expect(telegram.sent[0]?.text).not.toContain('private failure detail')
+  })
+
+  test('/cwd selects a configured project for the next durable turn', async () => {
+    runtime.ingest({
+      update_id: 804,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/cwd other',
+      },
+    }, NOW)
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
+    expect(telegram.sent[0]?.text).toContain('Текущий проект: other')
+
+    runtime.ingest({
+      update_id: 805,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: 'работай в другом проекте',
+      },
+    }, NOW)
+    const processing = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    expect(threadStart).toMatchObject({ params: { cwd: '/srv/other' } })
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-other' } } })
+    const turnStart = await waitForRequest(transport, 'turn/start')
+    transport.emit({ id: turnStart.id, result: { turn: { id: 'turn-other' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-other',
+        turnId: 'turn-other',
+        item: { type: 'agentMessage', id: 'other-answer', text: 'Готово.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-other',
+        turn: { id: 'turn-other', status: 'completed', items: [] },
+      },
+    })
+    expect((await processing).outcome).toBe('enqueued')
+    expect(
+      database.query<{ project_id: string }, []>('SELECT project_id FROM sessions').get()?.project_id,
+    ).toBe('other')
   })
 })

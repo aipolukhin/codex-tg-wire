@@ -27,6 +27,7 @@
 - [x] Добавлена restart-safe FIFO-очередь turns: один активный turn на session, control updates обходят очередь, ожидание не расходует retry budget.
 - [x] Добавлен первый problem center: `/failed`, `/ambiguous`, audited `/retry`, `/resolved`, `/archive`; unsafe retry для `AMBIGUOUS` запрещён.
 - [x] Добавлен durable thread registry: `/new` сохраняет историю, `/threads`, `/switch`, `/resume` и локальный `/archive` переживают restart.
+- [x] Добавлены durable per-project настройки: `/model`, `/effort`, `/sandbox`, `/approval` и безопасный `/cwd`; model capabilities читаются из live `model/list`, а произвольный путь из Telegram принять нельзя.
 
 ## 1. Что именно мы строим
 
@@ -188,7 +189,7 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 - `/stop` вызывает `turn/interrupt` и корректно закрывает UI state.
 - Server-initiated approvals отображаются inline buttons с проверкой owner и одноразовым решением.
 - User-input requests получают durable correlation id и срок жизни.
-- `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server.
+- `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server. **Готово:** выбор проекта и overrides хранятся в SQLite по bot/chat/project; `/cwd` принимает только id из `projects[]`, а `danger-full-access` доступен только при явном включении в `allowedSandboxModes`.
 - Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn.
 - Неизвестные App Server events сохраняются диагностически и безопасно игнорируются, не валят процесс.
 

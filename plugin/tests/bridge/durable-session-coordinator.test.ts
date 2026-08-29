@@ -7,6 +7,7 @@ import type { Database } from 'bun:sqlite'
 
 import type {
   AgentBackend,
+  AgentModel,
   AgentTextTurnInput,
   AgentTurnLifecycle,
   CommandOperation,
@@ -24,6 +25,7 @@ import {
 } from '../../src/bridge/durable-session-coordinator.js'
 import { PersonalAlphaCommands } from '../../src/bridge/personal-alpha-commands.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
+import { SqliteAgentSettingsRepository } from '../../src/durable/settings-repository.js'
 import {
   SqliteInboxRepository,
   SqliteOutboxRepository,
@@ -52,6 +54,28 @@ class FakeAgentBackend implements AgentBackend {
   nextTurnId = 'codex-turn-1'
   beforeThreadWait: Promise<void> | undefined
   wait: Promise<void> | undefined
+  models: AgentModel[] = [
+    {
+      id: 'gpt-default',
+      model: 'gpt-default',
+      displayName: 'GPT Default',
+      isDefault: true,
+      supportedEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'medium',
+    },
+    {
+      id: 'gpt-fast',
+      model: 'gpt-fast',
+      displayName: 'GPT Fast',
+      isDefault: false,
+      supportedEfforts: ['low', 'medium'],
+      defaultEffort: 'low',
+    },
+  ]
+
+  async listModels(): Promise<AgentModel[]> {
+    return this.models
+  }
 
   async runTextTurn(
     input: AgentTextTurnInput,
@@ -99,6 +123,7 @@ let nowMs: number
 let inbox: SqliteInboxRepository
 let outbox: SqliteOutboxRepository
 let sessions: SqliteSessionRepository
+let settings: SqliteAgentSettingsRepository
 let backend: FakeAgentBackend
 let coordinator: DurableSessionCoordinator
 let commands: PersonalAlphaCommands
@@ -110,14 +135,22 @@ beforeEach(() => {
   inbox = new SqliteInboxRepository(database)
   outbox = new SqliteOutboxRepository(database)
   sessions = new SqliteSessionRepository(database)
+  settings = new SqliteAgentSettingsRepository(database)
   backend = new FakeAgentBackend()
   coordinator = new DurableSessionCoordinator(
     sessions,
     backend,
     new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
-    { now: () => nowMs },
+    { now: () => nowMs, settingsProvider: settings },
   )
-  commands = new PersonalAlphaCommands(sessions, backend, outbox, { now: () => nowMs })
+  commands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
+    now: () => nowMs,
+    projects: [
+      { id: 'workspace', cwd: '/srv/workspace' },
+      { id: 'other', cwd: '/srv/other' },
+    ],
+    defaultProjectId: 'workspace',
+  })
 })
 
 afterEach(() => {
@@ -395,13 +428,21 @@ describe('PersonalAlphaCommands', () => {
     inbox = new SqliteInboxRepository(database)
     outbox = new SqliteOutboxRepository(database)
     sessions = new SqliteSessionRepository(database)
+    settings = new SqliteAgentSettingsRepository(database)
     coordinator = new DurableSessionCoordinator(
       sessions,
       backend,
       new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
-      { now: () => nowMs },
+      { now: () => nowMs, settingsProvider: settings },
     )
-    commands = new PersonalAlphaCommands(sessions, backend, outbox, { now: () => nowMs })
+    commands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
+      now: () => nowMs,
+      projects: [
+        { id: 'workspace', cwd: '/srv/workspace' },
+        { id: 'other', cwd: '/srv/other' },
+      ],
+      defaultProjectId: 'workspace',
+    })
 
     expect((await commands.handleCommand(command('threads'))).text).toContain('codex-thread-1')
     expect((await commands.handleCommand(command('switch', 'codex-thread-1'))).text).toContain(
@@ -521,6 +562,69 @@ describe('PersonalAlphaCommands', () => {
     }])
     release()
     await running
+  })
+
+  test('persists validated model, effort, sandbox and approval overrides for turns', async () => {
+    expect((await commands.handleCommand(command('model'))).text).toContain('gpt-fast')
+    expect((await commands.handleCommand(command('model', 'missing'))).text).toContain(
+      'отсутствует',
+    )
+    expect((await commands.handleCommand(command('model', 'gpt-fast'))).text).toContain(
+      'gpt-fast',
+    )
+    expect((await commands.handleCommand(command('effort', 'high'))).text).toContain(
+      'не поддерживается',
+    )
+    expect((await commands.handleCommand(command('effort', 'low'))).text).toContain('low')
+    expect((await commands.handleCommand(command('sandbox', 'danger-full-access'))).text).toContain(
+      'запрещён',
+    )
+    expect((await commands.handleCommand(command('sandbox', 'read-only'))).text).toContain(
+      'read-only',
+    )
+    expect((await commands.handleCommand(command('approval', 'never'))).text).toContain('never')
+
+    await coordinator.runTextTurn(operation(631))
+    expect(backend.calls[0]?.settings).toEqual({
+      model: 'gpt-fast',
+      effort: 'low',
+      sandbox: 'read-only',
+      approvalPolicy: 'never',
+    })
+    const status = (await commands.handleCommand(command('status'))).text
+    expect(status).toContain('Model: gpt-fast')
+    expect(status).toContain('Sandbox: read-only')
+    expect(status).toContain('Approval: never')
+  })
+
+  test('/cwd selects only configured projects and refuses switching an active turn', async () => {
+    expect((await commands.handleCommand(command('cwd'))).text).toContain('● workspace')
+    expect((await commands.handleCommand(command('cwd', '/tmp/unsafe'))).text).toContain(
+      'не разрешён',
+    )
+
+    let release!: () => void
+    backend.wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const running = coordinator.runTextTurn(operation(632))
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (sessions.getTurnByOperationKey('telegram:primary:632:turn')?.state === 'ACTIVE') break
+      await Promise.resolve()
+    }
+    expect((await commands.handleCommand(command('cwd', 'workspace'))).text).toContain(
+      'уже выбран',
+    )
+    expect((await commands.handleCommand(command('cwd', 'other'))).text).toContain('Нельзя')
+    release()
+    await running
+    backend.wait = undefined
+
+    expect((await commands.handleCommand(command('cwd', 'other'))).text).toContain(
+      'Текущий проект: other',
+    )
+    expect(settings.getSelectedProject('primary', '7001')).toBe('other')
+    expect(settings.getTurnSettings('primary', '7001', 'workspace')).toEqual({})
   })
 
   test('/failed lists safe metadata and retries a failed job idempotently', async () => {

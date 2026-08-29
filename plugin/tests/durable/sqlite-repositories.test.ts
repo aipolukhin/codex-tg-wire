@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite'
 
 import { LeaseConflictError } from '../../src/durable/contracts.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
+import { SqliteAgentSettingsRepository } from '../../src/durable/settings-repository.js'
 import {
   SqliteInboxRepository,
   SqliteOutboxRepository,
@@ -46,11 +47,13 @@ describe('durable database migrations', () => {
       .all()
       .map((row) => row.name)
     expect(tables).toEqual([
+      'agent_project_settings',
       'codex_interactions',
       'delivery_jobs',
       'delivery_problem_actions',
       'schema_migrations',
       'sessions',
+      'telegram_chat_preferences',
       'telegram_poll_cursors',
       'telegram_updates',
       'thread_bindings',
@@ -63,7 +66,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(7)
+    expect(migrations?.count).toBe(8)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -125,6 +128,42 @@ describe('durable database migrations', () => {
       last_used_at_ms: NOW + 1,
     })
     upgraded.close()
+  })
+})
+
+describe('SqliteAgentSettingsRepository', () => {
+  test('persists selected project and isolated per-project overrides across restart', () => {
+    let settings = new SqliteAgentSettingsRepository(database)
+    expect(settings.getSelectedProject('primary', '7001')).toBeNull()
+    settings.selectProject('primary', '7001', 'other', NOW)
+    settings.updateProjectSettings('primary', '7001', 'other', {
+      model: 'gpt-fast',
+      effort: 'low',
+      sandbox: 'read-only',
+      approvalPolicy: 'untrusted',
+    }, NOW)
+    settings.updateProjectSettings('primary', '7001', 'other', { effort: 'medium' }, NOW + 1)
+
+    expect(settings.getTurnSettings('primary', '7001', 'other')).toEqual({
+      model: 'gpt-fast',
+      effort: 'medium',
+      sandbox: 'read-only',
+      approvalPolicy: 'untrusted',
+    })
+    expect(settings.getTurnSettings('primary', '7001', 'workspace')).toEqual({})
+
+    database.close()
+    database = openDurableDatabase(filename)
+    settings = new SqliteAgentSettingsRepository(database)
+    expect(settings.getSelectedProject('primary', '7001')).toBe('other')
+    expect(settings.getProjectSettings('primary', '7001', 'other')).toMatchObject({
+      model: 'gpt-fast',
+      effort: 'medium',
+      sandbox: 'read-only',
+      approvalPolicy: 'untrusted',
+      createdAtMs: NOW,
+      updatedAtMs: NOW + 1,
+    })
   })
 })
 

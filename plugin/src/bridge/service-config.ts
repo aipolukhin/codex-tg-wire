@@ -39,6 +39,11 @@ export const BridgeConfigFileSchema = z
         binary: z.string().trim().min(1).optional(),
         args: z.array(z.string()).min(1).optional(),
         approvalPolicy: z.enum(['untrusted', 'on-request', 'never']).default('on-request'),
+        sandboxMode: z.enum(['read-only', 'workspace-write', 'danger-full-access'])
+          .default('workspace-write'),
+        allowedSandboxModes: z.array(
+          z.enum(['read-only', 'workspace-write', 'danger-full-access']),
+        ).min(1).default(['read-only', 'workspace-write']),
         requestTimeoutMs: z.number().int().positive().default(30_000),
         turnTimeoutMs: z.number().int().positive().default(30 * 60_000),
         interactionTimeoutMs: z.number().int().positive().default(10 * 60_000),
@@ -79,6 +84,13 @@ export const BridgeConfigFileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['codex', 'interactionTimeoutMs'],
         message: 'must be less than codex.turnTimeoutMs',
+      })
+    }
+    if (!config.codex.allowedSandboxModes.includes(config.codex.sandboxMode)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['codex', 'sandboxMode'],
+        message: 'must be included in codex.allowedSandboxModes',
       })
     }
   })

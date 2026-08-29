@@ -209,6 +209,36 @@ const MIGRATIONS: readonly Migration[] = [
         ON thread_registry (session_id, backend, state, last_used_at_ms)`,
     ],
   },
+  {
+    version: 8,
+    name: 'agent_project_settings',
+    statements: [
+      `CREATE TABLE telegram_chat_preferences (
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        selected_project_id TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (bot_id, chat_id)
+      )`,
+      `CREATE TABLE agent_project_settings (
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        model TEXT,
+        effort TEXT,
+        sandbox TEXT CHECK (sandbox IS NULL OR sandbox IN
+          ('read-only', 'workspace-write', 'danger-full-access')),
+        approval_policy TEXT CHECK (approval_policy IS NULL OR approval_policy IN
+          ('untrusted', 'on-request', 'never')),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (bot_id, chat_id, project_id)
+      )`,
+      `CREATE INDEX agent_project_settings_updated_idx
+        ON agent_project_settings (updated_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

@@ -50,6 +50,8 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.telegramToken).toBe('test-token')
     expect(config.workers.inboundConcurrency).toBe(2)
     expect(config.codex.approvalPolicy).toBe('on-request')
+    expect(config.codex.sandboxMode).toBe('workspace-write')
+    expect(config.codex.allowedSandboxModes).toEqual(['read-only', 'workspace-write'])
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
   })
 
@@ -104,5 +106,22 @@ describe('loadBridgeServiceConfig', () => {
         },
       }),
     ).toThrow('must be less than codex.turnTimeoutMs')
+  })
+
+  test('requires the default sandbox to be explicitly allowed', () => {
+    const invalid = fixture({
+      codex: {
+        sandboxMode: 'danger-full-access',
+        allowedSandboxModes: ['read-only', 'workspace-write'],
+      },
+    })
+    expect(() =>
+      loadBridgeServiceConfig({
+        env: {
+          DASHI_CODEX_BRIDGE_CONFIG: invalid.path,
+          DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+        },
+      }),
+    ).toThrow('must be included in codex.allowedSandboxModes')
   })
 })

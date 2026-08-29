@@ -66,6 +66,15 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.projects).toEqual([{ id: 'main', cwd: join(root, 'workspace') }])
     expect(config.telegram.allowedUserIds).toEqual(['123456789'])
     expect(config.telegram.allowedChatIds).toEqual(['123456789', '-1001234567890'])
+    expect(config.telegram.rateLimit).toEqual({
+      perChatRefillPerSecond: 1,
+      perChatBurst: 3,
+      globalRefillPerSecond: 25,
+      globalBurst: 25,
+      maxAttempts: 3,
+      maxRetryAfterSeconds: 60,
+      jitterMaxMs: 150,
+    })
     expect(config.telegramToken).toBe('test-token')
     expect(config.workers.inboundConcurrency).toBe(2)
     expect(config.codex.approvalPolicy).toBe('on-request')

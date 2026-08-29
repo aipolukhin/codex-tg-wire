@@ -107,8 +107,16 @@ describe('DurableTelegramPoller', () => {
     ])
   })
 
-  test('replays safely after crash between durable insert and cursor advance', async () => {
-    const update = { update_id: 20, message: { text: 'survive crash' } }
+  test('replays a callback safely after crash between durable insert and cursor advance', async () => {
+    const update = {
+      update_id: 20,
+      callback_query: {
+        id: 'callback-replay',
+        data: 'dx:a:abcdef123456:once',
+        from: { id: 100 },
+        message: { message_id: 5, chat: { id: 100, type: 'private' } },
+      },
+    }
     source.batches = [[update], [update]]
     const realSink = sink()
     let crash = true

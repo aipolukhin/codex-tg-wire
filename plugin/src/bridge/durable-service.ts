@@ -19,6 +19,7 @@ import {
 } from './health.js'
 import { createDurableTextRuntime, type DurableTextRuntime } from './text-runtime.js'
 import { GroqVoiceTranscriber } from '../telegram/durable-voice-transcriber.js'
+import { DurableTelegramRateLimiter } from '../telegram/durable-rate-limiter.js'
 import type { BridgeServiceConfig } from './service-config.js'
 
 export interface DurableBridgeServiceLogger {
@@ -160,10 +161,15 @@ export async function bootstrapDurableBridgeService(
       capabilities: null,
     })
 
+    const telegramLimiter = new DurableTelegramRateLimiter({
+      ...config.telegram.rateLimit,
+      onBackoff: (event) => options.logger?.warn('Telegram rate limit backoff', event),
+    })
     const telegram = new GrammyDurableAdapter(
       bot.api,
       config.telegramToken,
       config.telegram.apiRoot,
+      telegramLimiter,
     )
     const voiceTranscriber = config.voice.provider === 'groq' && config.voiceApiKey !== null
       ? new GroqVoiceTranscriber({

@@ -9,7 +9,16 @@
   "defaultProjectId": "main",
   "telegram": {
     "allowedUserIds": ["123456789"],
-    "allowedChatIds": ["123456789"]
+    "allowedChatIds": ["123456789"],
+    "rateLimit": {
+      "perChatRefillPerSecond": 1,
+      "perChatBurst": 3,
+      "globalRefillPerSecond": 25,
+      "globalBurst": 25,
+      "maxAttempts": 3,
+      "maxRetryAfterSeconds": 60,
+      "jitterMaxMs": 150
+    }
   },
   "attachments": {
     "directory": "./state/attachments",

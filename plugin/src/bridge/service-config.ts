@@ -35,6 +35,18 @@ export const BridgeConfigFileSchema = z
         apiRoot: z.string().url().optional(),
         pollingTimeoutSeconds: z.number().int().min(0).max(50).default(30),
         maxTextLength: z.number().int().min(1).max(4_096).default(4_096),
+        rateLimit: z
+          .object({
+            perChatRefillPerSecond: z.number().positive().max(30).default(1),
+            perChatBurst: z.number().int().min(1).max(30).default(3),
+            globalRefillPerSecond: z.number().positive().max(100).default(25),
+            globalBurst: z.number().int().min(1).max(100).default(25),
+            maxAttempts: z.number().int().min(1).max(10).default(3),
+            maxRetryAfterSeconds: z.number().int().min(1).max(300).default(60),
+            jitterMaxMs: z.number().int().min(0).max(5_000).default(150),
+          })
+          .strict()
+          .default({}),
       })
       .strict(),
     attachments: z

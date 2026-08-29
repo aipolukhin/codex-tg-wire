@@ -38,14 +38,16 @@ describe('v1 deployment packaging', () => {
     expect(compose).toContain('source: ${DASHI_PROJECT_PATH:?')
     expect(ignore).toContain('bridge.config.json')
     expect(ignore).toContain('.env')
-    expect(bridgeEnvironment).toContain('DASHI_TELEGRAM_BOT_TOKEN=')
-    expect(bridgeEnvironment).not.toMatch(/DASHI_TELEGRAM_BOT_TOKEN=\S+/)
+    expect(compose).toContain('DASHI_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram-token')
+    expect(compose).toContain('DASHI_TELEGRAM_TOKEN_FILE:-./telegram-token')
+    expect(bridgeEnvironment).not.toContain('DASHI_TELEGRAM_BOT_TOKEN=')
   })
 
   test('ships a notify/watchdog systemd unit with private state', async () => {
     const unit = await text('deploy/systemd/dashi-codex-bridge.service')
 
     expect(unit).toContain('Type=notify')
+    expect(unit).toContain('LoadCredential=telegram-token:')
     expect(unit).toContain('WatchdogSec=180s')
     expect(unit).toContain('StateDirectory=dashi-codex-bridge')
     expect(unit).toContain('ConfigurationDirectory=dashi-codex-bridge')

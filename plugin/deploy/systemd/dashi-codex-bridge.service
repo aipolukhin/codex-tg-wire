@@ -10,7 +10,8 @@ NotifyAccess=all
 User=dashi-codex
 Group=dashi-codex
 WorkingDirectory=/opt/dashi-codex-bridge/current
-EnvironmentFile=/etc/dashi-codex-bridge/bridge.env
+EnvironmentFile=-/etc/dashi-codex-bridge/bridge.env
+LoadCredential=telegram-token:/etc/dashi-codex-bridge/telegram-token
 Environment=HOME=/var/lib/dashi-codex-bridge
 Environment=CODEX_HOME=/var/lib/dashi-codex-bridge/codex-home
 Environment=DASHI_CODEX_BRIDGE_CONFIG=/etc/dashi-codex-bridge/bridge.config.json

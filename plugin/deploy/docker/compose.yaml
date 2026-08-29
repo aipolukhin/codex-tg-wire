@@ -19,6 +19,9 @@ services:
       HOME: /var/lib/codex
       CODEX_HOME: /var/lib/codex
       DASHI_CODEX_BRIDGE_CONFIG: /etc/dashi-codex-bridge/bridge.config.json
+      DASHI_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram-token
+    secrets:
+      - telegram-token
     volumes:
       - type: bind
         source: ${DASHI_BRIDGE_CONFIG:-./bridge.config.json}
@@ -45,3 +48,7 @@ services:
 volumes:
   bridge-state:
   codex-home:
+
+secrets:
+  telegram-token:
+    file: ${DASHI_TELEGRAM_TOKEN_FILE:-./telegram-token}

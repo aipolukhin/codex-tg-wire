@@ -115,6 +115,30 @@ describe('runBridgeDoctor', () => {
     expect(report.checks.find((item) => item.id === 'telegram.api')?.status).toBe('fail')
   })
 
+  test('recognizes a credential file without exposing its path or value', async () => {
+    const { root, configPath } = fixture()
+    const credentialPath = join(root, 'private-telegram-token')
+    const token = '123456789:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+    writeFileSync(credentialPath, `${token}\n`, { mode: 0o600 })
+    const report = await runBridgeDoctor({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: configPath,
+        DASHI_TELEGRAM_BOT_TOKEN_FILE: credentialPath,
+      },
+      runCommand: compatibleCodex,
+    })
+    const output = formatBridgeDoctorReport(report, [token])
+
+    expect(report.ok).toBeTrue()
+    expect(report.checks).toContainEqual({
+      id: 'credentials.telegram',
+      status: 'pass',
+      message: 'Telegram bot token is provided through file',
+    })
+    expect(output).not.toContain(token)
+    expect(output).not.toContain(credentialPath)
+  })
+
   test('stops cleanly on invalid JSON without attempting runtime checks', async () => {
     const { configPath } = fixture()
     writeFileSync(configPath, '{')

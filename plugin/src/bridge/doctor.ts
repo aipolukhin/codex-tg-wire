@@ -8,6 +8,9 @@ import { LATEST_DURABLE_SCHEMA_VERSION } from '../durable/database.js'
 import { redactSecrets } from '../safety/redact.js'
 import {
   loadBridgeRuntimeConfig,
+  resolveBridgeCredential,
+  TELEGRAM_CREDENTIAL_OPTIONS,
+  GROQ_CREDENTIAL_OPTIONS,
   type BridgeRuntimeConfig,
   type LoadBridgeServiceConfigOptions,
 } from './service-config.js'
@@ -63,14 +66,6 @@ function defaultRunCommand(command: string, args: readonly string[]): DoctorComm
     stderr: result.stderr ?? '',
     ...(result.error === undefined ? {} : { error: result.error }),
   }
-}
-
-function credential(env: NodeJS.ProcessEnv, names: readonly string[]): string | null {
-  for (const name of names) {
-    const value = env[name]?.trim()
-    if (value) return value
-  }
-  return null
 }
 
 function nearestExistingPath(path: string): string {
@@ -270,18 +265,49 @@ export async function runBridgeDoctor(
     return { ok: false, checks }
   }
 
-  const telegramToken = credential(env, ['DASHI_TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_TOKEN'])
-  checks.push(
-    telegramToken === null
-      ? check('credentials.telegram', 'fail', 'DASHI_TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is missing')
-      : check('credentials.telegram', 'pass', 'Telegram bot token is provided through the environment'),
-  )
-  if (config.voice.provider === 'groq') {
+  let telegramToken: string | null = null
+  try {
+    const credential = resolveBridgeCredential(env, TELEGRAM_CREDENTIAL_OPTIONS)
+    telegramToken = credential?.value ?? null
     checks.push(
-      credential(env, ['GROQ_API_KEY']) === null
-        ? check('credentials.voice', 'fail', 'GROQ_API_KEY is missing for voice.provider=groq')
-        : check('credentials.voice', 'pass', 'Groq API key is provided through the environment'),
+      credential === null
+        ? check(
+            'credentials.telegram',
+            'fail',
+            'Telegram bot token is missing from environment and credential file sources',
+          )
+        : check(
+            'credentials.telegram',
+            'pass',
+            `Telegram bot token is provided through ${credential.source}`,
+          ),
     )
+  } catch (error) {
+    checks.push(check(
+      'credentials.telegram',
+      'fail',
+      error instanceof Error ? error.message : 'Telegram credential check failed',
+    ))
+  }
+  if (config.voice.provider === 'groq') {
+    try {
+      const credential = resolveBridgeCredential(env, GROQ_CREDENTIAL_OPTIONS)
+      checks.push(
+        credential === null
+          ? check('credentials.voice', 'fail', 'Groq API key is missing for voice.provider=groq')
+          : check(
+              'credentials.voice',
+              'pass',
+              `Groq API key is provided through ${credential.source}`,
+            ),
+      )
+    } catch (error) {
+      checks.push(check(
+        'credentials.voice',
+        'fail',
+        error instanceof Error ? error.message : 'Groq credential check failed',
+      ))
+    }
   }
 
   for (const project of config.projects) {

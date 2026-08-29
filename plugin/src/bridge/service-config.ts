@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { existsSync, lstatSync, readFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { z } from 'zod'
 
@@ -222,6 +222,75 @@ export interface LoadBridgeServiceConfigOptions {
   cwd?: string
 }
 
+export interface BridgeCredential {
+  value: string
+  source: 'environment' | 'file'
+}
+
+export interface BridgeCredentialOptions {
+  environmentNames: readonly string[]
+  fileEnvironmentName: string
+  systemdCredentialName: string
+  label: string
+}
+
+const MAX_CREDENTIAL_BYTES = 64 * 1024
+
+/** Resolves a secret without ever returning its path or value in an error. */
+export function resolveBridgeCredential(
+  env: NodeJS.ProcessEnv,
+  options: BridgeCredentialOptions,
+): BridgeCredential | null {
+  for (const name of options.environmentNames) {
+    const value = env[name]?.trim()
+    if (value) return { value, source: 'environment' }
+  }
+
+  const explicitPath = env[options.fileEnvironmentName]?.trim()
+  const credentialsDirectory = env.CREDENTIALS_DIRECTORY?.trim()
+  const path = explicitPath || (
+    credentialsDirectory
+      ? join(credentialsDirectory, options.systemdCredentialName)
+      : ''
+  )
+  if (!path) return null
+  if (!existsSync(path)) {
+    if (explicitPath) throw new Error(`${options.label} credential file does not exist`)
+    return null
+  }
+
+  try {
+    const stat = lstatSync(path)
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error('credential source is not a regular file')
+    }
+    if (stat.size <= 0 || stat.size > MAX_CREDENTIAL_BYTES) {
+      throw new Error('credential file has an invalid size')
+    }
+    const value = readFileSync(path, 'utf8').trim()
+    if (!value || value.includes('\0')) throw new Error('credential file is empty or invalid')
+    return { value, source: 'file' }
+  } catch (error) {
+    throw new Error(
+      `cannot read ${options.label} credential file: ${error instanceof Error ? error.message : 'read failed'}`,
+    )
+  }
+}
+
+export const TELEGRAM_CREDENTIAL_OPTIONS: BridgeCredentialOptions = {
+  environmentNames: ['DASHI_TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_TOKEN'],
+  fileEnvironmentName: 'DASHI_TELEGRAM_BOT_TOKEN_FILE',
+  systemdCredentialName: 'telegram-token',
+  label: 'Telegram bot token',
+}
+
+export const GROQ_CREDENTIAL_OPTIONS: BridgeCredentialOptions = {
+  environmentNames: ['GROQ_API_KEY'],
+  fileEnvironmentName: 'GROQ_API_KEY_FILE',
+  systemdCredentialName: 'groq-api-key',
+  label: 'Groq API key',
+}
+
 function absoluteFrom(baseDirectory: string, value: string): string {
   if (value === ':memory:' || isAbsolute(value)) return value
   return resolve(baseDirectory, value)
@@ -294,15 +363,16 @@ export function loadBridgeServiceConfig(
 ): BridgeServiceConfig {
   const env = options.env ?? process.env
   const config = loadBridgeRuntimeConfig(options)
-  const telegramToken = (
-    env.DASHI_TELEGRAM_BOT_TOKEN ?? env.TELEGRAM_BOT_TOKEN ?? ''
-  ).trim()
-  if (telegramToken.length === 0) {
-    throw new Error('DASHI_TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is required')
+  const telegramCredential = resolveBridgeCredential(env, TELEGRAM_CREDENTIAL_OPTIONS)
+  if (telegramCredential === null) {
+    throw new Error(
+      'Telegram bot token is required via environment, DASHI_TELEGRAM_BOT_TOKEN_FILE or systemd credential telegram-token',
+    )
   }
-  const voiceApiKey = (env.GROQ_API_KEY ?? '').trim() || null
+  const telegramToken = telegramCredential.value
+  const voiceApiKey = resolveBridgeCredential(env, GROQ_CREDENTIAL_OPTIONS)?.value ?? null
   if (config.voice.provider === 'groq' && voiceApiKey === null) {
-    throw new Error('GROQ_API_KEY is required when voice.provider is groq')
+    throw new Error('Groq API key is required when voice.provider is groq')
   }
 
   return { ...config, telegramToken, voiceApiKey }

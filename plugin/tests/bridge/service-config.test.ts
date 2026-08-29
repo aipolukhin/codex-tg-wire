@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -137,11 +137,60 @@ describe('loadBridgeServiceConfig', () => {
     ).toThrow('Unrecognized key')
   })
 
+  test('loads credentials from explicit files and systemd credential directory', () => {
+    const enabled = fixture({ voice: { provider: 'groq' } })
+    const telegramPath = join(enabled.root, 'telegram-token')
+    const groqPath = join(enabled.root, 'groq-api-key')
+    writeFileSync(telegramPath, 'file-telegram-token\n', { mode: 0o600 })
+    writeFileSync(groqPath, 'file-groq-key\n', { mode: 0o600 })
+
+    const explicit = loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: enabled.path,
+        DASHI_TELEGRAM_BOT_TOKEN_FILE: telegramPath,
+        GROQ_API_KEY_FILE: groqPath,
+      },
+    })
+    expect(explicit.telegramToken).toBe('file-telegram-token')
+    expect(explicit.voiceApiKey).toBe('file-groq-key')
+
+    const systemd = loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: enabled.path,
+        CREDENTIALS_DIRECTORY: enabled.root,
+      },
+    })
+    expect(systemd.telegramToken).toBe('file-telegram-token')
+    expect(systemd.voiceApiKey).toBe('file-groq-key')
+  })
+
+  test('prefers environment credentials and rejects unsafe credential files', () => {
+    const valid = fixture()
+    expect(loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: valid.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'environment-wins',
+        DASHI_TELEGRAM_BOT_TOKEN_FILE: join(valid.root, 'missing'),
+      },
+    }).telegramToken).toBe('environment-wins')
+
+    const target = join(valid.root, 'real-token')
+    const link = join(valid.root, 'token-link')
+    writeFileSync(target, 'must-not-follow', { mode: 0o600 })
+    symlinkSync(target, link)
+    expect(() => loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: valid.path,
+        DASHI_TELEGRAM_BOT_TOKEN_FILE: link,
+      },
+    })).toThrow('not a regular file')
+  })
+
   test('requires explicit credentials and a configured default project', () => {
     const missingToken = fixture()
     expect(() =>
       loadBridgeServiceConfig({ env: { DASHI_CODEX_BRIDGE_CONFIG: missingToken.path } }),
-    ).toThrow('DASHI_TELEGRAM_BOT_TOKEN')
+    ).toThrow('Telegram bot token is required')
 
     const badProject = fixture({ defaultProjectId: 'missing' })
     expect(() =>
@@ -250,7 +299,7 @@ describe('loadBridgeServiceConfig', () => {
     const enabled = fixture({ voice: { provider: 'groq' } })
     expect(() => loadBridgeServiceConfig({
       env: { DASHI_CODEX_BRIDGE_CONFIG: enabled.path, DASHI_TELEGRAM_BOT_TOKEN: 'safe' },
-    })).toThrow('GROQ_API_KEY')
+    })).toThrow('Groq API key is required')
     expect(loadBridgeServiceConfig({
       env: {
         DASHI_CODEX_BRIDGE_CONFIG: enabled.path,

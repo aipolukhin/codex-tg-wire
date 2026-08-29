@@ -11,12 +11,21 @@ server identity reads `package.json` at runtime. Release process:
 
 ## [Unreleased]
 
+### Added
+- Added durable Codex App Server interactions: command/file approvals use
+  owner-checked inline buttons, non-secret user-input requests support option
+  buttons and `/answer`, and all prompts, edits and callback acknowledgements
+  pass through the SQLite outbox.
+
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists
   are required; the optional bot-id pin is supplied by each deployment.
 - Removed deployment-specific paths, session names and archived operational
   artifacts from the public tree. Permission policy and tmux targets now come
   from explicit config/environment or fail closed.
+- Secret user-input requests are rejected instead of being copied into
+  Telegram; stale or repeated interaction callbacks cannot resolve a new or
+  already-closed App Server request.
 
 ### Changed
 - Added the standalone Codex App Server backend (`bun run start:codex`) next to

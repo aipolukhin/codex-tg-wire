@@ -119,6 +119,39 @@ const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 4,
+    name: 'codex_interactions',
+    statements: [
+      `CREATE TABLE codex_interactions (
+        id TEXT PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        connection_id TEXT NOT NULL,
+        server_request_id_json TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        kind TEXT NOT NULL
+          CHECK (kind IN ('COMMAND_APPROVAL', 'FILE_APPROVAL', 'USER_INPUT')),
+        request_json TEXT NOT NULL,
+        answers_json TEXT NOT NULL DEFAULT '{}',
+        response_json TEXT,
+        state TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (state IN ('PENDING', 'RESOLVING', 'RESOLVED', 'EXTERNALLY_RESOLVED', 'STALE', 'EXPIRED', 'FAILED')),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        resolved_at_ms INTEGER,
+        last_error TEXT,
+        UNIQUE (connection_id, server_request_id_json)
+      )`,
+      `CREATE INDEX codex_interactions_pending_idx
+        ON codex_interactions (state, expires_at_ms, created_at_ms)`,
+      `CREATE INDEX codex_interactions_thread_idx
+        ON codex_interactions (thread_id, state, created_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

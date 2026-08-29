@@ -1,7 +1,7 @@
 import type { Api } from 'grammy'
 import type { Update } from 'grammy/types'
 
-import type { TelegramTextApi } from './durable-text-gateway.js'
+import type { TelegramMessageOptions, TelegramTextApi } from './durable-text-gateway.js'
 import type {
   TelegramGetUpdatesOptions,
   TelegramUpdateSource,
@@ -16,9 +16,22 @@ export class GrammyDurableAdapter implements TelegramTextApi, TelegramUpdateSour
   sendMessage(
     chatId: string,
     text: string,
-    options: Record<string, never>,
+    options: TelegramMessageOptions,
   ): Promise<{ message_id: number }> {
     return this.api.sendMessage(chatId, text, options)
+  }
+
+  async editMessageText(
+    chatId: string,
+    messageId: number,
+    text: string,
+    options: TelegramMessageOptions,
+  ): Promise<unknown> {
+    return this.api.editMessageText(chatId, messageId, text, options)
+  }
+
+  answerCallbackQuery(callbackQueryId: string, options: { text?: string }): Promise<true> {
+    return this.api.answerCallbackQuery(callbackQueryId, options)
   }
 
   getUpdates(options: TelegramGetUpdatesOptions, signal?: AbortSignal): Promise<unknown[]> {

@@ -5,6 +5,7 @@ import type {
 } from '../durable/contracts.js'
 import type {
   CommandHandler,
+  InteractionHandler,
   SessionCoordinator,
   TelegramGateway,
 } from './contracts.js'
@@ -30,6 +31,7 @@ export interface InboxProcessingWorkerOptions {
   now?: () => number
   errorSummary?: (error: unknown) => string
   commandHandler?: CommandHandler
+  interactionHandler?: InteractionHandler
 }
 
 const DEFAULT_LEASE_MS = 60_000
@@ -46,6 +48,7 @@ export class InboxProcessingWorker {
   private readonly now: () => number
   private readonly errorSummary: (error: unknown) => string
   private readonly commandHandler: CommandHandler | undefined
+  private readonly interactionHandler: InteractionHandler | undefined
 
   constructor(
     private readonly inbox: InboxRepository,
@@ -61,6 +64,7 @@ export class InboxProcessingWorker {
     this.now = options.now ?? Date.now
     this.errorSummary = options.errorSummary ?? safeErrorSummary
     this.commandHandler = options.commandHandler
+    this.interactionHandler = options.interactionHandler
     if (
       !Number.isSafeInteger(this.leaseHeartbeatMs) ||
       this.leaseHeartbeatMs <= 0 ||
@@ -100,6 +104,20 @@ export class InboxProcessingWorker {
   }
 
   private async processClaimed(update: InboxUpdate): Promise<InboxRunResult> {
+    const interaction = this.telegram.extractInteractionResponse?.(update) ?? null
+    if (interaction !== null && this.interactionHandler !== undefined) {
+      const result = await this.interactionHandler.handleInteraction({
+        operationKey: `${operationKey(update)}:interaction`,
+        botId: update.botId,
+        inboxUpdateId: update.id,
+        updateId: update.updateId,
+        response: interaction,
+      })
+      this.inbox.markProcessed(update.id, this.workerId, this.now())
+      if (result.deliveryJobId === null) return { outcome: 'ignored', updateId: update.id }
+      return { outcome: 'enqueued', updateId: update.id, deliveryJobId: result.deliveryJobId }
+    }
+
     const command = this.telegram.extractCommand?.(update) ?? null
     if (command !== null && this.commandHandler !== undefined) {
       const commandKey = `${operationKey(update)}:command:${command.name}`

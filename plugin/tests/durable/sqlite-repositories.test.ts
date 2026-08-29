@@ -46,6 +46,7 @@ describe('durable database migrations', () => {
       .all()
       .map((row) => row.name)
     expect(tables).toEqual([
+      'codex_interactions',
       'delivery_jobs',
       'schema_migrations',
       'sessions',
@@ -60,7 +61,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(3)
+    expect(migrations?.count).toBe(4)
   })
 })
 

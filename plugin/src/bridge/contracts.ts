@@ -15,6 +15,48 @@ export interface IncomingCommand {
   args: string
 }
 
+export type IncomingInteractionResponse =
+  | {
+      kind: 'approval'
+      chatId: string
+      token: string
+      decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel'
+      callbackQueryId: string
+      callbackMessageId: number
+    }
+  | {
+      kind: 'user_input_option'
+      chatId: string
+      token: string
+      questionIndex: number
+      optionIndex: number
+      callbackQueryId: string
+      callbackMessageId: number
+    }
+  | {
+      kind: 'user_input_text'
+      chatId: string
+      token: string
+      questionIndex: number
+      text: string
+    }
+
+export interface InteractionOperation {
+  operationKey: string
+  botId: string
+  inboxUpdateId: number
+  updateId: number
+  response: IncomingInteractionResponse
+}
+
+export interface InteractionResult {
+  deliveryJobId: string | null
+}
+
+export interface InteractionHandler {
+  handleInteraction(operation: InteractionOperation): Promise<InteractionResult>
+}
+
 export interface CommandOperation {
   operationKey: string
   botId: string
@@ -102,6 +144,7 @@ export interface CommandDelivery {
 export interface TelegramGateway<PreparedDelivery = unknown> {
   extractText(update: InboxUpdate): IncomingTextMessage | null
   extractCommand?(update: InboxUpdate): IncomingCommand | null
+  extractInteractionResponse?(update: InboxUpdate): IncomingInteractionResponse | null
   buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput
   buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
   prepareDelivery(job: DeliveryJob): Promise<PreparedDelivery>

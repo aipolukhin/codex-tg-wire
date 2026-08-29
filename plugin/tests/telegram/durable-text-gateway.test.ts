@@ -19,11 +19,23 @@ const NOW = 1_800_000_000_000
 
 class FakeTelegramApi {
   readonly sends: Array<{ chatId: string; text: string }> = []
+  readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
+  readonly callbacks: Array<{ id: string; text?: string }> = []
   messageId = 77
 
   async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
     this.sends.push({ chatId, text })
     return { message_id: this.messageId }
+  }
+
+  async editMessageText(chatId: string, messageId: number, text: string): Promise<true> {
+    this.edits.push({ chatId, messageId, text })
+    return true
+  }
+
+  async answerCallbackQuery(id: string, options: { text?: string }): Promise<true> {
+    this.callbacks.push({ id, ...options })
+    return true
   }
 }
 
@@ -106,6 +118,63 @@ describe('DurableTelegramTextGateway inbound', () => {
     expect(gateway.extractCommand(make('/stop@other_bot'))).toBeNull()
     expect(gateway.extractCommand(make('/threads'))).toBeNull()
   })
+
+  test('authenticates and parses durable interaction callbacks and /answer', () => {
+    const approval = acceptedUpdate({
+      callback_query: {
+        id: 'cb-1',
+        data: 'dx:a:012345abcdef:once',
+        from: { id: 7001, is_bot: false },
+        message: { message_id: 55, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(approval)).toEqual({
+      kind: 'approval',
+      chatId: '7001',
+      token: '012345abcdef',
+      decision: 'accept',
+      callbackQueryId: 'cb-1',
+      callbackMessageId: 55,
+    })
+
+    const option = acceptedUpdate({
+      callback_query: {
+        id: 'cb-2',
+        data: 'dx:q:012345abcdef:1:2',
+        from: { id: 7001 },
+        message: { message_id: 56, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(option)).toMatchObject({
+      kind: 'user_input_option',
+      questionIndex: 1,
+      optionIndex: 2,
+    })
+
+    const text = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/answer@my_bot 012345abcdef 2 ship it',
+      },
+    })
+    expect(gateway.extractInteractionResponse(text)).toEqual({
+      kind: 'user_input_text',
+      chatId: '7001',
+      token: '012345abcdef',
+      questionIndex: 1,
+      text: 'ship it',
+    })
+
+    expect(gateway.extractInteractionResponse(acceptedUpdate({
+      callback_query: {
+        id: 'cb-bad',
+        data: 'dx:a:012345abcdef:once',
+        from: { id: 9999 },
+        message: { message_id: 57, chat: { id: 7001, type: 'private' } },
+      },
+    }))).toBeNull()
+  })
 })
 
 describe('DurableTelegramTextGateway outbound', () => {
@@ -151,5 +220,37 @@ describe('DurableTelegramTextGateway outbound', () => {
     api.messageId = 0
     const prepared = await gateway.prepareDelivery(claimedJob('hello'))
     await expect(gateway.executeDelivery(prepared)).rejects.toThrow('invalid message_id')
+  })
+
+  test('executes durable edits and callback acknowledgements', async () => {
+    outbox.enqueue({
+      sourceKey: 'test:edit',
+      kind: 'edit',
+      payload: {
+        chatId: '7001',
+        messageId: 88,
+        text: '✅ Resolved',
+        options: { reply_markup: { inline_keyboard: [] } },
+      },
+      createdAtMs: NOW,
+    })
+    const edit = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const preparedEdit = await gateway.prepareDelivery(edit)
+    expect(await gateway.executeDelivery(preparedEdit)).toEqual({ remoteId: 'telegram:88' })
+    expect(api.edits).toEqual([{ chatId: '7001', messageId: 88, text: '✅ Resolved' }])
+
+    outbox.failLease(edit.id, 'sender', 'test release', NOW)
+    outbox.enqueue({
+      sourceKey: 'test:callback',
+      kind: 'reaction',
+      payload: { action: 'answer_callback', callbackQueryId: 'cb-9', text: 'Принято' },
+      createdAtMs: NOW,
+    })
+    const callback = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const preparedCallback = await gateway.prepareDelivery(callback)
+    expect(await gateway.executeDelivery(preparedCallback)).toEqual({
+      remoteId: 'telegram:callback:cb-9',
+    })
+    expect(api.callbacks).toEqual([{ id: 'cb-9', text: 'Принято' }])
   })
 })

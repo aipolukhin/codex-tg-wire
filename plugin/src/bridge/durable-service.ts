@@ -141,7 +141,13 @@ export async function bootstrapDurableBridgeService(
         botUsername: identity.botUsername,
         extraSecrets: [config.telegramToken],
       },
-      codex: { turnTimeoutMs: config.codex.turnTimeoutMs },
+      codex: {
+        turnTimeoutMs: config.codex.turnTimeoutMs,
+        interactionTimeoutMs: config.codex.interactionTimeoutMs,
+        threadStartDefaults: { approvalPolicy: config.codex.approvalPolicy },
+        threadResumeDefaults: { approvalPolicy: config.codex.approvalPolicy },
+        turnDefaults: { approvalPolicy: config.codex.approvalPolicy },
+      },
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
     })

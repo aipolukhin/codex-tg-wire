@@ -54,6 +54,11 @@ export interface SessionOverview {
   activeTurn: TurnRecord | null
 }
 
+export interface ThreadSessionContext {
+  session: SessionRecord
+  binding: ThreadBindingRecord
+}
+
 export type ResetBindingResult =
   | { outcome: 'no_session' | 'already_new' }
   | { outcome: 'reset'; previousThreadId: string }
@@ -331,6 +336,19 @@ export class SqliteSessionRepository {
 
   getBinding(sessionId: string, backend = 'codex'): ThreadBindingRecord | null {
     return this.findBinding(sessionId, backend)
+  }
+
+  getContextByThread(threadId: string, backend = 'codex'): ThreadSessionContext | null {
+    const bindingRow = this.database
+      .query<BindingRow, [string, string]>(
+        'SELECT * FROM thread_bindings WHERE backend = ? AND thread_id = ?',
+      )
+      .get(backend, threadId)
+    if (bindingRow === null) return null
+    return {
+      binding: bindingFromRow(bindingRow),
+      session: this.requireSession(bindingRow.session_id),
+    }
   }
 
   getOverview(

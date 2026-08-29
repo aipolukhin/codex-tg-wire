@@ -22,6 +22,7 @@
 - [x] Добавлены durable-команды personal alpha: `/start`, `/new`, `/status`, `/stop`.
 - [x] Добавлены lease heartbeat, periodic reaper и supervisor loops с graceful drain.
 - [x] Добавлен standalone personal-alpha service: строгий конфиг без токена, grammY/Codex wiring и signal shutdown.
+- [x] Добавлен первый M3 interaction slice: durable command/file approvals, user-input questions, inline callbacks, `/answer`, expiry и stale-on-disconnect.
 
 ## 1. Что именно мы строим
 

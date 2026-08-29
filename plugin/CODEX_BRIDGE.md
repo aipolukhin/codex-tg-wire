@@ -27,7 +27,9 @@ export DASHI_CODEX_BRIDGE_CONFIG=/absolute/path/bridge.config.json
 
 Путь к нестандартному Codex можно задать как `codex.binary` в JSON или через `CODEX_BINARY_PATH`. При старте сервис проверяет токен через `getMe`, сам получает bot id/username, открывает SQLite/WAL и инициализирует `codex app-server`.
 
-Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
+Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`. Command/file approvals приходят inline-карточками. На обычные вопросы Codex можно ответить кнопкой; свободный ответ отправляется командой, указанной на карточке: `/answer <id> <номер-вопроса> <текст>`.
+
+По умолчанию `codex.approvalPolicy` равен `on-request`, а интерактивный запрос живёт 10 минут (`codex.interactionTimeoutMs`). Этот timeout должен быть меньше `codex.turnTimeoutMs`. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
 
 ## Граница безопасности
 
@@ -36,5 +38,8 @@ Personal alpha поддерживает обычный текст и коман�
 - исходящий текст проходит secret redaction;
 - update сохраняется до продвижения Telegram offset;
 - доставка после `send_started` с неизвестным результатом становится `AMBIGUOUS` и автоматически не повторяется.
+- prompts, edits и callback acknowledgements тоже проходят durable outbox;
+- первый валидный ответ выигрывает, повторный или callback от старого App Server соединения ничего не разрешает;
+- вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
 
-Это personal alpha: approvals, user-input cards, media и problem center ещё идут следующими срезами roadmap.
+Это personal alpha: permission-profile/MCP approvals, media, recovery активного turn и problem center ещё идут следующими срезами roadmap.

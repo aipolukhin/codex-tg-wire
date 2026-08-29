@@ -5,7 +5,9 @@ import {
   CodexAppServerBackend,
   type CodexAppServerBackendOptions,
 } from '../codex/app-server-backend.js'
+import { CodexInteractionBroker } from '../codex/interaction-broker.js'
 import type { TelegramUpdateInput, IngestResult } from '../durable/contracts.js'
+import { SqliteCodexInteractionRepository } from '../durable/interaction-repository.js'
 import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
   SqliteInboxRepository,
@@ -41,7 +43,7 @@ export interface DurableTextRuntimeOptions {
   botId: string
   projects: readonly ProjectDefinition[]
   telegram: DurableTelegramTextGatewayOptions
-  codex?: CodexAppServerBackendOptions
+  codex?: CodexAppServerBackendOptions & { interactionTimeoutMs?: number }
   inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId' | 'commandHandler'> & { workerId?: string }
   outboxWorker?: Omit<OutboxDeliveryWorkerOptions, 'workerId'> & { workerId?: string }
 }
@@ -85,7 +87,25 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const inbox = new SqliteInboxRepository(options.database)
   const outbox = new SqliteOutboxRepository(options.database)
   const sessions = new SqliteSessionRepository(options.database)
-  const backend = new CodexAppServerBackend(options.codexClient, options.codex)
+  const interactionTimeoutMs = options.codex?.interactionTimeoutMs
+  const backendOptions: CodexAppServerBackendOptions = {
+    ...(options.codex?.turnTimeoutMs === undefined ? {} : { turnTimeoutMs: options.codex.turnTimeoutMs }),
+    ...(options.codex?.threadStartDefaults === undefined
+      ? {}
+      : { threadStartDefaults: options.codex.threadStartDefaults }),
+    ...(options.codex?.threadResumeDefaults === undefined
+      ? {}
+      : { threadResumeDefaults: options.codex.threadResumeDefaults }),
+    ...(options.codex?.turnDefaults === undefined ? {} : { turnDefaults: options.codex.turnDefaults }),
+  }
+  const backend = new CodexAppServerBackend(options.codexClient, backendOptions)
+  const interactions = new CodexInteractionBroker(
+    options.codexClient,
+    new SqliteCodexInteractionRepository(options.database),
+    sessions,
+    outbox,
+    interactionTimeoutMs === undefined ? {} : { interactionTimeoutMs },
+  )
   const telegram = new DurableTelegramTextGateway(options.telegramApi, options.telegram)
   const coordinator = new DurableSessionCoordinator(
     sessions,
@@ -97,6 +117,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',
     commandHandler: commands,
+    interactionHandler: interactions,
   })
   const outbound = new OutboxDeliveryWorker(outbox, telegram, {
     ...options.outboxWorker,
@@ -118,6 +139,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     deliverOutboundOnce: () => outbound.runOnce(),
     recoverExpiredLeases: () => reaper.runOnce(),
     close(): void {
+      interactions.close()
       backend.close()
     },
   }

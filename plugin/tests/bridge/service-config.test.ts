@@ -49,6 +49,8 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.telegram.allowedChatIds).toEqual(['123456789', '-1001234567890'])
     expect(config.telegramToken).toBe('test-token')
     expect(config.workers.inboundConcurrency).toBe(2)
+    expect(config.codex.approvalPolicy).toBe('on-request')
+    expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
   })
 
   test('accepts the legacy token env name but never a token inside JSON', () => {
@@ -88,5 +90,19 @@ describe('loadBridgeServiceConfig', () => {
         env: { DASHI_TELEGRAM_BOT_TOKEN: 'safe' },
       }),
     ).toThrow('copy bridge.config.example.json')
+  })
+
+  test('requires interaction expiry before the overall turn timeout', () => {
+    const invalid = fixture({
+      codex: { turnTimeoutMs: 60_000, interactionTimeoutMs: 60_000 },
+    })
+    expect(() =>
+      loadBridgeServiceConfig({
+        env: {
+          DASHI_CODEX_BRIDGE_CONFIG: invalid.path,
+          DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+        },
+      }),
+    ).toThrow('must be less than codex.turnTimeoutMs')
   })
 })

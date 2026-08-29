@@ -10,5 +10,9 @@
   "telegram": {
     "allowedUserIds": ["123456789"],
     "allowedChatIds": ["123456789"]
+  },
+  "codex": {
+    "approvalPolicy": "on-request",
+    "interactionTimeoutMs": 600000
   }
 }

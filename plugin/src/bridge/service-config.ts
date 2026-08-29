@@ -38,8 +38,10 @@ export const BridgeConfigFileSchema = z
       .object({
         binary: z.string().trim().min(1).optional(),
         args: z.array(z.string()).min(1).optional(),
+        approvalPolicy: z.enum(['untrusted', 'on-request', 'never']).default('on-request'),
         requestTimeoutMs: z.number().int().positive().default(30_000),
         turnTimeoutMs: z.number().int().positive().default(30 * 60_000),
+        interactionTimeoutMs: z.number().int().positive().default(10 * 60_000),
       })
       .strict()
       .default({}),
@@ -70,6 +72,13 @@ export const BridgeConfigFileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['defaultProjectId'],
         message: 'must reference one of projects[].id',
+      })
+    }
+    if (config.codex.interactionTimeoutMs >= config.codex.turnTimeoutMs) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['codex', 'interactionTimeoutMs'],
+        message: 'must be less than codex.turnTimeoutMs',
       })
     }
   })

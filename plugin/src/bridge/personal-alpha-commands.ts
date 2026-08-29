@@ -19,6 +19,7 @@ export interface PersonalAlphaCommandsOptions {
 }
 
 const PROBLEM_LIST_LIMIT = 10
+const THREAD_LIST_LIMIT = 20
 
 function problemLine(job: DeliveryJob): string {
   return `${job.id} · ${job.kind} · попыток ${job.attemptCount} · ${new Date(job.updatedAtMs).toISOString()}`
@@ -47,6 +48,7 @@ export class PersonalAlphaCommands implements CommandHandler {
             'Отправь текст, чтобы запустить turn.',
             '/new — новый thread · /status — состояние · /stop — остановить turn',
             '/steer <текст> — уточнить задачу внутри активного turn',
+            '/threads — сохранённые Codex threads',
             '/failed · /ambiguous — problem center доставки',
           ].join('\n'),
         }
@@ -67,7 +69,13 @@ export class PersonalAlphaCommands implements CommandHandler {
       case 'resolved':
         return { text: this.problemAction(operation, 'RESOLVE') }
       case 'archive':
-        return { text: this.problemAction(operation, 'ARCHIVE') }
+        return { text: this.archive(operation) }
+      case 'threads':
+        return { text: this.threads(operation) }
+      case 'switch':
+        return { text: this.selectThread(operation, false) }
+      case 'resume':
+        return { text: this.selectThread(operation, true) }
     }
   }
 
@@ -199,6 +207,94 @@ export class PersonalAlphaCommands implements CommandHandler {
       nowMs: this.now(),
     })
     return this.formatProblemAction(action, jobId, result)
+  }
+
+  private threads(operation: CommandOperation): string {
+    const command = operation.command
+    const threads = this.sessions.listThreads(
+      operation.botId,
+      command.chatId,
+      command.projectId,
+      this.backendName,
+    )
+    if (threads.length === 0) return `Проект: ${command.projectId}\nСохранённых threads нет.`
+    const visible = threads.slice(0, THREAD_LIST_LIMIT)
+    const lines = visible.map((thread) => {
+      const marker = thread.selected
+        ? '●'
+        : thread.state === 'ARCHIVED'
+          ? '◌'
+          : thread.state === 'BROKEN'
+            ? '⚠'
+            : '○'
+      const state = thread.selected ? thread.bindingState : thread.state
+      return `${marker} ${thread.threadId} · ${state}`
+    })
+    if (threads.length > visible.length) lines.push(`…ещё ${threads.length - visible.length}`)
+    lines.push('/switch <thread-id> · /resume <archived-thread-id>')
+    return [`Проект: ${command.projectId}`, ...lines].join('\n')
+  }
+
+  private selectThread(operation: CommandOperation, resumeArchived: boolean): string {
+    const commandName = resumeArchived ? 'resume' : 'switch'
+    const parts = operation.command.args.trim().split(/\s+/).filter(Boolean)
+    if (parts.length !== 1) return `Использование: /${commandName} <thread-id>`
+    const threadId = parts[0] as string
+    const result = this.sessions.selectThread(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      this.backendName,
+      threadId,
+      resumeArchived,
+      this.now(),
+    )
+    switch (result.outcome) {
+      case 'no_session':
+      case 'not_found':
+        return `Thread ${threadId} не найден в этом проекте.`
+      case 'archived':
+        return `Thread ${threadId} архивирован. Используй /resume ${threadId}.`
+      case 'unavailable':
+        return `Thread ${threadId} помечен BROKEN и недоступен для resume.`
+      case 'already_selected':
+        return `Thread ${threadId} уже выбран.`
+      case 'blocked':
+        return `Нельзя переключить thread: turn ${result.turn.backendTurnId ?? result.turn.id} имеет состояние ${result.turn.state}.`
+      case 'selected':
+        return result.previousThreadId === null
+          ? `Thread ${threadId} выбран. Следующее сообщение продолжит его.`
+          : `Thread ${result.previousThreadId} заменён на ${threadId}. Следующее сообщение продолжит выбранный thread.`
+    }
+  }
+
+  private archive(operation: CommandOperation): string {
+    const parts = operation.command.args.trim().split(/\s+/).filter(Boolean)
+    if (parts.length !== 1) return 'Использование: /archive <job-id|thread-id>'
+    const targetId = parts[0] as string
+    if (this.outbox.get(targetId) !== null) return this.problemAction(operation, 'ARCHIVE')
+
+    const result = this.sessions.archiveThread(
+      operation.botId,
+      operation.command.chatId,
+      operation.command.projectId,
+      this.backendName,
+      targetId,
+      this.now(),
+    )
+    switch (result.outcome) {
+      case 'no_session':
+      case 'not_found':
+        return `Job или thread ${targetId} не найден.`
+      case 'already_archived':
+        return `Thread ${targetId} уже архивирован.`
+      case 'blocked':
+        return `Нельзя архивировать активный thread: turn ${result.turn.backendTurnId ?? result.turn.id} имеет состояние ${result.turn.state}.`
+      case 'archived':
+        return result.wasSelected
+          ? `Thread ${targetId} архивирован и отвязан. Следующее сообщение создаст новый.`
+          : `Thread ${targetId} архивирован.`
+    }
   }
 
   private formatProblemAction(

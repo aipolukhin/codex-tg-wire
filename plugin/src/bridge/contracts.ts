@@ -17,6 +17,9 @@ export type PersonalAlphaCommandName =
   | 'retry'
   | 'resolved'
   | 'archive'
+  | 'threads'
+  | 'switch'
+  | 'resume'
 
 export interface IncomingCommand {
   chatId: string

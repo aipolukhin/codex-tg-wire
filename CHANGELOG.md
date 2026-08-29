@@ -26,6 +26,10 @@ server identity reads `package.json` at runtime. Release process:
   safe job metadata; `/retry`, `/resolved` and `/archive` perform idempotent,
   audited state transitions. `AMBIGUOUS` jobs still cannot be retried because
   the original Telegram mutation may already have succeeded.
+- Added a durable registry for bridge-managed Codex threads. `/new` preserves
+  the previous binding, `/threads` lists current/available/archived entries,
+  `/switch` selects an available thread, and `/resume` explicitly restores a
+  locally archived thread after restart.
 
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists

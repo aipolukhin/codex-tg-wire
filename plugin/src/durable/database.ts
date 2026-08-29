@@ -182,6 +182,33 @@ const MIGRATIONS: readonly Migration[] = [
         ON delivery_problem_actions (job_id, created_at_ms)`,
     ],
   },
+  {
+    version: 7,
+    name: 'thread_registry',
+    statements: [
+      `CREATE TABLE thread_registry (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        backend TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'AVAILABLE'
+          CHECK (state IN ('AVAILABLE', 'ARCHIVED', 'BROKEN')),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        last_used_at_ms INTEGER NOT NULL,
+        UNIQUE (backend, thread_id),
+        UNIQUE (session_id, backend, thread_id)
+      )`,
+      `INSERT INTO thread_registry
+        (id, session_id, backend, thread_id, state, created_at_ms, updated_at_ms, last_used_at_ms)
+       SELECT id, session_id, backend, thread_id,
+         CASE state WHEN 'ARCHIVED' THEN 'ARCHIVED' WHEN 'BROKEN' THEN 'BROKEN' ELSE 'AVAILABLE' END,
+         created_at_ms, updated_at_ms, updated_at_ms
+       FROM thread_bindings`,
+      `CREATE INDEX thread_registry_session_idx
+        ON thread_registry (session_id, backend, state, last_used_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

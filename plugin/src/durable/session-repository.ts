@@ -5,6 +5,7 @@ import type { TextTurnOperation, TextTurnResult } from '../bridge/contracts.js'
 export type SessionState = 'ACTIVE' | 'ARCHIVED'
 export type BindingState = 'PROVISIONAL' | 'ACTIVE' | 'ARCHIVED' | 'BROKEN'
 export type TurnState = 'QUEUED' | 'ACTIVE' | 'COMPLETED' | 'INTERRUPTED' | 'FAILED' | 'UNKNOWN'
+export type ThreadRegistryState = 'AVAILABLE' | 'ARCHIVED' | 'BROKEN'
 
 export interface SessionRecord {
   id: string
@@ -40,6 +41,19 @@ export interface TurnRecord {
   finishedAtMs: number | null
 }
 
+export interface ThreadRegistryRecord {
+  id: string
+  sessionId: string
+  backend: string
+  threadId: string
+  state: ThreadRegistryState
+  selected: boolean
+  bindingState: BindingState | null
+  createdAtMs: number
+  updatedAtMs: number
+  lastUsedAtMs: number
+}
+
 export interface PreparedTextOperation {
   created: boolean
   session: SessionRecord
@@ -63,6 +77,18 @@ export interface ThreadSessionContext {
 export type ResetBindingResult =
   | { outcome: 'no_session' | 'already_new' }
   | { outcome: 'reset'; previousThreadId: string }
+  | { outcome: 'blocked'; turn: TurnRecord }
+
+export type SelectThreadResult =
+  | { outcome: 'no_session' | 'not_found' }
+  | { outcome: 'archived' | 'unavailable' | 'already_selected'; thread: ThreadRegistryRecord }
+  | { outcome: 'selected'; thread: ThreadRegistryRecord; previousThreadId: string | null }
+  | { outcome: 'blocked'; turn: TurnRecord }
+
+export type ArchiveThreadResult =
+  | { outcome: 'no_session' | 'not_found' }
+  | { outcome: 'already_archived'; thread: ThreadRegistryRecord }
+  | { outcome: 'archived'; thread: ThreadRegistryRecord; wasSelected: boolean }
   | { outcome: 'blocked'; turn: TurnRecord }
 
 interface SessionRow {
@@ -97,6 +123,18 @@ interface TurnRow {
   created_at_ms: number
   started_at_ms: number | null
   finished_at_ms: number | null
+}
+
+interface ThreadRegistryRow {
+  id: string
+  session_id: string
+  backend: string
+  thread_id: string
+  state: ThreadRegistryState
+  binding_state: BindingState | null
+  created_at_ms: number
+  updated_at_ms: number
+  last_used_at_ms: number
 }
 
 function sessionFromRow(row: SessionRow): SessionRecord {
@@ -138,6 +176,21 @@ function turnFromRow(row: TurnRow): TurnRecord {
     createdAtMs: row.created_at_ms,
     startedAtMs: row.started_at_ms,
     finishedAtMs: row.finished_at_ms,
+  }
+}
+
+function threadRegistryFromRow(row: ThreadRegistryRow): ThreadRegistryRecord {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    backend: row.backend,
+    threadId: row.thread_id,
+    state: row.state,
+    selected: row.binding_state !== null,
+    bindingState: row.binding_state,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+    lastUsedAtMs: row.last_used_at_ms,
   }
 }
 
@@ -257,6 +310,7 @@ export class SqliteSessionRepository {
           `session ${turn.sessionId} is bound to ${binding.threadId}, not ${threadId}`,
         )
       }
+      this.upsertThreadRegistry(turn.sessionId, backend, threadId, nowMs)
 
       const turnChange = this.database.run(
         `UPDATE turns SET state = 'ACTIVE', started_at_ms = ?
@@ -352,6 +406,108 @@ export class SqliteSessionRepository {
     return this.findBinding(sessionId, backend)
   }
 
+  listThreads(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    backend = 'codex',
+  ): ThreadRegistryRecord[] {
+    const session = this.findSession(botId, chatId, projectId)
+    if (session === null) return []
+    return this.database
+      .query<ThreadRegistryRow, [string, string]>(
+        `SELECT registry.*, binding.state AS binding_state
+         FROM thread_registry registry
+         LEFT JOIN thread_bindings binding
+           ON binding.session_id = registry.session_id
+          AND binding.backend = registry.backend
+          AND binding.thread_id = registry.thread_id
+         WHERE registry.session_id = ? AND registry.backend = ?
+         ORDER BY (binding.id IS NOT NULL) DESC, registry.last_used_at_ms DESC, registry.thread_id`,
+      )
+      .all(session.id, backend)
+      .map(threadRegistryFromRow)
+  }
+
+  selectThread(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    backend: string,
+    threadId: string,
+    resumeArchived: boolean,
+    nowMs: number,
+  ): SelectThreadResult {
+    return this.database.transaction((): SelectThreadResult => {
+      const session = this.findSession(botId, chatId, projectId)
+      if (session === null) return { outcome: 'no_session' }
+      const target = this.findThreadRegistry(session.id, backend, threadId)
+      if (target === null) return { outcome: 'not_found' }
+      if (target.state === 'BROKEN') return { outcome: 'unavailable', thread: target }
+      if (target.state === 'ARCHIVED' && !resumeArchived) {
+        return { outcome: 'archived', thread: target }
+      }
+      const binding = this.findBinding(session.id, backend)
+      if (binding?.threadId === threadId) return { outcome: 'already_selected', thread: target }
+      const blocking = this.findBlockingTurn(session.id)
+      if (blocking !== null) return { outcome: 'blocked', turn: blocking }
+
+      if (binding !== null) this.database.run('DELETE FROM thread_bindings WHERE id = ?', [binding.id])
+      this.database.run(
+        `INSERT INTO thread_bindings
+          (id, session_id, backend, thread_id, state, created_at_ms, updated_at_ms)
+         VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+        [crypto.randomUUID(), session.id, backend, threadId, nowMs, nowMs],
+      )
+      this.database.run(
+        `UPDATE thread_registry
+         SET state = 'AVAILABLE', updated_at_ms = ?, last_used_at_ms = ?
+         WHERE id = ?`,
+        [nowMs, nowMs, target.id],
+      )
+      this.database.run('UPDATE sessions SET updated_at_ms = ? WHERE id = ?', [nowMs, session.id])
+      return {
+        outcome: 'selected',
+        thread: this.requireThreadRegistry(session.id, backend, threadId),
+        previousThreadId: binding?.threadId ?? null,
+      }
+    }).immediate()
+  }
+
+  archiveThread(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    backend: string,
+    threadId: string,
+    nowMs: number,
+  ): ArchiveThreadResult {
+    return this.database.transaction((): ArchiveThreadResult => {
+      const session = this.findSession(botId, chatId, projectId)
+      if (session === null) return { outcome: 'no_session' }
+      const target = this.findThreadRegistry(session.id, backend, threadId)
+      if (target === null) return { outcome: 'not_found' }
+      if (target.state === 'ARCHIVED') return { outcome: 'already_archived', thread: target }
+      const binding = this.findBinding(session.id, backend)
+      const wasSelected = binding?.threadId === threadId
+      if (wasSelected) {
+        const blocking = this.findBlockingTurn(session.id)
+        if (blocking !== null) return { outcome: 'blocked', turn: blocking }
+        this.database.run('DELETE FROM thread_bindings WHERE id = ?', [binding.id])
+      }
+      this.database.run(
+        `UPDATE thread_registry SET state = 'ARCHIVED', updated_at_ms = ? WHERE id = ?`,
+        [nowMs, target.id],
+      )
+      this.database.run('UPDATE sessions SET updated_at_ms = ? WHERE id = ?', [nowMs, session.id])
+      return {
+        outcome: 'archived',
+        thread: this.requireThreadRegistry(session.id, backend, threadId),
+        wasSelected,
+      }
+    }).immediate()
+  }
+
   getContextByThread(threadId: string, backend = 'codex'): ThreadSessionContext | null {
     const bindingRow = this.database
       .query<BindingRow, [string, string]>(
@@ -433,6 +589,56 @@ export class SqliteSessionRepository {
       .get(id)
     if (row === null) throw new Error(`thread binding ${id} not found`)
     return bindingFromRow(row)
+  }
+
+  private findThreadRegistry(
+    sessionId: string,
+    backend: string,
+    threadId: string,
+  ): ThreadRegistryRecord | null {
+    const row = this.database
+      .query<ThreadRegistryRow, [string, string, string]>(
+        `SELECT registry.*, binding.state AS binding_state
+         FROM thread_registry registry
+         LEFT JOIN thread_bindings binding
+           ON binding.session_id = registry.session_id
+          AND binding.backend = registry.backend
+          AND binding.thread_id = registry.thread_id
+         WHERE registry.session_id = ? AND registry.backend = ? AND registry.thread_id = ?`,
+      )
+      .get(sessionId, backend, threadId)
+    return row === null ? null : threadRegistryFromRow(row)
+  }
+
+  private requireThreadRegistry(
+    sessionId: string,
+    backend: string,
+    threadId: string,
+  ): ThreadRegistryRecord {
+    const thread = this.findThreadRegistry(sessionId, backend, threadId)
+    if (thread === null) throw new Error(`thread registry entry ${threadId} not found`)
+    return thread
+  }
+
+  private upsertThreadRegistry(
+    sessionId: string,
+    backend: string,
+    threadId: string,
+    nowMs: number,
+  ): void {
+    this.database.run(
+      `INSERT INTO thread_registry
+        (id, session_id, backend, thread_id, state, created_at_ms, updated_at_ms, last_used_at_ms)
+       VALUES (?, ?, ?, ?, 'AVAILABLE', ?, ?, ?)
+       ON CONFLICT (backend, thread_id) DO UPDATE SET
+         updated_at_ms = excluded.updated_at_ms,
+         last_used_at_ms = excluded.last_used_at_ms`,
+      [crypto.randomUUID(), sessionId, backend, threadId, nowMs, nowMs, nowMs],
+    )
+    const thread = this.findThreadRegistry(sessionId, backend, threadId)
+    if (thread === null) {
+      throw new SessionStateConflictError(`thread ${threadId} belongs to another session`)
+    }
   }
 
   private findTurnByOperationKey(operationKey: string): TurnRecord | null {

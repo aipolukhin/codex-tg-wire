@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { Database } from 'bun:sqlite'
+import { Database } from 'bun:sqlite'
 
 import { LeaseConflictError } from '../../src/durable/contracts.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
@@ -54,6 +54,7 @@ describe('durable database migrations', () => {
       'telegram_poll_cursors',
       'telegram_updates',
       'thread_bindings',
+      'thread_registry',
       'turns',
     ])
 
@@ -62,7 +63,68 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(6)
+    expect(migrations?.count).toBe(7)
+  })
+
+  test('backfills an existing v6 binding into the thread registry', () => {
+    const legacyFilename = join(root, 'legacy-v6.sqlite3')
+    const legacy = new Database(legacyFilename, { create: true })
+    legacy.run(`CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at_ms INTEGER NOT NULL
+    )`)
+    for (let version = 1; version <= 6; version += 1) {
+      legacy.run(
+        'INSERT INTO schema_migrations (version, name, applied_at_ms) VALUES (?, ?, ?)',
+        [version, `legacy-${version}`, NOW],
+      )
+    }
+    legacy.run(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )`)
+    legacy.run(`CREATE TABLE thread_bindings (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      backend TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )`)
+    legacy.run(
+      `INSERT INTO sessions
+        (id, bot_id, chat_id, project_id, state, created_at_ms, updated_at_ms)
+       VALUES ('session-1', 'primary', '7001', 'workspace', 'ACTIVE', ?, ?)`,
+      [NOW, NOW],
+    )
+    legacy.run(
+      `INSERT INTO thread_bindings
+        (id, session_id, backend, thread_id, state, created_at_ms, updated_at_ms)
+       VALUES ('binding-1', 'session-1', 'codex', 'thread-existing', 'ACTIVE', ?, ?)`,
+      [NOW, NOW + 1],
+    )
+    legacy.close()
+
+    const upgraded = openDurableDatabase(legacyFilename)
+    expect(upgraded.query<{
+      session_id: string
+      thread_id: string
+      state: string
+      last_used_at_ms: number
+    }, []>('SELECT session_id, thread_id, state, last_used_at_ms FROM thread_registry').get()).toEqual({
+      session_id: 'session-1',
+      thread_id: 'thread-existing',
+      state: 'AVAILABLE',
+      last_used_at_ms: NOW + 1,
+    })
+    upgraded.close()
   })
 })
 

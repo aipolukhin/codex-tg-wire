@@ -26,6 +26,7 @@
 - [x] Добавлен явный `/steer <текст>` с `expectedTurnId`; late/mismatched команды не попадают в другой turn.
 - [x] Добавлена restart-safe FIFO-очередь turns: один активный turn на session, control updates обходят очередь, ожидание не расходует retry budget.
 - [x] Добавлен первый problem center: `/failed`, `/ambiguous`, audited `/retry`, `/resolved`, `/archive`; unsafe retry для `AMBIGUOUS` запрещён.
+- [x] Добавлен durable thread registry: `/new` сохраняет историю, `/threads`, `/switch`, `/resume` и локальный `/archive` переживают restart.
 
 ## 1. Что именно мы строим
 
@@ -176,7 +177,10 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 ### M3 — полноценный Codex client в Telegram
 
 - Thread bindings: project/chat/topic ↔ Codex thread id.
-- `/threads`, `/switch`, `/new`, `/archive`, `/resume`.
+- `/threads`, `/switch`, `/new`, `/archive`, `/resume`. **Готово для
+  bridge-managed threads:** registry backfill-ится из schema v6, switch/archive
+  запрещены при активном или `UNKNOWN` turn, следующий turn вызывает штатный
+  `thread/resume` через `AgentBackend`.
 - Очередь пользовательских turns; ровно один активный turn на thread. **Готово:**
   порядок хранится в SQLite, переживает restart, а terminally failed inbox item
   не блокирует очередь навсегда.

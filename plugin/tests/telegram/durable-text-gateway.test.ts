@@ -124,8 +124,13 @@ describe('DurableTelegramTextGateway inbound', () => {
       name: 'resolved',
       args: 'job-1 991',
     })
+    expect(gateway.extractCommand(make('/threads'))).toMatchObject({ name: 'threads', args: '' })
+    expect(gateway.extractCommand(make('/switch@my_bot thread-1'))).toMatchObject({
+      name: 'switch',
+      args: 'thread-1',
+    })
     expect(gateway.extractCommand(make('/stop@other_bot'))).toBeNull()
-    expect(gateway.extractCommand(make('/threads'))).toBeNull()
+    expect(gateway.extractCommand(make('/unknown'))).toBeNull()
   })
 
   test('authenticates and parses durable interaction callbacks and /answer', () => {

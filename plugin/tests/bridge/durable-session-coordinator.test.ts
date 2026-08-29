@@ -376,6 +376,89 @@ describe('PersonalAlphaCommands', () => {
     expect(sessions.getTurnByOperationKey('telegram:primary:621:turn')?.backendTurnId).toBe(
       'codex-turn-2',
     )
+    expect(sessions.listThreads('primary', '7001', 'workspace')).toHaveLength(2)
+  })
+
+  test('/threads survives restart and /switch resumes a previous binding', async () => {
+    await coordinator.runTextTurn(operation(625))
+    expect((await commands.handleCommand(command('new'))).text).toContain('отвязан')
+    backend.nextThreadId = 'codex-thread-2'
+    backend.nextTurnId = 'codex-turn-2'
+    await coordinator.runTextTurn(operation(626))
+
+    const beforeRestart = (await commands.handleCommand(command('threads'))).text
+    expect(beforeRestart).toContain('● codex-thread-2 · ACTIVE')
+    expect(beforeRestart).toContain('○ codex-thread-1 · AVAILABLE')
+
+    database.close()
+    database = openDurableDatabase(join(root, 'bridge.sqlite3'))
+    inbox = new SqliteInboxRepository(database)
+    outbox = new SqliteOutboxRepository(database)
+    sessions = new SqliteSessionRepository(database)
+    coordinator = new DurableSessionCoordinator(
+      sessions,
+      backend,
+      new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
+      { now: () => nowMs },
+    )
+    commands = new PersonalAlphaCommands(sessions, backend, outbox, { now: () => nowMs })
+
+    expect((await commands.handleCommand(command('threads'))).text).toContain('codex-thread-1')
+    expect((await commands.handleCommand(command('switch', 'codex-thread-1'))).text).toContain(
+      'заменён',
+    )
+    backend.nextTurnId = 'codex-turn-3'
+    await coordinator.runTextTurn(operation(627))
+    expect(backend.calls.at(-1)?.threadId).toBe('codex-thread-1')
+    expect(sessions.getOverview('primary', '7001', 'workspace').binding?.threadId).toBe(
+      'codex-thread-1',
+    )
+  })
+
+  test('/archive and /resume preserve history and refuse active-thread mutation', async () => {
+    await coordinator.runTextTurn(operation(628))
+    await commands.handleCommand(command('new'))
+    backend.nextThreadId = 'codex-thread-2'
+    backend.nextTurnId = 'codex-turn-2'
+    await coordinator.runTextTurn(operation(629))
+
+    expect((await commands.handleCommand(command('archive', 'codex-thread-1'))).text).toContain(
+      'архивирован',
+    )
+    expect((await commands.handleCommand(command('switch', 'codex-thread-1'))).text).toContain(
+      '/resume',
+    )
+    expect((await commands.handleCommand(command('resume', 'codex-thread-1'))).text).toContain(
+      'выбран',
+    )
+
+    let release!: () => void
+    backend.nextTurnId = 'codex-turn-3'
+    backend.wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const running = coordinator.runTextTurn(operation(630))
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (sessions.getTurnByOperationKey('telegram:primary:630:turn')?.state === 'ACTIVE') break
+      await Promise.resolve()
+    }
+    expect((await commands.handleCommand(command('archive', 'codex-thread-1'))).text).toContain(
+      'Нельзя',
+    )
+    expect((await commands.handleCommand(command('switch', 'codex-thread-2'))).text).toContain(
+      'Нельзя',
+    )
+    release()
+    await running
+    backend.wait = undefined
+
+    expect((await commands.handleCommand(command('archive', 'codex-thread-1'))).text).toContain(
+      'отвязан',
+    )
+    expect(sessions.getOverview('primary', '7001', 'workspace').binding).toBeNull()
+    expect((await commands.handleCommand(command('archive', 'codex-thread-1'))).text).toContain(
+      'уже архивирован',
+    )
   })
 
   test('/new refuses an uncertain turn instead of discarding its binding', async () => {

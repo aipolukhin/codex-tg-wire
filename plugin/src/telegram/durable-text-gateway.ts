@@ -189,7 +189,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const message = this.authorizedMessage(update)
     if (message === null) return null
     const match = message.text.trim().match(
-      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
+      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
     )
     if (match === null || match[1] === undefined) return null
     const addressedUsername = match[2]?.toLowerCase()

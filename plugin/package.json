@@ -8,7 +8,10 @@
   "scripts": {
     "start": "bun run src/server.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "test:codex": "bun test tests/codex",
+    "typecheck": "tsc --noEmit",
+    "codex:smoke": "bun run scripts/codex-app-server-smoke.ts",
+    "codex:schema:check": "bun run scripts/check-codex-schema.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

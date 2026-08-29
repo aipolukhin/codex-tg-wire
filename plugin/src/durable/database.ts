@@ -437,6 +437,39 @@ const MIGRATIONS: readonly Migration[] = [
         ON codex_turn_ux (phase, last_activity_at_ms, last_heartbeat_at_ms)`,
     ],
   },
+  {
+    version: 15,
+    name: 'durable_telegram_albums',
+    statements: [
+      `CREATE TABLE telegram_album_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        media_group_id TEXT NOT NULL,
+        leader_update_row_id INTEGER NOT NULL
+          REFERENCES telegram_updates(id) ON DELETE CASCADE,
+        state TEXT NOT NULL DEFAULT 'COLLECTING'
+          CHECK (state IN ('COLLECTING', 'PROCESSING', 'PROCESSED', 'FAILED')),
+        ready_at_ms INTEGER NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        processed_at_ms INTEGER,
+        last_error TEXT,
+        UNIQUE (bot_id, chat_id, media_group_id)
+      )`,
+      `CREATE INDEX telegram_album_groups_ready_idx
+        ON telegram_album_groups (state, ready_at_ms, leader_update_row_id)`,
+      `CREATE TABLE telegram_album_fragments (
+        group_id INTEGER NOT NULL REFERENCES telegram_album_groups(id) ON DELETE CASCADE,
+        update_row_id INTEGER NOT NULL UNIQUE
+          REFERENCES telegram_updates(id) ON DELETE CASCADE,
+        created_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (group_id, update_row_id)
+      )`,
+      `CREATE INDEX telegram_album_fragments_group_idx
+        ON telegram_album_fragments (group_id, update_row_id)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

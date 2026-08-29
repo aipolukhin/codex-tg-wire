@@ -171,6 +171,37 @@ describe('DurableTelegramTextGateway inbound', () => {
     }))).toBeNull()
   })
 
+  test('projects a durable album leader as one message with ordered attachments', () => {
+    const first = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        caption: 'проверь альбом', photo: [{ file_id: 'photo-1', width: 10, height: 10 }],
+      },
+    })
+    const second = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        document: { file_id: 'doc-2', file_name: 'notes.txt', mime_type: 'text/plain' },
+      },
+    })
+    const albumGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: [7001],
+      defaultProjectId: 'workspace',
+      albumSource: { albumFragmentsFor: () => [first, second] },
+    })
+
+    expect(albumGateway.extractText(first)).toEqual({
+      chatId: '7001',
+      projectId: 'workspace',
+      text: 'проверь альбом',
+      attachments: [
+        expect.objectContaining({ kind: 'image', fileId: 'photo-1' }),
+        expect.objectContaining({ kind: 'file', fileId: 'doc-2', fileName: 'notes.txt' }),
+      ],
+    })
+  })
+
   test('materializes accepted attachments and returns safe policy rejections', async () => {
     const update = acceptedUpdate({ update_id: 700 })
     const message = {

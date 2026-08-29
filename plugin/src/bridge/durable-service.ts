@@ -164,6 +164,7 @@ export async function bootstrapDurableBridgeService(
       },
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
+      albumFlushMs: config.albums.flushMs,
       ux: {
         enabled: config.ux.enabled,
         heartbeatAfterMs: config.ux.heartbeatAfterMs,

@@ -33,6 +33,9 @@
     "directory": "./state/outbound-media",
     "maxBytes": 20971520
   },
+  "albums": {
+    "flushMs": 2000
+  },
   "codex": {
     "approvalPolicy": "on-request",
     "sandboxMode": "workspace-write",

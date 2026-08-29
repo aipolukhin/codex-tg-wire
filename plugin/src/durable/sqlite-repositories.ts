@@ -69,6 +69,24 @@ interface DeliveryProblemActionRow {
   remote_id: string | null
 }
 
+interface AlbumGroupRow {
+  id: number
+  leader_update_row_id: number
+  state: 'COLLECTING' | 'PROCESSING' | 'PROCESSED' | 'FAILED'
+}
+
+export interface RegisterAlbumFragmentInput {
+  updateRowId: number
+  mediaGroupId: string
+  readyAtMs: number
+  nowMs: number
+}
+
+export interface RegisterAlbumFragmentResult {
+  grouped: boolean
+  leaderUpdateRowId: number | null
+}
+
 function encodePayload(payload: unknown): string {
   const encoded = JSON.stringify(payload)
   if (encoded === undefined) throw new TypeError('payload must be JSON-serializable')
@@ -161,14 +179,116 @@ export class SqliteInboxRepository implements InboxRepository {
     return row === null ? null : inboxFromRow(row)
   }
 
+  registerAlbumFragment(input: RegisterAlbumFragmentInput): RegisterAlbumFragmentResult {
+    if (input.mediaGroupId.trim().length === 0) throw new TypeError('mediaGroupId must not be empty')
+    if (!Number.isSafeInteger(input.readyAtMs) || !Number.isSafeInteger(input.nowMs)) {
+      throw new TypeError('album timestamps must be safe integers')
+    }
+    return this.database.transaction(() => {
+      const update = this.get(input.updateRowId)
+      if (update === null) throw new Error(`inbox update ${input.updateRowId} not found`)
+      if (update.chatId === null) throw new TypeError('album fragment must have a chat id')
+
+      this.database.run(
+        `INSERT INTO telegram_album_groups
+          (bot_id, chat_id, media_group_id, leader_update_row_id, ready_at_ms,
+           created_at_ms, updated_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (bot_id, chat_id, media_group_id) DO NOTHING`,
+        [
+          update.botId,
+          update.chatId,
+          input.mediaGroupId,
+          input.updateRowId,
+          input.readyAtMs,
+          input.nowMs,
+          input.nowMs,
+        ],
+      )
+      const group = this.database
+        .query<AlbumGroupRow, [string, string, string]>(
+          `SELECT id, leader_update_row_id, state
+           FROM telegram_album_groups
+           WHERE bot_id = ? AND chat_id = ? AND media_group_id = ?`,
+        )
+        .get(update.botId, update.chatId, input.mediaGroupId)
+      if (group === null) throw new Error('album group insert did not produce a row')
+      if (group.state !== 'COLLECTING') {
+        return { grouped: false, leaderUpdateRowId: group.leader_update_row_id }
+      }
+
+      const fragment = this.database.run(
+        `INSERT INTO telegram_album_fragments (group_id, update_row_id, created_at_ms)
+         VALUES (?, ?, ?)
+         ON CONFLICT (update_row_id) DO NOTHING`,
+        [group.id, input.updateRowId, input.nowMs],
+      )
+      if (fragment.changes === 1) {
+        this.database.run(
+          `UPDATE telegram_album_groups
+           SET leader_update_row_id = CASE
+                 WHEN ? < leader_update_row_id THEN ? ELSE leader_update_row_id END,
+               ready_at_ms = CASE WHEN ? > ready_at_ms THEN ? ELSE ready_at_ms END,
+               updated_at_ms = ?
+           WHERE id = ? AND state = 'COLLECTING'`,
+          [
+            input.updateRowId,
+            input.updateRowId,
+            input.readyAtMs,
+            input.readyAtMs,
+            input.nowMs,
+            group.id,
+          ],
+        )
+      }
+      const current = this.database
+        .query<{ leader_update_row_id: number }, [number]>(
+          'SELECT leader_update_row_id FROM telegram_album_groups WHERE id = ?',
+        )
+        .get(group.id)
+      return { grouped: true, leaderUpdateRowId: current?.leader_update_row_id ?? input.updateRowId }
+    }).immediate()
+  }
+
+  albumFragmentsFor(updateRowId: number): readonly InboxUpdate[] {
+    const rows = this.database
+      .query<InboxRow, [number]>(
+        `SELECT updates.*
+         FROM telegram_album_fragments AS requested
+         JOIN telegram_album_groups AS album ON album.id = requested.group_id
+         JOIN telegram_album_fragments AS fragment ON fragment.group_id = album.id
+         JOIN telegram_updates AS updates ON updates.id = fragment.update_row_id
+         WHERE requested.update_row_id = ?
+           AND album.leader_update_row_id = requested.update_row_id
+         ORDER BY updates.update_id, updates.id`,
+      )
+      .all(updateRowId)
+    return rows.map(inboxFromRow)
+  }
+
   claimNext(options: LeaseOptions): InboxUpdate | null {
     validateLease(options)
     return this.database.transaction(() => {
       const candidate = this.database
-        .query<{ id: number }, [number]>(
+        .query<{ id: number }, [number, number]>(
           `SELECT current.id FROM telegram_updates AS current
            WHERE current.state IN ('RECEIVED', 'RETRY_WAIT')
              AND current.available_at_ms <= ?
+             AND (
+               NOT EXISTS (
+                 SELECT 1 FROM telegram_album_fragments AS own_fragment
+                 WHERE own_fragment.update_row_id = current.id
+               )
+               OR EXISTS (
+                 SELECT 1
+                 FROM telegram_album_fragments AS own_fragment
+                 JOIN telegram_album_groups AS own_album ON own_album.id = own_fragment.group_id
+                 WHERE own_fragment.update_row_id = current.id
+                   AND own_album.leader_update_row_id = current.id
+                   AND own_album.state = 'COLLECTING'
+                   AND own_album.ready_at_ms <= ?
+               )
+             )
              AND (
                current.routing_class NOT IN ('MESSAGE', 'QUEUED_MESSAGE')
                OR NOT EXISTS (
@@ -191,7 +311,7 @@ export class SqliteInboxRepository implements InboxRepository {
              current.id
            LIMIT 1`,
         )
-        .get(options.nowMs)
+        .get(options.nowMs, options.nowMs)
       if (candidate === null) return null
 
       this.database.run(
@@ -200,6 +320,12 @@ export class SqliteInboxRepository implements InboxRepository {
              lease_owner = ?, lease_expires_at_ms = ?, last_error = NULL
          WHERE id = ? AND state IN ('RECEIVED', 'RETRY_WAIT')`,
         [options.workerId, options.nowMs + options.leaseDurationMs, candidate.id],
+      )
+      this.database.run(
+        `UPDATE telegram_album_groups
+         SET state = 'PROCESSING', updated_at_ms = ?, last_error = NULL
+         WHERE leader_update_row_id = ? AND state = 'COLLECTING'`,
+        [options.nowMs, candidate.id],
       )
       return this.get(candidate.id)
     }).immediate()
@@ -219,86 +345,197 @@ export class SqliteInboxRepository implements InboxRepository {
   }
 
   markProcessed(id: number, workerId: string, nowMs: number): InboxUpdate {
-    const result = this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'PROCESSED', lease_owner = NULL, lease_expires_at_ms = NULL,
-           processed_at_ms = ?, last_error = NULL
-       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
-      [nowMs, id, workerId],
-    )
-    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
-    return this.require(id)
+    return this.database.transaction(() => {
+      const result = this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'PROCESSED', lease_owner = NULL, lease_expires_at_ms = NULL,
+             processed_at_ms = ?, last_error = NULL
+         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
+        [nowMs, id, workerId],
+      )
+      if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+      const album = this.albumForLeader(id)
+      if (album !== null) {
+        this.database.run(
+          `UPDATE telegram_updates
+           SET state = 'PROCESSED', lease_owner = NULL, lease_expires_at_ms = NULL,
+               processed_at_ms = ?, last_error = NULL
+           WHERE id IN (
+             SELECT update_row_id FROM telegram_album_fragments WHERE group_id = ?
+           )`,
+          [nowMs, album.id],
+        )
+        this.database.run(
+          `UPDATE telegram_album_groups
+           SET state = 'PROCESSED', processed_at_ms = ?, updated_at_ms = ?, last_error = NULL
+           WHERE id = ?`,
+          [nowMs, nowMs, album.id],
+        )
+      }
+      return this.require(id)
+    }).immediate()
   }
 
   retry(id: number, workerId: string, error: string, availableAtMs: number): InboxUpdate {
-    const result = this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'RETRY_WAIT', available_at_ms = ?, lease_owner = NULL,
-           lease_expires_at_ms = NULL, last_error = ?
-       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
-      [availableAtMs, error, id, workerId],
-    )
-    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
-    return this.require(id)
+    return this.releaseLease(id, workerId, error, availableAtMs, 'RETRY_WAIT')
   }
 
   deferQueued(id: number, workerId: string, availableAtMs: number): InboxUpdate {
-    const result = this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE',
-           attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
-           available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
-           last_error = 'queued behind active turn'
-       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
-      [availableAtMs, id, workerId],
-    )
-    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
-    return this.require(id)
+    return this.database.transaction(() => {
+      const result = this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE',
+             attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+             available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
+             last_error = 'queued behind active turn'
+         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
+        [availableAtMs, id, workerId],
+      )
+      if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+      this.releaseAlbum(id, availableAtMs, 'queued behind active turn')
+      return this.require(id)
+    }).immediate()
   }
 
   fail(id: number, workerId: string, error: string, nowMs: number): InboxUpdate {
-    const result = this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
-           processed_at_ms = ?, last_error = ?
-       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
-      [nowMs, error, id, workerId],
-    )
-    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
-    return this.require(id)
+    return this.database.transaction(() => {
+      const result = this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
+             processed_at_ms = ?, last_error = ?
+         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
+        [nowMs, error, id, workerId],
+      )
+      if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+      const album = this.albumForLeader(id)
+      if (album !== null) {
+        this.database.run(
+          `UPDATE telegram_updates
+           SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
+               processed_at_ms = ?, last_error = ?
+           WHERE id IN (
+             SELECT update_row_id FROM telegram_album_fragments WHERE group_id = ?
+           )`,
+          [nowMs, error, album.id],
+        )
+        this.database.run(
+          `UPDATE telegram_album_groups
+           SET state = 'FAILED', processed_at_ms = ?, updated_at_ms = ?, last_error = ?
+           WHERE id = ?`,
+          [nowMs, nowMs, error, album.id],
+        )
+      }
+      return this.require(id)
+    }).immediate()
   }
 
   recoverExpiredLeases(nowMs: number): number {
-    return this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'RECEIVED', available_at_ms = ?, lease_owner = NULL,
-           lease_expires_at_ms = NULL, last_error = 'worker lease expired'
-       WHERE state = 'LEASED' AND lease_expires_at_ms <= ?`,
-      [nowMs, nowMs],
-    ).changes
+    return this.database.transaction(() => {
+      this.database.run(
+        `UPDATE telegram_album_groups
+         SET state = 'COLLECTING', ready_at_ms = ?, updated_at_ms = ?,
+             last_error = 'worker lease expired'
+         WHERE state = 'PROCESSING'
+           AND leader_update_row_id IN (
+             SELECT id FROM telegram_updates
+             WHERE state = 'LEASED' AND lease_expires_at_ms <= ?
+           )`,
+        [nowMs, nowMs, nowMs],
+      )
+      return this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'RECEIVED', available_at_ms = ?, lease_owner = NULL,
+             lease_expires_at_ms = NULL, last_error = 'worker lease expired'
+         WHERE state = 'LEASED' AND lease_expires_at_ms <= ?`,
+        [nowMs, nowMs],
+      ).changes
+    }).immediate()
   }
 
   releaseForTurnRecovery(id: number, nowMs: number): InboxUpdate | null {
-    this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', available_at_ms = ?,
-           lease_owner = NULL, lease_expires_at_ms = NULL,
-           last_error = 'completed Codex turn recovered after restart'
-       WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
-      [nowMs, id],
-    )
-    return this.get(id)
+    return this.database.transaction(() => {
+      this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', available_at_ms = ?,
+             lease_owner = NULL, lease_expires_at_ms = NULL,
+             last_error = 'completed Codex turn recovered after restart'
+         WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
+        [nowMs, id],
+      )
+      this.releaseAlbum(id, nowMs, 'completed Codex turn recovered after restart')
+      return this.get(id)
+    }).immediate()
   }
 
   quarantineForTurnRecovery(id: number, reason: string, nowMs: number): InboxUpdate | null {
+    return this.database.transaction(() => {
+      const album = this.albumForLeader(id)
+      if (album === null) {
+        this.database.run(
+          `UPDATE telegram_updates
+           SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
+               processed_at_ms = ?, last_error = ?
+           WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
+          [nowMs, reason, id],
+        )
+      } else {
+        this.database.run(
+          `UPDATE telegram_updates
+           SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
+               processed_at_ms = ?, last_error = ?
+           WHERE id IN (
+             SELECT update_row_id FROM telegram_album_fragments WHERE group_id = ?
+           ) AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
+          [nowMs, reason, album.id],
+        )
+        this.database.run(
+          `UPDATE telegram_album_groups
+           SET state = 'FAILED', processed_at_ms = ?, updated_at_ms = ?, last_error = ?
+           WHERE id = ?`,
+          [nowMs, nowMs, reason, album.id],
+        )
+      }
+      return this.get(id)
+    }).immediate()
+  }
+
+  private albumForLeader(id: number): AlbumGroupRow | null {
+    return this.database
+      .query<AlbumGroupRow, [number]>(
+        `SELECT id, leader_update_row_id, state
+         FROM telegram_album_groups WHERE leader_update_row_id = ?`,
+      )
+      .get(id)
+  }
+
+  private releaseAlbum(id: number, availableAtMs: number, error: string): void {
     this.database.run(
-      `UPDATE telegram_updates
-       SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
-           processed_at_ms = ?, last_error = ?
-       WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
-      [nowMs, reason, id],
+      `UPDATE telegram_album_groups
+       SET state = 'COLLECTING', ready_at_ms = ?, updated_at_ms = ?, last_error = ?
+       WHERE leader_update_row_id = ? AND state = 'PROCESSING'`,
+      [availableAtMs, availableAtMs, error, id],
     )
-    return this.get(id)
+  }
+
+  private releaseLease(
+    id: number,
+    workerId: string,
+    error: string,
+    availableAtMs: number,
+    state: 'RETRY_WAIT',
+  ): InboxUpdate {
+    return this.database.transaction(() => {
+      const result = this.database.run(
+        `UPDATE telegram_updates
+         SET state = ?, available_at_ms = ?, lease_owner = NULL,
+             lease_expires_at_ms = NULL, last_error = ?
+         WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
+        [state, availableAtMs, error, id, workerId],
+      )
+      if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+      this.releaseAlbum(id, availableAtMs, error)
+      return this.require(id)
+    }).immediate()
   }
 
   private require(id: number): InboxUpdate {

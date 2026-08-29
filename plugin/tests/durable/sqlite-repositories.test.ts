@@ -56,6 +56,8 @@ describe('durable database migrations', () => {
       'delivery_problem_actions',
       'schema_migrations',
       'sessions',
+      'telegram_album_fragments',
+      'telegram_album_groups',
       'telegram_attachments',
       'telegram_chat_preferences',
       'telegram_poll_cursors',
@@ -70,7 +72,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(14)
+    expect(migrations?.count).toBe(15)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -483,6 +485,97 @@ describe('SqliteInboxRepository', () => {
         leaseDurationMs: LEASE_MS,
       }),
     ).toThrow(LeaseConflictError)
+  })
+
+  test('claims one durable leader for a complete album and processes every fragment atomically', () => {
+    let inbox = new SqliteInboxRepository(database)
+    const first = inbox.ingest({
+      botId: 'primary', updateId: 70, chatId: '7001', routingClass: 'MESSAGE',
+      payload: { message: { caption: 'album', photo: [{ file_id: 'one' }] } }, receivedAtMs: NOW,
+    })
+    const second = inbox.ingest({
+      botId: 'primary', updateId: 71, chatId: '7001', routingClass: 'MESSAGE',
+      payload: { message: { photo: [{ file_id: 'two' }] } }, receivedAtMs: NOW + 50,
+    })
+    inbox.registerAlbumFragment({
+      updateRowId: first.update.id, mediaGroupId: 'media-1', readyAtMs: NOW + 2_000, nowMs: NOW,
+    })
+    inbox.registerAlbumFragment({
+      updateRowId: second.update.id, mediaGroupId: 'media-1', readyAtMs: NOW + 2_050, nowMs: NOW + 50,
+    })
+
+    expect(inbox.claimNext({ workerId: 'early', nowMs: NOW + 2_049, leaseDurationMs: LEASE_MS })).toBeNull()
+    database.close()
+    database = openDurableDatabase(filename)
+    inbox = new SqliteInboxRepository(database)
+
+    const leader = inbox.claimNext({
+      workerId: 'album', nowMs: NOW + 2_050, leaseDurationMs: LEASE_MS,
+    })
+    expect(leader?.id).toBe(first.update.id)
+    expect(inbox.albumFragmentsFor(first.update.id).map((item) => item.updateId)).toEqual([70, 71])
+    expect(inbox.claimNext({ workerId: 'sibling', nowMs: NOW + 2_050, leaseDurationMs: LEASE_MS })).toBeNull()
+
+    inbox.markProcessed(first.update.id, 'album', NOW + 2_051)
+    expect(inbox.get(first.update.id)?.state).toBe('PROCESSED')
+    expect(inbox.get(second.update.id)?.state).toBe('PROCESSED')
+    expect(database.query<{ state: string }, []>('SELECT state FROM telegram_album_groups').get()?.state)
+      .toBe('PROCESSED')
+  })
+
+  test('releases an album as one unit on retry and expired lease recovery', () => {
+    const inbox = new SqliteInboxRepository(database)
+    const first = inbox.ingest({
+      botId: 'primary', updateId: 80, chatId: '7001', routingClass: 'MESSAGE', payload: {},
+      receivedAtMs: NOW,
+    })
+    const second = inbox.ingest({
+      botId: 'primary', updateId: 81, chatId: '7001', routingClass: 'MESSAGE', payload: {},
+      receivedAtMs: NOW,
+    })
+    for (const update of [first.update, second.update]) {
+      inbox.registerAlbumFragment({
+        updateRowId: update.id, mediaGroupId: 'media-retry', readyAtMs: NOW, nowMs: NOW,
+      })
+    }
+    expect(inbox.claimNext({ workerId: 'first', nowMs: NOW, leaseDurationMs: LEASE_MS })?.id)
+      .toBe(first.update.id)
+    inbox.retry(first.update.id, 'first', 'temporary', NOW + 500)
+    expect(inbox.claimNext({ workerId: 'early', nowMs: NOW + 499, leaseDurationMs: LEASE_MS })).toBeNull()
+    expect(inbox.claimNext({ workerId: 'second', nowMs: NOW + 500, leaseDurationMs: LEASE_MS })?.id)
+      .toBe(first.update.id)
+
+    expect(inbox.recoverExpiredLeases(NOW + 500 + LEASE_MS)).toBe(1)
+    expect(inbox.claimNext({
+      workerId: 'recovered', nowMs: NOW + 500 + LEASE_MS, leaseDurationMs: LEASE_MS,
+    })?.id).toBe(first.update.id)
+  })
+
+  test('keeps a fragment that arrives after album processing as an isolated message', () => {
+    const inbox = new SqliteInboxRepository(database)
+    const first = inbox.ingest({
+      botId: 'primary', updateId: 90, chatId: '7001', routingClass: 'MESSAGE', payload: {},
+      receivedAtMs: NOW,
+    })
+    inbox.registerAlbumFragment({
+      updateRowId: first.update.id, mediaGroupId: 'media-late', readyAtMs: NOW, nowMs: NOW,
+    })
+    inbox.claimNext({ workerId: 'album', nowMs: NOW, leaseDurationMs: LEASE_MS })
+
+    const late = inbox.ingest({
+      botId: 'primary', updateId: 91, chatId: '7001', routingClass: 'MESSAGE', payload: {},
+      receivedAtMs: NOW + 1,
+    })
+    expect(inbox.registerAlbumFragment({
+      updateRowId: late.update.id,
+      mediaGroupId: 'media-late',
+      readyAtMs: NOW + 2_001,
+      nowMs: NOW + 1,
+    })).toEqual({ grouped: false, leaderUpdateRowId: first.update.id })
+
+    inbox.markProcessed(first.update.id, 'album', NOW + 2)
+    expect(inbox.claimNext({ workerId: 'late', nowMs: NOW + 2, leaseDurationMs: LEASE_MS })?.id)
+      .toBe(late.update.id)
   })
 
   test('prioritizes controls and preserves queued-message FIFO per chat', () => {

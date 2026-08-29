@@ -82,6 +82,7 @@ export interface DurableTextRuntimeOptions {
   outboundMedia?: Omit<DurableOutboundMediaOptions, 'allowedRoots'> & {
     allowedRoots?: readonly string[]
   }
+  albumFlushMs?: number
 }
 
 export interface EnqueueOutboundMediaInput {
@@ -135,9 +136,13 @@ function telegramUpdateId(update: unknown): number {
   return updateId as number
 }
 
-function telegramRoute(update: unknown): { chatId: string | null; routingClass: UpdateRoutingClass } {
+function telegramRoute(update: unknown): {
+  chatId: string | null
+  routingClass: UpdateRoutingClass
+  mediaGroupId: string | null
+} {
   if (typeof update !== 'object' || update === null || Array.isArray(update)) {
-    return { chatId: null, routingClass: 'OTHER' }
+    return { chatId: null, routingClass: 'OTHER', mediaGroupId: null }
   }
   const value = update as {
     message?: {
@@ -146,26 +151,32 @@ function telegramRoute(update: unknown): { chatId: string | null; routingClass: 
       caption?: unknown
       photo?: unknown
       document?: unknown
+      media_group_id?: unknown
     }
     callback_query?: { message?: { chat?: { id?: unknown } } }
   }
   const callbackChatId = value.callback_query?.message?.chat?.id
   if (callbackChatId !== undefined) {
-    return { chatId: String(callbackChatId), routingClass: 'CONTROL' }
+    return { chatId: String(callbackChatId), routingClass: 'CONTROL', mediaGroupId: null }
   }
   const chatId = value.message?.chat?.id
-  if (chatId === undefined) return { chatId: null, routingClass: 'OTHER' }
+  if (chatId === undefined) return { chatId: null, routingClass: 'OTHER', mediaGroupId: null }
   const hasAttachment = Array.isArray(value.message?.photo) ||
     (typeof value.message?.document === 'object' && value.message.document !== null)
   const messageText = value.message?.text
   if (typeof messageText !== 'string' && !hasAttachment) {
-    return { chatId: String(chatId), routingClass: 'OTHER' }
+    return { chatId: String(chatId), routingClass: 'OTHER', mediaGroupId: null }
   }
+  const rawMediaGroupId = value.message?.media_group_id
+  const mediaGroupId = typeof rawMediaGroupId === 'string' && rawMediaGroupId.trim().length > 0
+    ? rawMediaGroupId.trim().slice(0, 256)
+    : null
   return {
     chatId: String(chatId),
     routingClass: typeof messageText === 'string' && messageText.trimStart().startsWith('/')
       ? 'CONTROL'
       : 'MESSAGE',
+    mediaGroupId,
   }
 }
 
@@ -184,6 +195,10 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     throw new TypeError(
       `default Telegram project is not configured: ${options.telegram.defaultProjectId}`,
     )
+  }
+  const albumFlushMs = options.albumFlushMs ?? 2_000
+  if (!Number.isSafeInteger(albumFlushMs) || albumFlushMs < 100 || albumFlushMs > 60_000) {
+    throw new TypeError('albumFlushMs must be a safe integer between 100 and 60000')
   }
 
   const inbox = new SqliteInboxRepository(options.database)
@@ -246,6 +261,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     deliveryProofForSourceKey: (sourceKey) =>
       outbox.getBySourceKey(sourceKey)?.remoteId ?? null,
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
+    albumSource: inbox,
   })
   const coordinator = new DurableSessionCoordinator(
     sessions,
@@ -291,7 +307,16 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
         payload: update,
         receivedAtMs,
       }
-      return inbox.ingest(input)
+      const result = inbox.ingest(input)
+      if (result.created && route.mediaGroupId !== null && route.routingClass === 'MESSAGE') {
+        inbox.registerAlbumFragment({
+          updateRowId: result.update.id,
+          mediaGroupId: route.mediaGroupId,
+          readyAtMs: receivedAtMs + albumFlushMs,
+          nowMs: receivedAtMs,
+        })
+      }
+      return result
     },
     processInboundOnce: () => inbound.runOnce(),
     deliverOutboundOnce: () => outbound.runOnce(),

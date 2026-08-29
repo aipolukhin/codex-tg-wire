@@ -58,6 +58,12 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    albums: z
+      .object({
+        flushMs: z.number().int().min(100).max(60_000).default(2_000),
+      })
+      .strict()
+      .default({}),
     codex: z
       .object({
         binary: z.string().trim().min(1).optional(),

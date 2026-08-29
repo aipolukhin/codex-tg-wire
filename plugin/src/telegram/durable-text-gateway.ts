@@ -92,6 +92,7 @@ export interface DurableTelegramTextGatewayOptions {
   attachmentStore?: InboundAttachmentStore
   deliveryProofForSourceKey?: (sourceKey: string) => string | null
   outboundMediaStore?: DurableOutboundMediaStore
+  albumSource?: { albumFragmentsFor(updateRowId: number): readonly InboxUpdate[] }
 }
 
 export type PreparedTextDelivery = {
@@ -338,6 +339,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly attachmentStore: InboundAttachmentStore | undefined
   private readonly deliveryProofForSourceKey: ((sourceKey: string) => string | null) | undefined
   private readonly outboundMediaStore: DurableOutboundMediaStore | undefined
+  private readonly albumSource: DurableTelegramTextGatewayOptions['albumSource']
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -353,6 +355,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.attachmentStore = options.attachmentStore
     this.deliveryProofForSourceKey = options.deliveryProofForSourceKey
     this.outboundMediaStore = options.outboundMediaStore
+    this.albumSource = options.albumSource
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -365,14 +368,26 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   extractText(update: InboxUpdate): IncomingTextMessage | null {
-    const authorized = this.authorizedEnvelope(update)
-    if (authorized === null) return null
-    const text = typeof authorized.message.text === 'string'
-      ? authorized.message.text
-      : typeof authorized.message.caption === 'string'
-        ? authorized.message.caption
-        : ''
-    const attachments = this.extractAttachments(authorized.message)
+    const album = this.albumSource?.albumFragmentsFor(update.id) ?? []
+    const updates = album.length === 0 ? [update] : album
+    const envelopes = updates.map((fragment) => this.authorizedEnvelope(fragment))
+    if (envelopes.some((value) => value === null)) return null
+    const authorized = envelopes[0]
+    if (authorized === null || authorized === undefined) return null
+    if (envelopes.some((value) => value?.chatId !== authorized.chatId)) return null
+    const textParts: string[] = []
+    const attachments = [] as NonNullable<IncomingTextMessage['attachments']>[number][]
+    for (const envelope of envelopes) {
+      if (envelope === null) continue
+      const text = typeof envelope.message.text === 'string'
+        ? envelope.message.text
+        : typeof envelope.message.caption === 'string'
+          ? envelope.message.caption
+          : ''
+      if (text.trim().length > 0 && !textParts.includes(text)) textParts.push(text)
+      attachments.push(...this.extractAttachments(envelope.message))
+    }
+    const text = textParts.join('\n\n')
     const trimmed = text.trim()
     if (trimmed.startsWith('/') || (trimmed.length === 0 && attachments.length === 0)) return null
     return {

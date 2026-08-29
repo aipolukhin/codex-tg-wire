@@ -42,8 +42,9 @@ owner-only self-hosted мост для настоящей работы с код
 ## Быстрый старт
 
 Нужны **Linux с systemd --user**, **Telegram bot token** и числовые Telegram
-user/chat IDs владельца. Installer сам поставит совместимый Codex CLI и
-автоматически переиспользует локальный аккаунт из `~/.codex`, если он уже есть.
+user/chat IDs владельца. Installer при необходимости сам поставит закреплённый
+Bun в `~/.bun`, подтянет совместимый Codex CLI и автоматически переиспользует
+локальный аккаунт из `~/.codex`, если он уже есть. `sudo` не используется.
 
 ```bash
 git clone https://github.com/aipolukhin/codex-tg-wire.git

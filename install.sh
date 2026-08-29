@@ -26,6 +26,7 @@ ONLINE_DOCTOR=1
 INSTALL_DEPENDENCIES=1
 UNINSTALL=0
 TEMPORARY_PATH=""
+UI_INNER_WIDTH=44
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
   CYAN=$'\033[36m'
@@ -61,13 +62,33 @@ fail() {
   exit 1
 }
 
+ui_box_rule() {
+  local left="$1"
+  local right="$2"
+  local border="${3:-$CYAN}"
+  local rule
+  printf -v rule '%*s' "$UI_INNER_WIDTH" ''
+  rule="${rule// /─}"
+  printf '%s%s%s%s%s\n' "$border" "$left" "$rule" "$right" "$RESET"
+}
+
+ui_box_line() {
+  local text="$1"
+  local style="${2:-}"
+  local border="${3:-$CYAN}"
+  local width="${#text}"
+  (( width <= UI_INNER_WIDTH )) || fail "internal UI line is wider than its frame"
+  local left=$(( (UI_INNER_WIDTH - width) / 2 ))
+  local right=$(( UI_INNER_WIDTH - width - left ))
+  printf '%s│%s%*s%s%s%s%*s%s│%s\n' \
+    "$border" "$RESET" "$left" '' "$style" "$text" "$RESET" "$right" '' "$border" "$RESET"
+}
+
 ui_banner() {
-  printf '%s╭────────────────────────────────────────────╮%s\n' "$CYAN" "$RESET"
-  printf '%s│%s          %sCODEX · TG · WIRE%s                 %s│%s\n' \
-    "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
-  printf '%s│%s       Telegram ↔ Codex App Server         %s│%s\n' \
-    "$CYAN" "$RESET" "$CYAN" "$RESET"
-  printf '%s╰────────────────────────────────────────────╯%s\n' "$CYAN" "$RESET"
+  ui_box_rule '╭' '╮'
+  ui_box_line 'CODEX · TG · WIRE' "$BOLD"
+  ui_box_line 'Telegram ↔ Codex App Server'
+  ui_box_rule '╰' '╯'
 }
 
 ui_step() {
@@ -126,6 +147,9 @@ Maintenance options:
 
 No token is accepted as a command-line value. Without --token-file, the first
 interactive install asks for it without echoing it.
+
+If the pinned Bun runtime is missing, the installer adds it to ~/.bun through
+the official Bun installer. Set BUN_INSTALL to choose another absolute path.
 EOF
 }
 
@@ -248,7 +272,7 @@ ui_step 1 4 "Runtime"
 absolute_command() {
   local name="$1"
   local path
-  path="$(command -v "$name" 2>/dev/null)" || fail "$name is required but was not found in PATH"
+  path="$(command -v "$name" 2>/dev/null)" || return 1
   case "$path" in
     /*) printf '%s\n' "$path" ;;
     *)
@@ -259,13 +283,63 @@ absolute_command() {
   esac
 }
 
-BUN_BINARY="$(absolute_command bun)"
-SYSTEMCTL_BINARY="$(absolute_command systemctl)"
-CODEX_HOME_VALUE="${CODEX_HOME:-$HOME/.codex}"
+required_command() {
+  local name="$1"
+  local path
+  path="$(absolute_command "$name")" || fail "$name is required but was not found in PATH"
+  printf '%s\n' "$path"
+}
 
-BUN_VERSION="$($BUN_BINARY --version 2>/dev/null)" || fail "cannot execute Bun"
-[[ "$BUN_VERSION" == 1.4.* ]] || \
-  fail "Bun 1.4.x is required; found ${BUN_VERSION:-unknown}"
+PINNED_BUN_VERSION="$(awk -F'[@"]' '/"packageManager"[[:space:]]*:/ { print $5; exit }' \
+  "$PLUGIN_DIRECTORY/package.json")"
+[[ "$PINNED_BUN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  fail "cannot read the pinned Bun version"
+BUN_INSTALL_DIRECTORY="${BUN_INSTALL:-$HOME/.bun}"
+case "$BUN_INSTALL_DIRECTORY" in
+  /*) ;;
+  *) fail "BUN_INSTALL must be an absolute path" ;;
+esac
+
+install_bun() {
+  local curl_binary
+  curl_binary="$(required_command curl)"
+  required_command unzip >/dev/null
+
+  say "Installing pinned Bun $PINNED_BUN_VERSION in $BUN_INSTALL_DIRECTORY"
+  TEMPORARY_PATH="$(mktemp "${TMPDIR:-/tmp}/codex-tg-wire-bun.XXXXXX")"
+  "$curl_binary" --fail --silent --show-error --location \
+    --proto '=https' --tlsv1.2 https://bun.com/install --output "$TEMPORARY_PATH"
+  BUN_INSTALL="$BUN_INSTALL_DIRECTORY" \
+    bash "$TEMPORARY_PATH" "bun-v$PINNED_BUN_VERSION" >/dev/null
+  rm -f -- "$TEMPORARY_PATH"
+  TEMPORARY_PATH=""
+}
+
+BUN_BINARY="$(absolute_command bun || true)"
+if [[ -z "$BUN_BINARY" && -x "$BUN_INSTALL_DIRECTORY/bin/bun" ]]; then
+  BUN_BINARY="$BUN_INSTALL_DIRECTORY/bin/bun"
+fi
+BUN_VERSION=""
+if [[ -n "$BUN_BINARY" ]]; then
+  BUN_VERSION="$("$BUN_BINARY" --version 2>/dev/null || true)"
+fi
+if [[ "$BUN_VERSION" != "$PINNED_BUN_VERSION" ]]; then
+  if [[ -n "$BUN_VERSION" ]]; then
+    ui_warn "Found Bun $BUN_VERSION; codex-tg-wire pins $PINNED_BUN_VERSION."
+  else
+    ui_note "Bun is not installed; the installer will add it without sudo."
+  fi
+  install_bun
+  BUN_BINARY="$BUN_INSTALL_DIRECTORY/bin/bun"
+  [[ -x "$BUN_BINARY" ]] || fail "Bun installer did not create $BUN_BINARY"
+  BUN_VERSION="$("$BUN_BINARY" --version 2>/dev/null)" || fail "cannot execute Bun"
+fi
+[[ "$BUN_VERSION" == "$PINNED_BUN_VERSION" ]] || \
+  fail "Bun $PINNED_BUN_VERSION is required; found ${BUN_VERSION:-unknown}"
+export PATH="$BUN_INSTALL_DIRECTORY/bin:$PATH"
+
+SYSTEMCTL_BINARY="$(required_command systemctl)"
+CODEX_HOME_VALUE="${CODEX_HOME:-$HOME/.codex}"
 
 if ! "$SYSTEMCTL_BINARY" --user show-environment >/dev/null 2>&1; then
   fail "systemd --user is unavailable; log in normally or enable a user manager first"
@@ -547,10 +621,11 @@ if [[ $START_SERVICE -eq 1 ]]; then
     fail "service did not become active; inspect: journalctl --user -u $SERVICE_NAME -n 100"
 fi
 
-printf '\n%s╭────────────────────────────────────────────╮%s\n' "$GREEN" "$RESET"
-printf '%s│%s              %scodex-tg-wire готов%s          %s│%s\n' \
-  "$GREEN" "$RESET" "$BOLD" "$RESET" "$GREEN" "$RESET"
-printf '%s╰────────────────────────────────────────────╯%s\n\n' "$GREEN" "$RESET"
+printf '\n'
+ui_box_rule '╭' '╮' "$GREEN"
+ui_box_line 'codex-tg-wire готов' "$BOLD" "$GREEN"
+ui_box_rule '╰' '╯' "$GREEN"
+printf '\n'
 printf '  Status: systemctl --user status %s\n' "$SERVICE_NAME"
 printf '  Logs:   journalctl --user -u %s -f\n' "$SERVICE_NAME"
 printf '  Config: %s\n' "$CONFIG_PATH"

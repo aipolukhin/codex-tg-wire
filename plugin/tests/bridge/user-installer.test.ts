@@ -33,6 +33,8 @@ describe('one-command user installer', () => {
     const tokenSource = join(root, 'telegram-token-source')
     const groqSource = join(root, 'groq-key-source')
     const codex = join(fakeBin, 'codex')
+    const bunInstaller = join(root, 'bun-install.sh')
+    const bunInstall = join(home, '.bun')
     const token = '123456789:test-secret-token'
     const groqKey = 'gsk_test-private-voice-key'
     for (const directory of [home, project, fakeBin]) mkdirSync(directory, { recursive: true })
@@ -49,6 +51,26 @@ if [ "\${1:-}" = "login" ] && [ "\${2:-}" = "status" ]; then
 fi
 exit 2
 `)
+    executable(bunInstaller, `#!/bin/sh
+set -eu
+mkdir -p "$BUN_INSTALL/bin"
+ln -sf "$REAL_BUN" "$BUN_INSTALL/bin/bun"
+printf '%s\\n' "\${1:-}" > "$BUN_INSTALL/requested-version"
+`)
+    executable(join(fakeBin, 'curl'), `#!/bin/sh
+set -eu
+output=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = '--output' ]; then
+    output="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+[ -n "$output" ]
+cp "$FAKE_BUN_INSTALLER" "$output"
+`)
     executable(join(fakeBin, 'systemctl'), `#!/bin/sh
 printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
 exit 0
@@ -60,8 +82,11 @@ exit 0
       XDG_CONFIG_HOME: configRoot,
       XDG_DATA_HOME: dataRoot,
       CODEX_BINARY_PATH: codex,
+      BUN_INSTALL: bunInstall,
+      REAL_BUN: process.execPath,
+      FAKE_BUN_INSTALLER: bunInstaller,
       SYSTEMCTL_LOG: systemctlLog,
-      PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
     }
     const command = [
       'bash',
@@ -113,6 +138,7 @@ exit 0
     const unit = await Bun.file(unitPath).text()
     expect(unit).toContain(`WorkingDirectory="${join(REPOSITORY_ROOT, 'plugin')}"`)
     expect(unit).toContain(`Environment="CODEX_BINARY_PATH=${codex}"`)
+    expect(unit).toContain(`ExecStart="${join(bunInstall, 'bin/bun')}" run start:codex`)
     expect(unit).toContain(`Environment="DASHI_CODEX_BRIDGE_CONFIG=${configPath}"`)
     expect(unit).toContain(`Environment="GROQ_API_KEY_FILE=${groqCredentialPath}"`)
     expect(unit).toContain('WantedBy=default.target')
@@ -122,12 +148,16 @@ exit 0
     expect(unit).not.toContain('ProtectHome=true')
     expect(unit).not.toContain('/srv/')
     expect(stdout).toContain('CODEX · TG · WIRE')
+    expect(stdout).toContain(`Installing pinned Bun 1.4.0 in ${bunInstall}`)
     expect(stdout).toContain('Шаг 4 из 4')
     expect(stdout).toContain('YOLO: approvalPolicy=never · sandbox=danger-full-access')
     expect(stdout).not.toContain(token)
     expect(stdout).not.toContain(groqKey)
     expect(stderr).not.toContain(token)
     expect(stderr).not.toContain(groqKey)
+    expect(await Bun.file(join(bunInstall, 'requested-version')).text()).toBe('bun-v1.4.0\n')
+    const frameLines = stdout.split('\n').filter((line) => /^[╭│╰]/u.test(line))
+    expect(new Set(frameLines.map((line) => [...line].length))).toEqual(new Set([46]))
 
     const systemctlCalls = await Bun.file(systemctlLog).text()
     expect(systemctlCalls).toContain('--user show-environment')

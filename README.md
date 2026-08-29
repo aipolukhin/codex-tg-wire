@@ -41,8 +41,9 @@ not a stateless chat wrapper.
 ## Quick start
 
 You need **Linux with systemd --user**, a **Telegram bot token**, and the numeric
-Telegram user/chat IDs of the owner. The installer brings its compatible Codex
-CLI and automatically reuses your local `~/.codex` account when one exists.
+Telegram user/chat IDs of the owner. The installer adds its pinned Bun runtime
+under `~/.bun` when needed, brings the compatible Codex CLI, and automatically
+reuses your local `~/.codex` account when one exists. No `sudo` is used.
 
 ```bash
 git clone https://github.com/aipolukhin/codex-tg-wire.git

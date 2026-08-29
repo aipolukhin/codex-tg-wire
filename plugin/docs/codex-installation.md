@@ -12,8 +12,10 @@ cd codex-tg-wire
 ./install.sh
 ```
 
-The installer is resumable and safe to run again. It installs frozen Bun
-dependencies and the pinned Codex CLI locally, reuses the current user's
+The installer is resumable and safe to run again. When Bun is absent or has a
+different version, it installs the version pinned by `plugin/package.json` into
+`~/.bun` through Bun's official installer, without `sudo`. It then installs
+frozen Bun dependencies and the pinned Codex CLI locally, reuses the current user's
 `CODEX_HOME` (normally `~/.codex`), asks for the project and private Telegram
 allowlist, stores the bot token separately with mode `0600`, runs doctor and
 creates `~/.config/systemd/user/codex-tg-wire.service`. SQLite and media state
@@ -62,7 +64,8 @@ longer the default onboarding path.
 ## Prerequisites
 
 - Linux with systemd 252+ or Docker Engine with Compose;
-- Bun `1.4.x` for a host installation;
+- `curl` and `unzip` for the recommended host installer (it installs pinned Bun itself);
+- Bun `1.4.x` for advanced/manual host installations;
 - Codex CLI `0.149.1` for the advanced system-wide host installation (the user installer vendors it locally);
 - a private Telegram bot token and numeric owner user/chat ids;
 - a local project directory writable by the service account;

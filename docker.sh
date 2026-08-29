@@ -25,6 +25,7 @@ REPLACE_GROQ_KEY=0
 START_SERVICE=1
 ONLINE_DOCTOR=1
 TEMPORARY_PATH=""
+UI_INNER_WIDTH=44
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
   CYAN=$'\033[36m'
@@ -58,13 +59,33 @@ note() { printf '%s%s%s\n' "$DIM" "$*" "$RESET"; }
 prompt() { printf '%s?%s %s' "$CYAN" "$RESET" "$1"; }
 fail() { printf '%s✗%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
+box_rule() {
+  local left="$1"
+  local right="$2"
+  local border="${3:-$CYAN}"
+  local rule
+  printf -v rule '%*s' "$UI_INNER_WIDTH" ''
+  rule="${rule// /─}"
+  printf '%s%s%s%s%s\n' "$border" "$left" "$rule" "$right" "$RESET"
+}
+
+box_line() {
+  local text="$1"
+  local style="${2:-}"
+  local border="${3:-$CYAN}"
+  local width="${#text}"
+  (( width <= UI_INNER_WIDTH )) || fail "internal UI line is wider than its frame"
+  local left=$(( (UI_INNER_WIDTH - width) / 2 ))
+  local right=$(( UI_INNER_WIDTH - width - left ))
+  printf '%s│%s%*s%s%s%s%*s%s│%s\n' \
+    "$border" "$RESET" "$left" '' "$style" "$text" "$RESET" "$right" '' "$border" "$RESET"
+}
+
 banner() {
-  printf '%s╭────────────────────────────────────────────╮%s\n' "$CYAN" "$RESET"
-  printf '%s│%s          %sCODEX · TG · WIRE%s                 %s│%s\n' \
-    "$CYAN" "$RESET" "$BOLD" "$RESET" "$CYAN" "$RESET"
-  printf '%s│%s          optional Docker runtime           %s│%s\n' \
-    "$CYAN" "$RESET" "$CYAN" "$RESET"
-  printf '%s╰────────────────────────────────────────────╯%s\n' "$CYAN" "$RESET"
+  box_rule '╭' '╮'
+  box_line 'CODEX · TG · WIRE' "$BOLD"
+  box_line 'optional Docker runtime'
+  box_rule '╰' '╯'
 }
 
 step() { printf '\n%sШаг %s из %s%s · %s\n\n' "$BOLD" "$1" "$2" "$RESET" "$3"; }
@@ -375,10 +396,11 @@ setup() {
     compose ps bridge
   fi
 
-  printf '\n%s╭────────────────────────────────────────────╮%s\n' "$GREEN" "$RESET"
-  printf '%s│%s              %sDocker bridge ready%s          %s│%s\n' \
-    "$GREEN" "$RESET" "$BOLD" "$RESET" "$GREEN" "$RESET"
-  printf '%s╰────────────────────────────────────────────╯%s\n\n' "$GREEN" "$RESET"
+  printf '\n'
+  box_rule '╭' '╮' "$GREEN"
+  box_line 'Docker bridge ready' "$BOLD" "$GREEN"
+  box_rule '╰' '╯' "$GREEN"
+  printf '\n'
   printf '  Status: ./docker.sh status\n'
   printf '  Logs:   ./docker.sh logs\n'
   printf '  Stop:   ./docker.sh down\n'

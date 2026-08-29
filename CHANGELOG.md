@@ -6,6 +6,12 @@ Claude package version is not the codex-tg-wire release version.
 
 ## [Unreleased]
 
+### Installer
+
+- Fixed the host and Docker console frames so every row has the same width.
+- The default host installer now bootstraps the repository-pinned Bun release
+  into `~/.bun` through Bun's official installer when it is missing or differs.
+
 ### Telegram control plane (M6.5)
 
 - Added native account status, device-code login, rate limits, token usage and

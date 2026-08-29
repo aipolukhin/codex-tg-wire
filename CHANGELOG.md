@@ -12,6 +12,22 @@ server identity reads `package.json` at runtime. Release process:
 ## [Unreleased]
 
 ### Added
+- Added the standalone Codex bridge `1.0.x` release contract: pinned Codex/Bun
+  compatibility matrix, reproducible tar/SBOM/checksums, systemd watchdog unit
+  and a non-root/read-only Docker Compose profile.
+- Added private file credentials for Telegram and optional voice secrets.
+  Production profiles use systemd `LoadCredential` and Docker secrets while
+  existing environment variables remain compatible.
+- Added a safe configuration initializer plus an immutable release manager
+  that verifies checksums/archive structure, installs frozen dependencies into
+  versioned directories, and atomically manages `current`/`previous` for
+  staged activation and rollback.
+- Added a clean-user acceptance gate that initializes config, runs doctor,
+  proves the first durable delivery, closes/reopens SQLite, and proves the next
+  message resumes the same thread. A second gate runs this from the release
+  artifact after a fresh frozen dependency install.
+- Added systemd/Docker installation, upgrade/rollback, compatibility and
+  security/delivery-guarantee runbooks for the standalone Codex runtime.
 - Added durable Codex App Server interactions: command/file approvals use
   owner-checked inline buttons, non-secret user-input requests support option
   buttons and `/answer`, and all prompts, edits and callback acknowledgements

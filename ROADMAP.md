@@ -1,6 +1,6 @@
 # Dashi × Codex × Telemax: roadmap гибридного моста
 
-Статус: active implementation
+Статус: M6 implementation complete; public `v1.0` ждёт live canary
 Цель первого стабильного релиза: self-hosted Telegram-клиент для Codex с UX Dashi и гарантиями доставки Telemax.
 
 ## Статус реализации — 2026-08-29
@@ -37,6 +37,8 @@
 - [x] Неизвестные App Server notifications больше не теряются молча: bounded SQLite-журнал хранит только method/correlation/count/timestamps, без event payload.
 - [x] M4 закрыт: provider-neutral HUD/status и heartbeat, validated HTML/chunk chains, durable inbound/outbound media, atomic albums, verified file inbox/outbox и optional voice adapter работают только через SQLite/outbox boundaries.
 - [x] Media fault gate покрывает retry до `send_started`, `AMBIGUOUS` после него, restart на upload boundary, tamper detection, единый album turn/proof и запрет автоматического повтора неизвестного результата.
+- [x] M5 implementation закрыт production doctor/backup/restore/readiness/watchdog/retention/rate-limit/chaos/supply-chain срезом; внешний 72-часовой soak ещё ожидается.
+- [x] M6 implementation закрыт: systemd/Docker, credential files, safe init, atomic upgrade/rollback, v1 compatibility matrix, security contract и artifact install→restart→resume acceptance.
 
 ## 1. Что именно мы строим
 
@@ -55,7 +57,7 @@ Telegram Bot API
  problem center ◄── durable outbox ◄── event projector
 ```
 
-Опциональный Codex plugin появится позже только как упаковка для установки, диагностики, skills и документации. Он не будет владеть Telegram polling, очередями или жизненным циклом bridge-сервиса.
+Опциональный Codex plugin может появиться позже только как упаковка для установки, диагностики, skills и документации, если реально сократит onboarding. Он не будет владеть Telegram polling, очередями или жизненным циклом bridge-сервиса. В `v1` он не поставляется: standalone daemon остаётся единственным runtime и update path.
 
 ### Состав гибрида
 
@@ -244,13 +246,15 @@ Gate M5: **ожидает 72-часовой live soak.** Harness и коротк
 
 ### M6 — `v1.0`
 
-- Installation guide для systemd и Docker.
-- Backup/restore/upgrade/rollback runbook.
-- Security model и честно описанные delivery guarantees.
-- Release artifacts и pinned compatibility matrix: bridge ↔ Codex CLI.
-- Optional `.codex-plugin` только для install/doctor/skills/docs, если он реально упрощает onboarding.
+- [x] Installation guide для systemd и Docker.
+- [x] Backup/restore/upgrade/rollback runbook.
+- [x] Security model и честно описанные delivery guarantees.
+- [x] Release artifacts и pinned compatibility matrix: bridge ↔ Codex CLI.
+- [x] Optional `.codex-plugin` оценён и не включён: для daemon onboarding он добавляет второй lifecycle, а не упрощает его.
 
-Gate `v1.0`: новый пользователь поднимает мост по документации, проходит smoke test, перезапускает сервис и продолжает существующий thread без ручного ремонта БД.
+Gate M6 implementation: **пройден герметично из release artifact.** Safe init создаёт чистую установку, doctor проходит, первый update создаёт thread, SQLite физически закрывается/открывается, follow-up продолжает тот же durable thread, обе доставки имеют remote proof. Команда: `bun run acceptance:codex:artifact`.
+
+Public Gate `v1.0`: ожидает реальный operator walkthrough и M5 72-часовой Telegram/Codex live soak. До этого артефакт остаётся hardened pre-release, даже при полностью закрытом M6 implementation.
 
 ## 6. Fault-injection matrix
 

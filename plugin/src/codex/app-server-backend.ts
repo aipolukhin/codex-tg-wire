@@ -1,6 +1,7 @@
 import type {
   AgentBackend,
   AgentTextTurnInput,
+  AgentTurnLifecycle,
   TextTurnResult,
 } from '../bridge/contracts.js'
 import { AppServerClosedError, type CodexAppServerClient } from './app-server-client.js'
@@ -66,16 +67,24 @@ export class CodexTurnBusyError extends Error {
 }
 
 export class CodexTurnFailedError extends Error {
+  readonly agentTurnState = 'FAILED' as const
+  readonly turnId: string
+
   constructor(turnId: string, detail: string | null) {
     super(`Codex turn ${turnId} failed${detail === null ? '' : `: ${detail}`}`)
     this.name = 'CodexTurnFailedError'
+    this.turnId = turnId
   }
 }
 
 export class CodexTurnInterruptedError extends Error {
+  readonly agentTurnState = 'INTERRUPTED' as const
+  readonly turnId: string
+
   constructor(turnId: string) {
     super(`Codex turn ${turnId} was interrupted`)
     this.name = 'CodexTurnInterruptedError'
+    this.turnId = turnId
   }
 }
 
@@ -181,13 +190,21 @@ export class CodexAppServerBackend implements AgentBackend {
     this.unsubscribeClose = client.onClose((close) => this.handleClose(close))
   }
 
-  async runTextTurn(input: AgentTextTurnInput): Promise<TextTurnResult> {
-    const threadId = await this.ensureThread(input)
+  async runTextTurn(
+    input: AgentTextTurnInput,
+    lifecycle: AgentTurnLifecycle = {},
+  ): Promise<TextTurnResult> {
+    if (input.threadId !== null && this.pendingByThread.has(input.threadId)) {
+      throw new CodexTurnBusyError(input.threadId)
+    }
+    const thread = await this.ensureThread(input)
+    const threadId = thread.id
     if (this.pendingByThread.has(threadId)) throw new CodexTurnBusyError(threadId)
 
     const pending = this.createPending(threadId)
     this.pendingByThread.set(threadId, pending)
     try {
+      await lifecycle.onThreadReady?.(threadId, thread.created)
       const started = await this.client.startTurn({
         ...this.turnDefaults,
         threadId,
@@ -201,6 +218,7 @@ export class CodexAppServerBackend implements AgentBackend {
         )
       }
       pending.turnId = started.turn.id
+      await lifecycle.onTurnStarted?.(threadId, started.turn.id)
       const terminal = await pending.promise
       if (terminal.id !== started.turn.id) {
         throw new CodexTurnProtocolError(
@@ -238,13 +256,13 @@ export class CodexAppServerBackend implements AgentBackend {
     this.pendingByThread.clear()
   }
 
-  private async ensureThread(input: AgentTextTurnInput): Promise<string> {
+  private async ensureThread(input: AgentTextTurnInput): Promise<{ id: string; created: boolean }> {
     if (input.threadId === null) {
       const started = await this.client.startThread({
         ...this.threadStartDefaults,
         cwd: input.cwd,
       })
-      return started.thread.id
+      return { id: started.thread.id, created: true }
     }
     const resumed = await this.client.resumeThread({
       ...this.threadResumeDefaults,
@@ -256,7 +274,7 @@ export class CodexAppServerBackend implements AgentBackend {
         `thread/resume returned ${resumed.thread.id}, expected ${input.threadId}`,
       )
     }
-    return resumed.thread.id
+    return { id: resumed.thread.id, created: false }
   }
 
   private createPending(threadId: string): PendingTurn {

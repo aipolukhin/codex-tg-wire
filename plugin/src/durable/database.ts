@@ -99,6 +99,15 @@ const MIGRATIONS: readonly Migration[] = [
         ON delivery_jobs (session_id, state, created_at_ms)`,
     ],
   },
+  {
+    version: 2,
+    name: 'idempotent_turn_operations',
+    statements: [
+      'ALTER TABLE turns ADD COLUMN operation_key TEXT',
+      `CREATE UNIQUE INDEX turns_operation_key_idx
+        ON turns (operation_key) WHERE operation_key IS NOT NULL`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

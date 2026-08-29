@@ -8,6 +8,7 @@ export interface IncomingTextMessage {
 
 export interface TextTurnOperation {
   operationKey: string
+  inboxUpdateId: number
   botId: string
   updateId: number
   chatId: string
@@ -38,8 +39,13 @@ export interface AgentTextTurnInput {
   text: string
 }
 
+export interface AgentTurnLifecycle {
+  onThreadReady?(threadId: string, created: boolean): void | Promise<void>
+  onTurnStarted?(threadId: string, turnId: string): void | Promise<void>
+}
+
 export interface AgentBackend {
-  runTextTurn(input: AgentTextTurnInput): Promise<TextTurnResult>
+  runTextTurn(input: AgentTextTurnInput, lifecycle?: AgentTurnLifecycle): Promise<TextTurnResult>
   interruptTurn(threadId: string, turnId: string): Promise<void>
 }
 

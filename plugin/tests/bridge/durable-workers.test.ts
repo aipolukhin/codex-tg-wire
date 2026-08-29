@@ -177,6 +177,7 @@ describe('durable text vertical slice', () => {
     expect(coordinator.calls).toEqual([
       {
         operationKey: 'telegram:primary-bot:501:turn',
+        inboxUpdateId: accepted.update.id,
         botId: 'primary-bot',
         updateId: 501,
         chatId: '7001',

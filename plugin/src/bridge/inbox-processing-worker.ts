@@ -71,6 +71,7 @@ export class InboxProcessingWorker {
       const turnKey = operationKey(update)
       const result = await this.coordinator.runTextTurn({
         operationKey: turnKey,
+        inboxUpdateId: update.id,
         botId: update.botId,
         updateId: update.updateId,
         chatId: message.chatId,

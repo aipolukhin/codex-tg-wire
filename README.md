@@ -22,7 +22,30 @@ It replaces the deprecated `claude -p` gateway pattern (a Python daemon that spa
 
 One plugin process = one Telegram bot = one agent. By default it serves **a single DM chat** (legacy single-session mode). With `multichat.enabled` turned on, the same bot fans incoming messages out across several per-chat tmux sessions of one identity — see section [3](#3-multichat--how-it-works-and-why).
 
-> **Status:** in production across a multi-agent fleet. Current release — **[v1.2.0](CHANGELOG.md)** (2026-07-10): model-aware context HUD, task pin reality mirror, output formatting polish — see section [15](#15-whats-new). Versioning and release process: [CHANGELOG.md](CHANGELOG.md) · [docs/RELEASING.md](docs/RELEASING.md). CI: `bun test` + `bun run typecheck` must pass clean before merge.
+> **Status:** the inherited Claude runtime matches current Dashi `main` at `f3ac9cf` (its manifest/changelog declare **1.3.0**; the latest published Git tag is `v1.2.0`). The Codex bridge has completed its v1.0 implementation and hermetic artifact gate; a real 72-hour Telegram/Codex canary is still required before it is called stable. CI: `bun test` + `bun run typecheck` must pass clean before merge.
+
+---
+
+## Original Dashi vs the Codex runtime in this fork
+
+This repository is a superset fork of [qwwiwi/dashi-plugin-claude-code](https://github.com/qwwiwi/dashi-plugin-claude-code), based on `upstream/main` commit [`f3ac9cf`](https://github.com/qwwiwi/dashi-plugin-claude-code/commit/f3ac9cfd20a125674bbad9f507f7cf6bc7566fca) from 2026-08-18. At the comparison baseline (2026-08-29) it was **0 commits behind upstream**, with the hybrid work added on top. It preserves the original Claude Code channel plugin and adds a second, standalone Telegram → Codex App Server runtime. The comparison below is therefore **current original Dashi vs the new Codex runtime**, not a comparison with an old tag and not a claim that the Claude runtime was removed.
+
+| Capability | Original Dashi | Codex runtime in this fork |
+|---|---|---|
+| Agent engine | Claude Code channel API | Codex App Server over supervised local JSONL/stdio |
+| Process model | Plugin hosted by a live Claude Code session; tmux is central to session control and mirroring | Always-on standalone daemon; tmux is not required |
+| Telegram scope | Single DM plus optional groups/multichat with per-chat tmux sessions and policy | v1 is deny-by-default personal mode: allowlisted private owner chats; groups/topics are post-v1 |
+| Conversation control | Long-lived Claude sessions, `/new`, `/reset`, `/stop`, native-dialog keypad and Claude slash-command passthrough | Durable Codex thread registry with `/threads`, `/switch`, `/resume`, `/archive`, `/new`, `/stop` and turn-safe `/steer` |
+| Model and execution policy | Selected inside the Claude session; permission relay and `AskUserQuestion` hooks | Persistent per-project `/model`, `/effort`, `/sandbox`, `/approval`, safe `/cwd`; durable approvals, user input and MCP elicitation |
+| Queue and delivery model | Persistent poller state plus file inbox/outbox for multichat, retries, rate limiting and dead letters | SQLite/WAL inbox, FIFO turns, leases and transactional outbox; every Telegram mutation follows the same durable path |
+| Unknown send outcome | Retry/dead-letter handling, without a delivery-proof ledger shared by every Telegram operation | `send_started` boundary and explicit `AMBIGUOUS` state; never auto-retries a possibly delivered send; audited problem center resolves it |
+| Restart recovery | Restarts the live session and preserves a memory tail; an interrupted active turn is not reconciled with Claude | Reads the recorded Codex thread/turn after restart; resumes proven results and marks uncertain work `UNKNOWN` without launching a replacement turn |
+| Telegram UX and media | Rich HTML, chunking, progress, task/context HUD, terminal mirror, photos/files/voice | Reuses the safe Telegram UX and adds durable HUD/heartbeat, verified inbound/outbound files, media groups, atomic albums and optional voice adapter |
+| Production packaging | Bun/Claude-hosted launch, tmux, hooks, doctor and systemd/launchd fleet guidance | Hardened systemd and non-root read-only Docker, credential files, doctor, backup/restore, retention, health/readiness/watchdog, atomic upgrade/rollback, SBOM |
+| Compatibility policy | Claude Code `v2.1.80+` line | Exact Codex CLI `0.149.1` schema fingerprint and bridge compatibility matrix; protocol drift fails closed |
+| Release maturity | Current `main`: package/changelog 1.3.0, nine commits after Git tag `v1.2.0`; used in production according to upstream | Hardened pre-release: implementation and artifact acceptance complete; real 72-hour canary pending |
+
+**Choose original Dashi** when you want Claude Code, mature tmux control, or groups today. **Choose the Codex runtime** when you want native Codex threads and stronger crash/delivery guarantees. Both runtimes live in this repository and can be selected independently; start with the [Codex installation guide](plugin/docs/codex-installation.md) or continue with the Claude documentation below.
 
 ---
 

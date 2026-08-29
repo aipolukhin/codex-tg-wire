@@ -26,6 +26,7 @@
 - [x] Добавлены lease heartbeat, periodic reaper и supervisor loops с graceful drain.
 - [x] Добавлен standalone personal-alpha service: строгий конфиг без токена, grammY/Codex wiring и signal shutdown.
 - [x] Добавлен первый M3 interaction slice: durable command/file approvals, user-input questions, inline callbacks, `/answer`, expiry и stale-on-disconnect.
+- [x] Добавлены durable `item/permissions/requestApproval`: строгая нормализация network/filesystem profile, least-privilege grant на turn/session и пустой grant при deny/timeout/unroutable request.
 - [x] Добавлен явный `/steer <текст>` с `expectedTurnId`; late/mismatched команды не попадают в другой turn.
 - [x] Добавлена restart-safe FIFO-очередь turns: один активный turn на session, control updates обходят очередь, ожидание не расходует retry budget.
 - [x] Добавлен первый problem center: `/failed`, `/ambiguous`, audited `/retry`, `/resolved`, `/archive`; unsafe retry для `AMBIGUOUS` запрещён.
@@ -192,7 +193,7 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
   не блокирует очередь навсегда.
 - Явный `/steer` для `turn/steer`; обычное сообщение при занятом thread по умолчанию становится следующим queued turn.
 - `/stop` вызывает `turn/interrupt` и корректно закрывает UI state.
-- Server-initiated approvals отображаются inline buttons с проверкой owner и одноразовым решением.
+- Server-initiated approvals отображаются inline buttons с проверкой owner и одноразовым решением. **Готово для command/file и permission-profile requests:** grant дополнительных network/filesystem permissions строится только из сохранённого запроса; Telegram callback выбирает turn/session, но не несёт и не расширяет права. Deny, timeout и отсутствующий thread route возвращают пустой grant.
 - User-input requests получают durable correlation id и срок жизни.
 - `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server. **Готово:** выбор проекта и overrides хранятся в SQLite по bot/chat/project; `/cwd` принимает только id из `projects[]`, а `danger-full-access` доступен только при явном включении в `allowedSandboxModes`.
 - Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn. **Готов первый срез:** одиночные photo и image documents идут нативным `localImage`, разрешённые text/PDF/JSON/XML/CSV documents — через приватный durable file и bridge-generated path metadata. Albums, audio/video и outbound media остаются M4.

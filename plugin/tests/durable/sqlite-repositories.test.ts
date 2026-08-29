@@ -69,7 +69,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(10)
+    expect(migrations?.count).toBe(11)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -106,8 +106,25 @@ describe('durable database migrations', () => {
     )`)
     legacy.run(`CREATE TABLE codex_interactions (
       id TEXT PRIMARY KEY,
-      state TEXT NOT NULL,
-      updated_at_ms INTEGER NOT NULL
+      token TEXT NOT NULL UNIQUE,
+      connection_id TEXT NOT NULL,
+      server_request_id_json TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      kind TEXT NOT NULL
+        CHECK (kind IN ('COMMAND_APPROVAL', 'FILE_APPROVAL', 'USER_INPUT')),
+      request_json TEXT NOT NULL,
+      answers_json TEXT NOT NULL DEFAULT '{}',
+      response_json TEXT,
+      state TEXT NOT NULL DEFAULT 'PENDING',
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
+      resolved_at_ms INTEGER,
+      last_error TEXT,
+      UNIQUE (connection_id, server_request_id_json)
     )`)
     legacy.run(
       `INSERT INTO sessions
@@ -135,6 +152,92 @@ describe('durable database migrations', () => {
       state: 'AVAILABLE',
       last_used_at_ms: NOW + 1,
     })
+    upgraded.close()
+  })
+
+  test('preserves existing interactions while adding permission approvals in v11', () => {
+    const legacyFilename = join(root, 'legacy-v10.sqlite3')
+    const legacy = new Database(legacyFilename, { create: true })
+    legacy.run(`CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at_ms INTEGER NOT NULL
+    )`)
+    for (let version = 1; version <= 10; version += 1) {
+      legacy.run(
+        'INSERT INTO schema_migrations (version, name, applied_at_ms) VALUES (?, ?, ?)',
+        [version, `legacy-${version}`, NOW],
+      )
+    }
+    legacy.run(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      bot_id TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )`)
+    legacy.run(`CREATE TABLE codex_interactions (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      connection_id TEXT NOT NULL,
+      server_request_id_json TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      kind TEXT NOT NULL
+        CHECK (kind IN ('COMMAND_APPROVAL', 'FILE_APPROVAL', 'USER_INPUT')),
+      request_json TEXT NOT NULL,
+      answers_json TEXT NOT NULL DEFAULT '{}',
+      response_json TEXT,
+      state TEXT NOT NULL DEFAULT 'PENDING',
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
+      resolved_at_ms INTEGER,
+      recovery_handled_at_ms INTEGER,
+      last_error TEXT,
+      UNIQUE (connection_id, server_request_id_json)
+    )`)
+    legacy.run(
+      `INSERT INTO sessions
+        (id, bot_id, chat_id, project_id, state, created_at_ms, updated_at_ms)
+       VALUES ('session-v10', 'primary', '7001', 'workspace', 'ACTIVE', ?, ?)`,
+      [NOW, NOW],
+    )
+    legacy.run(
+      `INSERT INTO codex_interactions
+        (id, token, connection_id, server_request_id_json, session_id, thread_id,
+         turn_id, item_id, kind, request_json, answers_json, state, created_at_ms,
+         updated_at_ms, expires_at_ms)
+       VALUES ('interaction-v10', 'token-v10', 'connection-v10', '"request-v10"',
+         'session-v10', 'thread-v10', 'turn-v10', 'item-v10', 'COMMAND_APPROVAL',
+         '{}', '{}', 'PENDING', ?, ?, ?)`,
+      [NOW, NOW, NOW + 60_000],
+    )
+    legacy.close()
+
+    const upgraded = openDurableDatabase(legacyFilename)
+    expect(upgraded.query<{
+      id: string
+      kind: string
+      thread_id: string
+      recovery_handled_at_ms: number | null
+    }, []>(
+      `SELECT id, kind, thread_id, recovery_handled_at_ms
+       FROM codex_interactions WHERE id = 'interaction-v10'`,
+    ).get()).toEqual({
+      id: 'interaction-v10',
+      kind: 'COMMAND_APPROVAL',
+      thread_id: 'thread-v10',
+      recovery_handled_at_ms: null,
+    })
+    const tableSql = upgraded.query<{ sql: string }, []>(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'codex_interactions'`,
+    ).get()?.sql
+    expect(tableSql).toContain("'PERMISSIONS_APPROVAL'")
     upgraded.close()
   })
 })

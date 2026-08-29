@@ -491,7 +491,7 @@ describe('CodexInteractionBroker', () => {
     restarted.close()
   })
 
-  test('rejects unsupported permission profiles instead of hanging App Server', async () => {
+  test('grants only the normalized requested permissions for one turn', async () => {
     await client.emitRequest({
       id: 'permissions-1',
       method: 'item/permissions/requestApproval',
@@ -499,15 +499,233 @@ describe('CodexInteractionBroker', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         itemId: 'permissions-item',
-        permissions: { network: true },
+        environmentId: 'devbox',
+        startedAtMs: NOW,
+        cwd: '/srv/workspace',
+        reason: 'read inputs and write generated files',
+        permissions: {
+          network: { enabled: true, ignoredFutureField: 'never echoed' },
+          fileSystem: {
+            read: ['/srv/workspace/input'],
+            write: null,
+            globScanMaxDepth: 4,
+            entries: [
+              {
+                path: { type: 'path', path: '/srv/workspace/generated' },
+                access: 'write',
+                ignoredFutureField: true,
+              },
+              {
+                path: { type: 'glob_pattern', pattern: '/srv/workspace/**/*.json' },
+                access: 'read',
+              },
+              {
+                path: {
+                  type: 'special',
+                  value: { kind: 'project_roots', subpath: 'artifacts' },
+                },
+                access: 'write',
+              },
+            ],
+          },
+        },
+      },
+    })
+
+    const interaction = onlyInteraction()
+    expect(interaction.kind).toBe('PERMISSIONS_APPROVAL')
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:prompt`)?.payload).toMatchObject({
+      chatId: '7001',
+      text: expect.stringContaining('write: /srv/workspace/generated'),
+      options: {
+        reply_markup: {
+          inline_keyboard: [
+            [{ callback_data: `dx:a:${interaction.token}:once`, text: expect.any(String) }],
+            [{ callback_data: `dx:a:${interaction.token}:session`, text: expect.any(String) }],
+            [{ callback_data: `dx:a:${interaction.token}:deny`, text: expect.any(String) }],
+          ],
+        },
+      },
+    })
+
+    await broker.handleInteraction({
+      operationKey: 'telegram:primary:2:turn:interaction',
+      botId: 'primary',
+      inboxUpdateId: 2,
+      updateId: 2,
+      response: {
+        kind: 'approval',
+        chatId: '7001',
+        token: interaction.token,
+        decision: 'accept',
+        callbackQueryId: 'callback-permissions',
+        callbackMessageId: 80,
+      },
+    })
+
+    expect(client.responses).toEqual([{
+      id: 'permissions-1',
+      result: {
+        permissions: {
+          network: { enabled: true },
+          fileSystem: {
+            read: ['/srv/workspace/input'],
+            write: null,
+            globScanMaxDepth: 4,
+            entries: [
+              { path: { type: 'path', path: '/srv/workspace/generated' }, access: 'write' },
+              {
+                path: { type: 'glob_pattern', pattern: '/srv/workspace/**/*.json' },
+                access: 'read',
+              },
+              {
+                path: {
+                  type: 'special',
+                  value: { kind: 'project_roots', subpath: 'artifacts' },
+                },
+                access: 'write',
+              },
+            ],
+          },
+        },
+        scope: 'turn',
+      },
+    }])
+  })
+
+  test('can persist the requested permission subset for the Codex session', async () => {
+    await client.emitRequest({
+      id: 'permissions-session',
+      method: 'item/permissions/requestApproval',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'permissions-session-item',
+        environmentId: null,
+        startedAtMs: NOW,
+        cwd: '/srv/workspace',
+        reason: null,
+        permissions: { network: { enabled: true }, fileSystem: null },
+      },
+    })
+    const interaction = onlyInteraction()
+    await broker.handleInteraction({
+      operationKey: 'telegram:primary:2:turn:interaction',
+      botId: 'primary',
+      inboxUpdateId: 2,
+      updateId: 2,
+      response: {
+        kind: 'approval',
+        chatId: '7001',
+        token: interaction.token,
+        decision: 'acceptForSession',
+        callbackQueryId: 'callback-permissions-session',
+        callbackMessageId: 81,
+      },
+    })
+    expect(client.responses).toEqual([{
+      id: 'permissions-session',
+      result: { permissions: { network: { enabled: true } }, scope: 'session' },
+    }])
+  })
+
+  test('fails permission requests closed on deny, timeout and missing thread route', async () => {
+    const permissionParams = {
+      environmentId: null,
+      startedAtMs: NOW,
+      cwd: '/srv/workspace',
+      reason: null,
+      permissions: { network: { enabled: true }, fileSystem: null },
+    }
+    await client.emitRequest({
+      id: 'permissions-deny',
+      method: 'item/permissions/requestApproval',
+      params: {
+        ...permissionParams,
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'permissions-deny-item',
+      },
+    })
+    const interaction = onlyInteraction()
+    await broker.handleInteraction({
+      operationKey: 'telegram:primary:2:turn:interaction',
+      botId: 'primary',
+      inboxUpdateId: 2,
+      updateId: 2,
+      response: {
+        kind: 'approval',
+        chatId: '7001',
+        token: interaction.token,
+        decision: 'decline',
+        callbackQueryId: 'callback-permissions-deny',
+        callbackMessageId: 82,
+      },
+    })
+    expect(client.responses).toContainEqual({
+      id: 'permissions-deny',
+      result: { permissions: {}, scope: 'turn' },
+    })
+
+    await client.emitRequest({
+      id: 'permissions-unroutable',
+      method: 'item/permissions/requestApproval',
+      params: {
+        ...permissionParams,
+        threadId: 'thread-missing',
+        turnId: 'turn-missing',
+        itemId: 'permissions-unroutable-item',
+      },
+    })
+    expect(client.responses).toContainEqual({
+      id: 'permissions-unroutable',
+      result: { permissions: {}, scope: 'turn' },
+    })
+
+    broker.close()
+    broker = new CodexInteractionBroker(client, interactions, sessions, outbox, {
+      connectionId: 'connection-permissions-timeout',
+      interactionTimeoutMs: 5,
+      now: () => NOW,
+    })
+    await client.emitRequest({
+      id: 'permissions-timeout',
+      method: 'item/permissions/requestApproval',
+      params: {
+        ...permissionParams,
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'permissions-timeout-item',
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    expect(client.responses).toContainEqual({
+      id: 'permissions-timeout',
+      result: { permissions: {}, scope: 'turn' },
+    })
+  })
+
+  test('rejects malformed permission-profile requests without creating a card', async () => {
+    await client.emitRequest({
+      id: 'permissions-malformed',
+      method: 'item/permissions/requestApproval',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'permissions-item',
+        environmentId: null,
+        startedAtMs: NOW,
+        cwd: '/srv/workspace',
+        reason: null,
+        permissions: { network: true, fileSystem: null },
       },
     })
     expect(client.errors).toContainEqual({
-      id: 'permissions-1',
-      error: {
-        code: -32004,
-        message: 'Permission-profile approvals are not supported by this Telegram bridge yet',
-      },
+      id: 'permissions-malformed',
+      error: { code: -32602, message: 'Malformed Codex interaction request' },
     })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM codex_interactions',
+    ).get()?.count).toBe(0)
   })
 })

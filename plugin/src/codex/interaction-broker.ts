@@ -62,9 +62,49 @@ interface UserInputParams extends CommonInteractionParams {
   isBlocking: boolean
 }
 
+interface AdditionalNetworkPermissions {
+  enabled: boolean | null
+}
+
+type FileSystemSpecialPath =
+  | { kind: 'root' | 'minimal' | 'tmpdir' | 'slash_tmp' }
+  | { kind: 'project_roots'; subpath: string | null }
+  | { kind: 'unknown'; path: string; subpath: string | null }
+
+type FileSystemPath =
+  | { type: 'path'; path: string }
+  | { type: 'glob_pattern'; pattern: string }
+  | { type: 'special'; value: FileSystemSpecialPath }
+
+interface FileSystemSandboxEntry {
+  path: FileSystemPath
+  access: 'read' | 'write' | 'deny'
+}
+
+interface AdditionalFileSystemPermissions {
+  read: readonly string[] | null
+  write: readonly string[] | null
+  globScanMaxDepth?: number
+  entries?: readonly FileSystemSandboxEntry[]
+}
+
+interface RequestPermissionProfile {
+  network: AdditionalNetworkPermissions | null
+  fileSystem: AdditionalFileSystemPermissions | null
+}
+
+interface PermissionsApprovalParams extends CommonInteractionParams {
+  environmentId: string | null
+  startedAtMs: number
+  cwd: string
+  reason: string | null
+  permissions: RequestPermissionProfile
+}
+
 type ParsedServerInteraction =
   | { kind: 'COMMAND_APPROVAL'; params: ApprovalParams }
   | { kind: 'FILE_APPROVAL'; params: ApprovalParams }
+  | { kind: 'PERMISSIONS_APPROVAL'; params: PermissionsApprovalParams }
   | { kind: 'USER_INPUT'; params: UserInputParams }
 
 export interface CodexInteractionBrokerOptions {
@@ -76,6 +116,7 @@ export interface CodexInteractionBrokerOptions {
 
 const DEFAULT_INTERACTION_TIMEOUT_MS = 10 * 60_000
 const MAX_PREVIEW = 1_200
+const MAX_PERMISSION_ITEMS = 1_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -159,6 +200,138 @@ function parseUserInput(value: unknown): UserInputParams | null {
   return { ...common, questions, isBlocking: value.isBlocking }
 }
 
+function parseNullableStrings(value: unknown): readonly string[] | null | undefined {
+  if (value === null) return null
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_PERMISSION_ITEMS ||
+    value.some((item) => typeof item !== 'string')
+  ) {
+    return undefined
+  }
+  return [...value] as string[]
+}
+
+function parseSpecialPath(value: unknown): FileSystemSpecialPath | null {
+  if (!isRecord(value) || typeof value.kind !== 'string') return null
+  if (['root', 'minimal', 'tmpdir', 'slash_tmp'].includes(value.kind)) {
+    return { kind: value.kind as 'root' | 'minimal' | 'tmpdir' | 'slash_tmp' }
+  }
+  if (value.kind === 'project_roots') {
+    if (value.subpath !== null && typeof value.subpath !== 'string') return null
+    return { kind: 'project_roots', subpath: value.subpath }
+  }
+  if (value.kind === 'unknown') {
+    if (
+      typeof value.path !== 'string' ||
+      (value.subpath !== null && typeof value.subpath !== 'string')
+    ) {
+      return null
+    }
+    return { kind: 'unknown', path: value.path, subpath: value.subpath }
+  }
+  return null
+}
+
+function parseFileSystemPath(value: unknown): FileSystemPath | null {
+  if (!isRecord(value)) return null
+  if (value.type === 'path' && typeof value.path === 'string') {
+    return { type: 'path', path: value.path }
+  }
+  if (value.type === 'glob_pattern' && typeof value.pattern === 'string') {
+    return { type: 'glob_pattern', pattern: value.pattern }
+  }
+  if (value.type === 'special') {
+    const special = parseSpecialPath(value.value)
+    return special === null ? null : { type: 'special', value: special }
+  }
+  return null
+}
+
+function parseFileSystemPermissions(value: unknown): AdditionalFileSystemPermissions | null {
+  if (!isRecord(value)) return null
+  const read = parseNullableStrings(value.read)
+  const write = parseNullableStrings(value.write)
+  if (read === undefined || write === undefined) return null
+
+  const permissions: AdditionalFileSystemPermissions = { read, write }
+  if (value.globScanMaxDepth !== undefined) {
+    if (!Number.isSafeInteger(value.globScanMaxDepth) || (value.globScanMaxDepth as number) < 0) {
+      return null
+    }
+    permissions.globScanMaxDepth = value.globScanMaxDepth as number
+  }
+  if (value.entries !== undefined) {
+    if (!Array.isArray(value.entries) || value.entries.length > MAX_PERMISSION_ITEMS) return null
+    const entries: FileSystemSandboxEntry[] = []
+    for (const rawEntry of value.entries) {
+      if (
+        !isRecord(rawEntry) ||
+        typeof rawEntry.access !== 'string' ||
+        !['read', 'write', 'deny'].includes(rawEntry.access)
+      ) {
+        return null
+      }
+      const path = parseFileSystemPath(rawEntry.path)
+      if (path === null) return null
+      entries.push({
+        path,
+        access: rawEntry.access as FileSystemSandboxEntry['access'],
+      })
+    }
+    permissions.entries = entries
+  }
+  return permissions
+}
+
+function parsePermissionProfile(value: unknown): RequestPermissionProfile | null {
+  if (!isRecord(value)) return null
+  let network: AdditionalNetworkPermissions | null
+  if (value.network === null) {
+    network = null
+  } else if (
+    isRecord(value.network) &&
+    (typeof value.network.enabled === 'boolean' || value.network.enabled === null)
+  ) {
+    network = { enabled: value.network.enabled }
+  } else {
+    return null
+  }
+
+  let fileSystem: AdditionalFileSystemPermissions | null
+  if (value.fileSystem === null) {
+    fileSystem = null
+  } else {
+    fileSystem = parseFileSystemPermissions(value.fileSystem)
+    if (fileSystem === null) return null
+  }
+  return { network, fileSystem }
+}
+
+function parsePermissionsApproval(value: unknown): PermissionsApprovalParams | null {
+  const common = parseCommon(value)
+  if (
+    common === null ||
+    !isRecord(value) ||
+    (value.environmentId !== null && typeof value.environmentId !== 'string') ||
+    !Number.isSafeInteger(value.startedAtMs) ||
+    typeof value.cwd !== 'string' ||
+    (value.reason !== null && typeof value.reason !== 'string')
+  ) {
+    return null
+  }
+  const permissions = parsePermissionProfile(value.permissions)
+  if (permissions === null) return null
+  return {
+    ...common,
+    environmentId: value.environmentId,
+    startedAtMs: value.startedAtMs as number,
+    cwd: value.cwd,
+    reason: value.reason,
+    permissions,
+  }
+}
+
 function parseServerInteraction(request: ServerRequest): ParsedServerInteraction | null {
   if (request.method === 'item/commandExecution/requestApproval') {
     const params = parseApproval(request.params)
@@ -171,6 +344,10 @@ function parseServerInteraction(request: ServerRequest): ParsedServerInteraction
   if (request.method === 'item/tool/requestUserInput') {
     const params = parseUserInput(request.params)
     return params === null ? null : { kind: 'USER_INPUT', params }
+  }
+  if (request.method === 'item/permissions/requestApproval') {
+    const params = parsePermissionsApproval(request.params)
+    return params === null ? null : { kind: 'PERMISSIONS_APPROVAL', params }
   }
   return null
 }
@@ -223,6 +400,75 @@ function renderApproval(kind: CodexInteractionKind, token: string, params: Appro
   }
   const footer = `ID: ${token}`
   return redactSecrets(`${clip(lines.join('\n\n'), 3_500 - footer.length)}\n\n${footer}`)
+}
+
+function permissionPathLabel(path: FileSystemPath): string {
+  if (path.type === 'path') return path.path
+  if (path.type === 'glob_pattern') return `glob: ${path.pattern}`
+  const special = path.value
+  if (special.kind === 'project_roots') {
+    return special.subpath === null ? 'project roots' : `project roots/${special.subpath}`
+  }
+  if (special.kind === 'unknown') {
+    const subpath = special.subpath === null ? '' : `/${special.subpath}`
+    return `${special.path}${subpath}`
+  }
+  return special.kind
+}
+
+function permissionList(label: string, values: readonly string[]): string[] {
+  const visible = values.slice(0, 20).map((value) => `  • ${clip(value, 300)}`)
+  if (values.length > visible.length) visible.push(`  • … ещё ${values.length - visible.length}`)
+  return values.length === 0 ? [`${label}: —`] : [`${label}:`, ...visible]
+}
+
+function renderPermissionsApproval(token: string, params: PermissionsApprovalParams): string {
+  const lines = ['🔐 Codex просит дополнительные права']
+  if (params.reason !== null && params.reason.trim().length > 0) {
+    lines.push(`Причина: ${clip(params.reason, 500)}`)
+  }
+  if (params.environmentId !== null && params.environmentId.trim().length > 0) {
+    lines.push(`Среда: ${clip(params.environmentId, 300)}`)
+  }
+  lines.push(`Каталог: ${clip(params.cwd, 500)}`)
+
+  const network = params.permissions.network
+  if (network !== null) {
+    const value = network.enabled === true
+      ? 'включить'
+      : network.enabled === false ? 'отключить' : 'без изменения'
+    lines.push(`Сеть: ${value}`)
+  }
+
+  const fileSystem = params.permissions.fileSystem
+  if (fileSystem !== null) {
+    const fileLines = ['Файловая система:']
+    if (fileSystem.read !== null) fileLines.push(...permissionList('Чтение', fileSystem.read))
+    if (fileSystem.write !== null) fileLines.push(...permissionList('Запись', fileSystem.write))
+    if (fileSystem.entries !== undefined) {
+      const entries = fileSystem.entries.map((entry) => `${entry.access}: ${permissionPathLabel(entry.path)}`)
+      fileLines.push(...permissionList('Правила', entries))
+    }
+    lines.push(fileLines.join('\n'))
+  }
+
+  const footer = `ID: ${token}`
+  return redactSecrets(`${clip(lines.join('\n\n'), 3_500 - footer.length)}\n\n${footer}`)
+}
+
+function permissionsApprovalButtons(token: string): Array<Array<{ text: string; callback_data: string }>> {
+  return [
+    [{ text: '✅ На этот turn', callback_data: `dx:a:${token}:once` }],
+    [{ text: '🔁 На сессию', callback_data: `dx:a:${token}:session` }],
+    [{ text: '❌ Не выдавать', callback_data: `dx:a:${token}:deny` }],
+  ]
+}
+
+function grantedPermissionProfile(permissions: RequestPermissionProfile): Record<string, unknown> {
+  return {
+    ...(permissions.network === null ? {} : { network: permissions.network }),
+    ...(permissions.fileSystem === null ? {} : { fileSystem: permissions.fileSystem }),
+  }
 }
 
 function renderQuestion(token: string, question: UserInputQuestion, index: number, total: number): string {
@@ -441,12 +687,7 @@ export class CodexInteractionBroker implements InteractionHandler {
   private async handleServerRequest(request: ServerRequest): Promise<void> {
     const parsed = parseServerInteraction(request)
     if (parsed === null) {
-      if (request.method === 'item/permissions/requestApproval') {
-        await this.client.respondError(request.id, {
-          code: -32004,
-          message: 'Permission-profile approvals are not supported by this Telegram bridge yet',
-        })
-      } else if (isKnownInteractiveMethod(request.method)) {
+      if (isKnownInteractiveMethod(request.method)) {
         await this.client.respondError(request.id, {
           code: -32602,
           message: 'Malformed Codex interaction request',
@@ -509,6 +750,23 @@ export class CodexInteractionBroker implements InteractionHandler {
       })
       return
     }
+    if (parsed.kind === 'PERMISSIONS_APPROVAL') {
+      this.outbox.enqueue({
+        sourceKey: `codex-interaction:${interaction.id}:prompt`,
+        sessionId: interaction.sessionId,
+        kind: 'send_text',
+        payload: {
+          chatId,
+          text: renderPermissionsApproval(interaction.token, parsed.params),
+          options: {
+            reply_markup: { inline_keyboard: permissionsApprovalButtons(interaction.token) },
+          },
+        },
+        createdAtMs: interaction.createdAtMs,
+        expiresAtMs: interaction.expiresAtMs,
+      })
+      return
+    }
     for (const [index, question] of parsed.params.questions.entries()) {
       const keyboard = questionButtons(interaction.token, question, index)
       this.outbox.enqueue({
@@ -533,6 +791,9 @@ export class CodexInteractionBroker implements InteractionHandler {
     interaction: CodexInteractionRecord,
     response: Extract<IncomingInteractionResponse, { kind: 'approval' }>,
   ): Promise<InteractionResult> {
+    if (interaction.kind === 'PERMISSIONS_APPROVAL') {
+      return this.handlePermissionsApproval(operation, interaction, response)
+    }
     if (interaction.kind !== 'COMMAND_APPROVAL' && interaction.kind !== 'FILE_APPROVAL') {
       return this.enqueueClosedResponse(operation, 'Это не запрос подтверждения')
     }
@@ -553,6 +814,39 @@ export class CodexInteractionBroker implements InteractionHandler {
       ? '❌ Запрещено'
       : '✅ Разрешено'
     return this.enqueueCallbackOutcome(operation, resolved ? verdict : '⚠️ Ответ не доставлен в Codex', verdict)
+  }
+
+  private async handlePermissionsApproval(
+    operation: InteractionOperation,
+    interaction: CodexInteractionRecord,
+    response: Extract<IncomingInteractionResponse, { kind: 'approval' }>,
+  ): Promise<InteractionResult> {
+    const params = parsePermissionsApproval(interaction.request)
+    if (params === null) return this.enqueueClosedResponse(operation, 'Запрос прав повреждён')
+
+    const accepted = response.decision === 'accept' || response.decision === 'acceptForSession'
+    const payload = {
+      permissions: accepted ? grantedPermissionProfile(params.permissions) : {},
+      scope: response.decision === 'acceptForSession' ? 'session' : 'turn',
+    }
+    const began = this.interactions.beginResolution(
+      interaction.token,
+      interaction.sessionId,
+      payload,
+      this.now(),
+    )
+    if (began.outcome !== 'started') {
+      return this.enqueueClosedResponse(operation, closeText(began.interaction.state))
+    }
+    const resolved = await this.sendResolution(began.interaction, payload)
+    const verdict = accepted
+      ? response.decision === 'acceptForSession' ? '✅ Права выданы на сессию' : '✅ Права выданы на turn'
+      : '❌ Права не выданы'
+    return this.enqueueCallbackOutcome(
+      operation,
+      resolved ? verdict : '⚠️ Ответ не доставлен в Codex',
+      verdict,
+    )
   }
 
   private async handleUserInput(
@@ -729,6 +1023,10 @@ export class CodexInteractionBroker implements InteractionHandler {
       })
       return
     }
+    if (kind === 'PERMISSIONS_APPROVAL') {
+      await this.client.respond(request.id, { permissions: {}, scope: 'turn' })
+      return
+    }
     await this.client.respond(request.id, { decision: 'decline' })
   }
 
@@ -790,7 +1088,11 @@ export class CodexInteractionBroker implements InteractionHandler {
   private async expireInteraction(id: string): Promise<void> {
     const interaction = this.interactions.get(id)
     if (interaction === null || interaction.state !== 'PENDING') return
-    const response = interaction.kind === 'USER_INPUT' ? null : { decision: 'decline' }
+    const response = interaction.kind === 'USER_INPUT'
+      ? null
+      : interaction.kind === 'PERMISSIONS_APPROVAL'
+        ? { permissions: {}, scope: 'turn' }
+        : { decision: 'decline' }
     if (response === null) {
       const began = this.interactions.beginTimeoutResolution(
         interaction.id,

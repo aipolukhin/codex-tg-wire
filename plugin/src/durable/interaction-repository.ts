@@ -5,6 +5,7 @@ import type { RequestId } from '../codex/protocol.js'
 export type CodexInteractionKind =
   | 'COMMAND_APPROVAL'
   | 'FILE_APPROVAL'
+  | 'PERMISSIONS_APPROVAL'
   | 'USER_INPUT'
 
 export type CodexInteractionState =

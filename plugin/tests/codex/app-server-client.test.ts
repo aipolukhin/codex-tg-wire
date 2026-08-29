@@ -290,6 +290,18 @@ describe('CodexAppServerClient events', () => {
     ])
     expect(client.ready).toBe(true)
   })
+
+  test('notifies close listeners, including listeners registered after close', async () => {
+    const transport = new FakeTransport()
+    const client = await initialize(transport)
+    const closes: Array<{ code: number | null }> = []
+    client.onClose((close) => closes.push({ code: close.code }))
+    transport.emitClose({ code: 17, signal: null })
+    client.onClose((close) => closes.push({ code: close.code }))
+    await Promise.resolve()
+
+    expect(closes).toEqual([{ code: 17 }, { code: 17 }])
+  })
 })
 
 describe('CodexAppServerClient typed operations', () => {

@@ -15,7 +15,8 @@
 - [ ] Проверить restart во время active turn, approval и user-input request.
 - [x] Начат M1: SQLite/WAL migrations, durable inbox/outbox, leases, dedupe, TTL и crash recovery.
 - [x] Добавлены provider-neutral contracts и fake-backed durable text workers с fault tests.
-- [ ] Подключить реальные Codex SessionCoordinator и grammY TelegramGateway к готовому slice.
+- [x] Добавлен реальный Codex App Server `AgentBackend` для create/resume text turns и terminal events.
+- [ ] Подключить durable SessionCoordinator и grammY TelegramGateway к готовому slice.
 
 ## 1. Что именно мы строим
 

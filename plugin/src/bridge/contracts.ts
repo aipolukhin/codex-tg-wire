@@ -34,6 +34,7 @@ export interface AgentTextTurnInput {
   operationKey: string
   threadId: string | null
   projectId: string
+  cwd: string
   text: string
 }
 

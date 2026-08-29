@@ -128,6 +128,8 @@ export class CodexAppServerClient {
   private readonly protocolIssueListeners = new Set<
     (error: AppServerProtocolError) => void
   >()
+  private readonly closeListeners = new Set<(close: TransportClose) => void>()
+  private lastClose: TransportClose | undefined
   private nextRequestId: number
   private state: ClientState = 'new'
   private readonly unsubscribeMessage: () => void
@@ -236,6 +238,16 @@ export class CodexAppServerClient {
     return () => this.protocolIssueListeners.delete(listener)
   }
 
+  onClose(listener: (close: TransportClose) => void): () => void {
+    const close = this.lastClose
+    if (close !== undefined) {
+      queueMicrotask(() => listener(close))
+      return () => undefined
+    }
+    this.closeListeners.add(listener)
+    return () => this.closeListeners.delete(listener)
+  }
+
   async close(): Promise<void> {
     if (this.state === 'closed') return
     await this.transport.close()
@@ -338,12 +350,15 @@ export class CodexAppServerClient {
   private handleClose(close: TransportClose): void {
     if (this.state === 'closed') return
     this.state = 'closed'
+    this.lastClose = close
     this.unsubscribeMessage()
     this.unsubscribeClose()
     const error = new AppServerClosedError(close)
     for (const id of [...this.pending.keys()]) {
       this.takePending(id)?.reject(error)
     }
+    for (const listener of this.closeListeners) this.invokeListener(() => listener(close))
+    this.closeListeners.clear()
   }
 
   private takePending(id: RequestId): PendingRequest | undefined {

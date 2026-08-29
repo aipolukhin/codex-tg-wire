@@ -11,6 +11,12 @@ Copyright 2026 Leon Polukhin
 https://github.com/aipolukhin/telemax
 Licensed under the Apache License, Version 2.0.
 
+The optional Docker login-helper design is informed by
+openai-api-server-via-codex:
+Copyright 2025 hotchpotch
+https://github.com/hotchpotch/openai-api-server-via-codex
+Licensed under the Apache License, Version 2.0.
+
 OpenAI, Codex, Telegram and other names are trademarks of their respective
 owners. codex-tg-wire is an independent project and is not endorsed by or
 affiliated with OpenAI or Telegram.

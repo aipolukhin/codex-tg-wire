@@ -1,6 +1,6 @@
 # codex-tg-wire: roadmap durable Telegram ↔ Codex bridge
 
-Статус: M6.5 implementation complete; public `v1.0` ждёт live canary
+Статус: M7 implementation complete; public `v1.0` ждёт live canary
 Цель первого стабильного релиза: self-hosted Telegram-клиент для Codex с UX-паттернами Dashi и гарантиями доставки, перенесёнными из Telemax.
 
 ## Статус реализации — 2026-08-29
@@ -42,6 +42,8 @@
 - [x] M6.5 закрыт: native account/session control plane, inline settings,
   explicit busy choices, reply-to-thread routing, diff/file/review и durable
   Guided Plan gate.
+- [x] M7 закрыт: optional hardened Docker runtime, bot-first Codex/Groq
+  onboarding с action buttons, private credential rotation и host-first default.
 
 ## 1. Что именно мы строим
 
@@ -127,6 +129,7 @@ Telegram Bot API
 | M5. Hardening и RC | Security, chaos/E2E, migrations, observability, packaging | 5–7 дней |
 | M6. `v1.0` | Документация, upgrade path, release artifacts, soak | 2–4 дня |
 | M6.5. Telegram control plane | Native sessions/account, inspection, reply routing, busy choices, Guided Plan | готово |
+| M7. Deploy + bot-first onboarding | Optional hardened Docker, one-command wrapper, Telegram auth/actions, GHCR build | готово |
 
 Итого: примерно 5–7 недель до уверенного `v1.0`; полезный personal alpha — в конце M1, то есть примерно через 1.5 недели.
 
@@ -283,6 +286,34 @@ Public Gate `v1.0`: ожидает реальный operator walkthrough и M5 7
 Gate M6.5: **пройден.** Stable generated schema Codex CLI `0.149.1` содержит
 все используемые account/thread/review/diff methods; `bun run typecheck` и
 полный suite проходят, а решения busy/plan и reply routes переживают restart.
+
+### M7 — optional Docker и bot-first onboarding
+
+- [x] Host `./install.sh` остаётся default: user-systemd, домашние
+  config/state directories и автоматическое переиспользование `~/.codex`.
+- [x] `./docker.sh setup` стал единственной точкой Docker onboarding; manual
+  копирование config templates не требуется.
+- [x] Runtime container работает с host UID/GID, read-only rootfs, dropped
+  capabilities, `no-new-privileges` и отдельными bind mounts для project,
+  config, state и `CODEX_HOME`.
+- [x] Setup и Codex CLI login вынесены в profile-gated one-shot services;
+  обычный `compose up` не запускает onboarding helpers.
+- [x] `/start` — button-first flow: **Подключить Codex**, **Проверить вход**,
+  **Создать Groq key**, **Вставить Groq key**, **Пропустить voice** и
+  **Начать первую задачу**.
+- [x] Groq key валидируется перед сохранением, атомарно ротируется в private
+  `0600` file, начинает работать без restart; исходный Telegram update
+  scrubb-ится в SQLite и удаляется только через durable outbox.
+- [x] Terminal Codex login сохранён только как Docker recovery fallback; после
+  старта бота штатная эксплуатация не требует terminal access.
+- [x] README содержит пошаговое использование и пять end-to-end сценариев,
+  provenance обновлён после M6.5/M7.
+
+Gate M7: **implementation пройден.** Bash syntax и TypeScript types чистые,
+полный suite — 3057 tests, обе pinned Docker targets реально собраны, wrapper
+прошёл clean setup/doctor, а Compose config подтвердил private mounts и YOLO
+profile. Публичный release gate по-прежнему требует operator walkthrough и live
+soak.
 
 ## 6. Fault-injection matrix
 

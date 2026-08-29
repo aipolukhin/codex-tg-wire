@@ -19,6 +19,8 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
+  <a href="#how-to-use-it">How to use it</a> ·
+  <a href="#five-real-workflows">Use cases</a> ·
   <a href="#what-you-can-do">Features</a> ·
   <a href="#how-it-works">Architecture</a> ·
   <a href="#codex-tg-wire-vs-dashi">Dashi comparison</a> ·
@@ -38,10 +40,9 @@ not a stateless chat wrapper.
 
 ## Quick start
 
-You need **Linux with systemd --user**, an existing **Codex login**, a
-**Telegram bot token**, and the numeric Telegram user/chat IDs of the owner. The
-installer brings its compatible Codex CLI and reuses your local `~/.codex`
-account.
+You need **Linux with systemd --user**, a **Telegram bot token**, and the numeric
+Telegram user/chat IDs of the owner. The installer brings its compatible Codex
+CLI and automatically reuses your local `~/.codex` account when one exists.
 
 ```bash
 git clone https://github.com/aipolukhin/codex-tg-wire.git
@@ -51,14 +52,27 @@ cd codex-tg-wire
 
 The guided console onboarding asks for one project, execution profile, Telegram
 IDs and token, checks the environment, then installs and starts a user service.
-No `sudo`, dedicated Unix account, Docker or second Codex login is required for
-the default path.
+No `sudo`, dedicated Unix account or Docker is required for the default path.
 
-When onboarding finishes, open your bot and send:
+When the service starts, open your bot and send `/start`. The rest is button
+first: **Connect Codex** opens device login when needed, **Check login** verifies
+it, **Create Groq key** optionally enables voice transcription, and **Start the
+first task** finishes onboarding. After this point normal operation needs no
+terminal.
 
 ```text
 /start
 ```
+
+Prefer containers? Docker is optional, not the default:
+
+```bash
+./docker.sh setup
+```
+
+It keeps config, SQLite and `CODEX_HOME` on the host, but uses a hardened
+non-root container. Codex login still happens from the bot; `./docker.sh login`
+is only a recovery fallback.
 
 > [!CAUTION]
 > The default **YOLO** profile uses `approvalPolicy=never` and
@@ -108,6 +122,63 @@ Planning and revision are forced to `sandbox=read-only` with
 - `/file --all` sends a project file through the same durable outbox;
 - optional Groq transcription can enrich voice input without replacing the
   original audio available to Codex.
+
+## How to use it
+
+1. Send `/start` once and follow the action buttons. Existing host Codex auth is
+   detected automatically; otherwise tap **Connect Codex** and complete the
+   browser login. Groq voice is optional and can be skipped.
+2. Send a task as an ordinary Telegram message. The bridge creates or resumes a
+   native Codex thread in the configured project and edits one progress card.
+3. When Codex needs a decision, answer from the inline controls. If another
+   message arrives during a turn, choose **Steer now**, **Queue next**, **Stop &
+   replace**, or **Cancel message**.
+4. Use `/settings` for model, effort, sandbox, approvals, project and Guided
+   Plan. Use `/diff`, `/review` and `/file` to inspect or receive the result.
+5. Use `/sessions` to attach another native thread. `/handback` gives a quoted
+   `codex resume` command when you want the same context back in your terminal.
+
+Commands remain available for power users, but onboarding and common decisions
+are designed around concrete Telegram actions rather than memorizing syntax.
+
+## Five real workflows
+
+### 1. Build a feature without granting write access too early
+
+Open `/settings`, tap **Guided Plan · On**, then send: “Add passwordless login,
+cover it with tests and update the docs.” Codex drafts in read-only mode. Tap
+**Revise plan**, **Execute plan**, or **Cancel**; after execution, inspect
+`/diff`, run `/review`, and request the changed file with `/file`.
+
+### 2. Correct a live hotfix from your phone
+
+Send an error screenshot and ask Codex to diagnose production behavior. While
+the turn runs, send a correction and tap **Steer now** so it reaches that exact
+turn. A second independent request can be **Queued next**; `/stop` remains the
+emergency brake. Replies to old Codex messages route to the thread that produced
+them, not whichever thread happens to be selected now.
+
+### 3. Turn field evidence into a coding task
+
+Forward photos, an allowlisted log/document, or a Telegram media group and add a
+caption. They become one durable turn with verified local files. Send a voice
+note for the follow-up: Codex always receives the original audio, while optional
+Groq adds a transcript after you connect it from the onboarding card.
+
+### 4. Recover after a server or network failure
+
+Restart the service or container during a long turn. The bridge reconciles the
+saved Codex turn instead of silently launching a duplicate. `/status` shows the
+recovered thread; `/failed` and `/ambiguous` expose delivery problems and let
+you retry, resolve or archive only where the evidence makes that safe.
+
+### 5. Move the same session between Telegram and your desk
+
+Start a refactor on Telegram, inspect usage with `/usage`, then use `/handback`
+and resume the exact native thread locally. Later `/sessions` discovers it,
+`/attach` brings it back to the bot, and `/fork`, `/compact`, `/rename` or
+`/archive` manage its lifecycle without copying the conversation into a second
+session store.
 
 ## How it works
 

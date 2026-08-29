@@ -94,6 +94,44 @@ turn queue, Codex thread bindings, approvals, callbacks и App Server recovery.
   Codex jobs. Не взяты JSON/JSONL state files как транзакционная база и
   эвристический запуск замещающего turn.
 
+### Карта M6.5: референс → собственная проводка
+
+| Capability | Поведенческий референс | Что реализовано в codex-tg-wire |
+|---|---|---|
+| Account status и device login | Gan-Xing bridge + официальный App Server | Typed `account/read` и `account/login/start` через `AgentBackend`; результат выводится Telegram action card. |
+| Native session discovery/handoff | Gan-Xing bridge | cwd-confined `/sessions`, `/attach`, `/handback`, rename/archive/unarchive/fork/compact поверх App Server и SQLite bindings. |
+| Inline settings | Gan-Xing bridge и Dashi UX | Provider-neutral model/effort/sandbox/approval/project/plan panel; каждое callback-действие allowlisted, durable и idempotent. |
+| Busy turn choice | Gan-Xing bridge + очередь woosungchoi | Явные steer/queue/stop-and-replace/cancel; решение хранится до исполнения и не угадывается по времени прихода сообщения. |
+| Reply → exact thread | Reply-oriented UX woosungchoi | Собственный SQLite route registry связывает доказанный Telegram `message_id` с Codex thread и переживает restart. |
+| Diff/file/review | Gan-Xing bridge + App Server schema | Durable diff artifact, root-confined file delivery и native `review/start`; все Telegram mutations идут через outbox. |
+| Guided Plan | Общий UX pattern coding bridges | Собственная persisted state machine: read-only draft/revision, explicit execute/cancel, затем writable turn в том же thread. |
+
+Код референсных bridges не копировался. Их удобные пользовательские flows
+перепроведены через общие contracts, SQLite repositories, App Server typed
+methods и одну durable Telegram delivery boundary.
+
+## M7: deployment и bot-first onboarding
+
+Docker login flow сверялся с
+[hotchpotch/openai-api-server-via-codex](https://github.com/hotchpotch/openai-api-server-via-codex),
+Apache-2.0. Оттуда взят deployment pattern: profile-gated one-shot login helper,
+общий persistent `CODEX_HOME`, loopback-only browser callback proxy и device-code
+fallback. Compose topology, hardening, wrapper и credential layout написаны для
+codex-tg-wire заново; attribution сохранён в `NOTICE`.
+
+Основной host-first выбор и спокойный четырёхшаговый console flow продолжают
+Telemax-inspired onboarding. Новая Telegram-проводка написана здесь:
+
+- `/start` сам проверяет account и запускает App Server device login;
+- inline buttons формулируют конкретные действия, а команды остаются fallback;
+- host install переиспользует `~/.codex`, Docker держит отдельный persistent
+  `CODEX_HOME`;
+- Groq не выдаёт подходящий bridge OAuth/device flow, поэтому кнопка ведёт на
+  [официальную страницу API Keys](https://console.groq.com/keys), а присланный
+  key валидируется, атомарно сохраняется и удаляется из Telegram/SQLite;
+- Docker остаётся optional; default deployment — user-systemd в домашней
+  директории.
+
 ## OpenAI Codex App Server
 
 Официальный источник протокола:
@@ -116,10 +154,13 @@ transport не объявлен поддерживаемым.
 - Thread registry, project settings, problem center и audit ledger.
 - Native account/session commands, cwd-confined handoff, inline settings и
   exact Telegram-message → Codex-thread route registry.
+- Button-first Codex/Groq onboarding, dynamic private Groq credential rotation
+  без restart и durable scrub/delete secret-bearing commands.
 - Persisted busy choices, turn-diff artifacts, safe file/review controls и
   Guided Plan state machine.
 - Durable Telegram poller, gateway, attachment store, outbound media/album path,
   rate limiter и voice adapter.
 - HUD/event projector, heartbeat и unknown-notification journal.
 - Doctor, health/readiness/watchdog, backup/restore, retention, soak/chaos gates,
-  SBOM, reproducible artifacts и atomic upgrade/rollback.
+  SBOM, reproducible artifacts, optional hardened Docker wrapper и atomic
+  upgrade/rollback.

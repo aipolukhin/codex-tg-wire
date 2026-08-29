@@ -20,6 +20,12 @@ creates `~/.config/systemd/user/codex-tg-wire.service`. SQLite and media state
 default to `~/.local/share/codex-tg-wire`. No root privileges or service account
 are required.
 
+After the service starts, send `/start` to the bot. If local Codex auth exists,
+the bridge uses it immediately. Otherwise **Connect Codex** opens official
+device login and **Check login** verifies it. The same onboarding card can open
+Groq API Keys for optional voice transcription. Once this card is complete,
+normal setup and operation require no terminal.
+
 The execution choice is explicit in onboarding:
 
 | Profile | Codex settings | Intended use |
@@ -60,7 +66,7 @@ longer the default onboarding path.
 - Codex CLI `0.149.1` for the advanced system-wide host installation (the user installer vendors it locally);
 - a private Telegram bot token and numeric owner user/chat ids;
 - a local project directory writable by the service account;
-- an authenticated Codex CLI account.
+- a Codex account that can be authenticated from the bot when local auth is absent.
 
 Official Codex setup supports interactive login, device-code login on headless hosts, and API-key login through stdin. Never place the OpenAI credential, Telegram token, or `CODEX_HOME/auth.json` in this repository. See the [official Codex CLI guide](https://developers.openai.com/codex/cli/) and [official authentication guide](https://learn.chatgpt.com/codex/auth).
 
@@ -143,38 +149,58 @@ The unit uses `LoadCredential`, a private state directory, systemd watchdog and 
 
 ## Docker Compose installation
 
-The image pins Bun, Codex CLI and the base-image digest. It runs as a configurable non-root UID/GID, has a read-only root filesystem, drops all Linux capabilities and persists bridge state separately from `CODEX_HOME`.
+Docker is optional. The default and shortest path is still the host
+`./install.sh`. The image pins Bun, Codex CLI and the base-image digest; it runs
+with the invoking host UID/GID, a read-only root filesystem, no Linux
+capabilities and `no-new-privileges`. Config, SQLite/media state and
+`CODEX_HOME` are independent host bind mounts.
 
-From the release root:
-
-```bash
-cd deploy/docker
-cp .env.example .env
-cp bridge.config.example.json bridge.config.json
-cp bridge.env.example bridge.env
-install -m 0600 /dev/null telegram-token
-```
-
-Edit `.env`: set the absolute `DASHI_PROJECT_PATH`, and set `DASHI_UID`/`DASHI_GID` to the owner of that project (`id -u` and `id -g`). Edit `bridge.config.json` with the real Telegram ids. Put only the bot token in `telegram-token`; do not add it to Compose environment or JSON.
-
-Build and confirm the exact runtime pins:
+From the repository root, run the guided wrapper:
 
 ```bash
-docker compose build --pull bridge
-docker compose run --rm --entrypoint codex bridge --version
-docker compose run --rm --entrypoint bun bridge --version
+./docker.sh setup
 ```
 
-Authenticate the persistent Codex volume and run preflight:
+The wrapper asks for the project, execution profile, Telegram owner IDs and bot
+token, generates private files, builds the pinned images, runs doctor and starts
+the bridge. It deliberately does not run a terminal login wizard. Open the bot,
+send `/start`, then use these actions:
+
+- **Connect Codex** opens official device login for the persistent container
+  `CODEX_HOME`;
+- **Check login** refreshes the same onboarding card;
+- **Create Groq key** and **Paste Groq key** optionally enable voice transcription;
+- **Start the first task** enters the normal task flow.
+
+The key-bearing Telegram message is scrubbed from the durable inbox and queued
+for durable deletion. Groq voice is optional and can be skipped.
+
+Lifecycle commands stay small:
 
 ```bash
-docker compose run --rm --entrypoint codex bridge login --device-auth
-docker compose run --rm --entrypoint bun bridge run doctor:codex --online
-docker compose up -d
-docker compose ps
+./docker.sh status
+./docker.sh logs
+./docker.sh restart
+./docker.sh doctor
+./docker.sh down
 ```
 
-The health endpoint stays loopback-only inside the container; Docker evaluates it with the image `HEALTHCHECK`. Do not publish port `8787` unless a trusted local monitor requires it.
+`./docker.sh setup` uses a dedicated persistent Codex home under the bridge data
+directory by default. `--codex-home /absolute/path` selects another host
+directory. If bot-based device login is unavailable, the profile-gated one-shot
+helper is the recovery path:
+
+```bash
+./docker.sh login             # device-code fallback
+./docker.sh login --browser   # localhost callback fallback
+```
+
+Credentials are never image layers or Compose environment values. The Telegram
+token lives in the read-only config mount; the optional Groq key lives in a
+private writable credentials directory under state so the bot can rotate it
+atomically. The health endpoint remains container-local and Docker evaluates it
+with the image `HEALTHCHECK`; do not publish port `8787` unless a trusted monitor
+requires it.
 
 ## First-run and restart acceptance
 
@@ -182,7 +208,8 @@ Before calling an installation healthy:
 
 1. Send `/start`, then a short request that creates a Codex thread.
 2. Confirm the final Telegram answer and record the thread id from `/status` or `/threads`.
-3. Restart with `systemctl restart dashi-codex-bridge` or `docker compose restart bridge`.
+3. Restart with `systemctl --user restart codex-tg-wire.service` or
+   `./docker.sh restart`.
 4. Wait for readiness, send a follow-up without `/new`, and confirm `/status` still reports the same thread.
 5. Run `/failed` and `/ambiguous`; both should be empty.
 

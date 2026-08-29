@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite'
 
 import { Bot } from 'grammy'
 
-import pkg from '../../package.json'
+import compatibility from '../../codex-app-server.compatibility.json'
 import { CodexAppServerClient } from '../codex/app-server-client.js'
 import { openDurableDatabase } from '../durable/database.js'
 import { SqlitePollCursorRepository } from '../durable/poll-cursor-repository.js'
@@ -156,7 +156,7 @@ export async function bootstrapDurableBridgeService(
       clientInfo: {
         name: 'dashi_codex_bridge',
         title: 'Dashi Codex Telegram Bridge',
-        version: pkg.version,
+        version: compatibility.bridgeVersion,
       },
       capabilities: null,
     })

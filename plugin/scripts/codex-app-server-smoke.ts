@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import pkg from '../package.json'
+import compatibility from '../codex-app-server.compatibility.json'
 import { CodexAppServerClient } from '../src/codex/app-server-client.js'
 
 const client = CodexAppServerClient.spawn({
@@ -13,7 +13,7 @@ try {
     clientInfo: {
       name: 'dashi_codex_bridge',
       title: 'Dashi Codex Bridge',
-      version: pkg.version,
+      version: compatibility.bridgeVersion,
     },
     capabilities: null,
   })

@@ -1,6 +1,18 @@
 {
+  "formatVersion": 1,
+  "bridgeVersion": "1.0.0",
+  "bunVersion": "1.4.0",
   "codexCliVersion": "0.149.1",
   "schemaMode": "stable",
   "generatedFileCount": 663,
-  "schemaSha256": "710487c9ba5a251908766a1d50e27587865e67cf85f0a6516243c98895b8f4a1"
+  "schemaSha256": "710487c9ba5a251908766a1d50e27587865e67cf85f0a6516243c98895b8f4a1",
+  "matrix": [
+    {
+      "bridge": "1.0.x",
+      "codexCli": "0.149.1",
+      "bun": "1.4.x",
+      "appServerTransport": "stdio",
+      "status": "supported"
+    }
+  ]
 }

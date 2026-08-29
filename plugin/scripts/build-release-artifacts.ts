@@ -79,7 +79,7 @@ if (dirty.length > 0) throw new Error('release artifacts require a clean Git wor
 
 const commit = command('git', ['rev-parse', 'HEAD'], repoRoot).toString('utf8').trim()
 const epoch = sourceDateEpoch(repoRoot)
-const rootName = `dashi-codex-bridge-${pkg.version}`
+const rootName = `dashi-codex-bridge-${compatibility.bridgeVersion}`
 const artifactPath = join(outputDirectory, `${rootName}.tar.gz`)
 const sbomPath = join(outputDirectory, `${rootName}.cdx.json`)
 const checksumsPath = join(outputDirectory, `${rootName}.sha256`)
@@ -107,10 +107,12 @@ try {
   writePrivate(
     join(packageRoot, 'RELEASE-METADATA.json'),
     `${JSON.stringify({
-      format: 'dashi-codex-release-v1',
-      version: pkg.version,
+      format: 'dashi-codex-release-v2',
+      bridgeVersion: compatibility.bridgeVersion,
+      packageVersion: pkg.version,
       commit,
       sourceDateEpoch: epoch,
+      bunVersion: compatibility.bunVersion,
       codexCliVersion: compatibility.codexCliVersion,
       codexSchemaSha256: compatibility.schemaSha256,
     }, null, 2)}\n`,

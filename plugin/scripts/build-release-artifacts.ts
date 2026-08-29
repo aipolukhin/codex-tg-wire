@@ -23,7 +23,11 @@ import { createCycloneDxBom } from './supply-chain.js'
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 function command(commandName: string, args: readonly string[], cwd: string): Buffer {
-  const result = spawnSync(commandName, [...args], { cwd, encoding: 'buffer' })
+  const result = spawnSync(commandName, [...args], {
+    cwd,
+    encoding: 'buffer',
+    maxBuffer: 64 * 1024 * 1024,
+  })
   if (result.error !== undefined) throw result.error
   if (result.status !== 0) {
     throw new Error(

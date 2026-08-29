@@ -18,7 +18,8 @@
 - [x] Добавлен реальный Codex App Server `AgentBackend` для create/resume text turns и terminal events.
 - [x] Добавлен durable SessionCoordinator: operation replay, provisional bindings и conservative `UNKNOWN`.
 - [x] Добавлены deny-by-default Telegram text gateway и composition root полного text slice.
-- [ ] Перевести polling ingress на SQLite-before-offset и добавить команды personal alpha.
+- [x] Добавлен polling ingress с SQLite cursor: durable insert всегда предшествует offset advance.
+- [ ] Добавить команды personal alpha (`/start`, `/new`, `/status`, `/stop`) и supervisor loop.
 
 ## 1. Что именно мы строим
 

@@ -49,6 +49,7 @@ describe('durable database migrations', () => {
       'delivery_jobs',
       'schema_migrations',
       'sessions',
+      'telegram_poll_cursors',
       'telegram_updates',
       'thread_bindings',
       'turns',
@@ -59,7 +60,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(2)
+    expect(migrations?.count).toBe(3)
   })
 })
 

@@ -108,6 +108,17 @@ const MIGRATIONS: readonly Migration[] = [
         ON turns (operation_key) WHERE operation_key IS NOT NULL`,
     ],
   },
+  {
+    version: 3,
+    name: 'telegram_poll_cursors',
+    statements: [
+      `CREATE TABLE telegram_poll_cursors (
+        bot_id TEXT PRIMARY KEY,
+        next_update_id INTEGER NOT NULL CHECK (next_update_id >= 0),
+        updated_at_ms INTEGER NOT NULL
+      )`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

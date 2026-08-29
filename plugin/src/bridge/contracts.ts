@@ -5,6 +5,8 @@ export interface IncomingTextMessage {
   projectId: string
   text: string
   attachments?: readonly IncomingTelegramAttachment[]
+  /** Durable route recovered from the Telegram message being replied to. */
+  preferredThreadId?: string
 }
 
 export interface IncomingTelegramAttachment {
@@ -31,6 +33,7 @@ export interface PreparedIncomingMessage {
   projectId: string
   text: string
   attachments: readonly AgentLocalAttachment[]
+  preferredThreadId?: string
 }
 
 export type InboundMessagePreparation =
@@ -56,6 +59,23 @@ export type PersonalAlphaCommandName =
   | 'sandbox'
   | 'approval'
   | 'cwd'
+  | 'settings'
+  | 'auth'
+  | 'login'
+  | 'limits'
+  | 'usage'
+  | 'version'
+  | 'sessions'
+  | 'attach'
+  | 'handback'
+  | 'rename'
+  | 'unarchive'
+  | 'fork'
+  | 'compact'
+  | 'diff'
+  | 'file'
+  | 'review'
+  | 'plan'
 
 export interface IncomingCommand {
   chatId: string
@@ -121,6 +141,21 @@ export type IncomingInteractionResponse =
       fieldIndex: number
       text: string
     }
+  | {
+      kind: 'feature_action'
+      feature: 'settings' | 'busy' | 'plan'
+      chatId: string
+      token: string
+      action: string
+      callbackQueryId: string
+      callbackMessageId: number
+    }
+  | {
+      kind: 'guided_plan_revision'
+      chatId: string
+      token: string
+      text: string
+    }
 
 export interface InteractionOperation {
   operationKey: string
@@ -148,7 +183,12 @@ export interface CommandOperation {
 
 export interface CommandResult {
   text: string
+  buttons?: readonly (readonly CommandButton[])[]
 }
+
+export type CommandButton =
+  | { text: string; callbackData: string }
+  | { text: string; url: string }
 
 export interface CommandHandler {
   handleCommand(operation: CommandOperation): Promise<CommandResult>
@@ -163,12 +203,17 @@ export interface TextTurnOperation {
   projectId: string
   text: string
   attachments?: readonly AgentLocalAttachment[]
+  preferredThreadId?: string
+  /** Internal-only policy tightening; never populated from Telegram payloads. */
+  trustedSettingsOverride?: AgentTurnSettings
 }
 
 export interface TextTurnResult {
   threadId: string
   turnId: string
   finalText: string
+  buttons?: readonly (readonly CommandButton[])[]
+  presentation?: 'answer' | 'busy_choice' | 'guided_plan'
 }
 
 export type AgentApprovalPolicy = 'untrusted' | 'on-request' | 'never'
@@ -193,6 +238,75 @@ export interface AgentModel {
   isDefault: boolean
   supportedEfforts: string[]
   defaultEffort: string | null
+}
+
+export interface AgentAccountSnapshot {
+  kind: 'none' | 'apiKey' | 'chatgpt' | 'amazonBedrock'
+  email: string | null
+  planType: string | null
+  requiresOpenaiAuth: boolean
+}
+
+export interface AgentDeviceLogin {
+  loginId: string
+  verificationUrl: string
+  userCode: string
+}
+
+export interface AgentRateLimitWindow {
+  usedPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+}
+
+export interface AgentRateLimit {
+  id: string
+  name: string | null
+  primary: AgentRateLimitWindow | null
+  secondary: AgentRateLimitWindow | null
+  planType: string | null
+  reachedType: string | null
+}
+
+export interface AgentUsageSnapshot {
+  lifetimeTokens: string | null
+  peakDailyTokens: string | null
+  currentStreakDays: string | null
+  recentDaily: readonly { date: string; tokens: string }[]
+  thread: {
+    id: string
+    creditsMicros: string
+    usdMicros: string | null
+  } | null
+}
+
+export interface AgentNativeThread {
+  id: string
+  cwd: string
+  name: string | null
+  preview: string
+  createdAtSeconds: number
+  updatedAtSeconds: number
+  status: string
+  archived: boolean
+}
+
+export type AgentReviewTarget =
+  | { type: 'uncommittedChanges' }
+  | { type: 'baseBranch'; branch: string }
+  | { type: 'commit'; sha: string; title: string | null }
+  | { type: 'custom'; instructions: string }
+
+export interface AgentTurnDiff {
+  threadId: string
+  turnId: string
+  diff: string
+  updatedAtMs: number
+}
+
+export interface AgentArtifactStore {
+  recordTurnDiff(diff: AgentTurnDiff): void
+  getLatestTurnDiff(threadId: string): AgentTurnDiff | null
 }
 
 export interface AgentSettingsProvider {
@@ -326,6 +440,27 @@ export interface AgentBackend {
     turnId: string
     text: string
   }): Promise<void>
+  readAccount?(): Promise<AgentAccountSnapshot>
+  startDeviceLogin?(): Promise<AgentDeviceLogin>
+  readRateLimits?(): Promise<AgentRateLimit[]>
+  readUsage?(threadId?: string): Promise<AgentUsageSnapshot>
+  listNativeThreads?(input: {
+    cwd: readonly string[]
+    archived?: boolean
+    search?: string
+  }): Promise<AgentNativeThread[]>
+  renameThread?(threadId: string, name: string): Promise<void>
+  archiveNativeThread?(threadId: string): Promise<void>
+  unarchiveNativeThread?(threadId: string): Promise<void>
+  forkNativeThread?(threadId: string, cwd: string): Promise<string>
+  compactThread?(threadId: string): Promise<void>
+  runReview?(input: {
+    operationKey: string
+    threadId: string
+    target: AgentReviewTarget
+  }): Promise<TextTurnResult>
+  getLatestDiff?(threadId: string): AgentTurnDiff | null
+  getActiveTurn?(threadId: string): string | null
 }
 
 export interface DeliveryProof {
@@ -374,4 +509,5 @@ export interface TelegramGateway<PreparedDelivery = unknown> {
   buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
   prepareDelivery(job: DeliveryJob): Promise<PreparedDelivery>
   executeDelivery(prepared: PreparedDelivery): Promise<DeliveryProof>
+  recordDelivery?(job: DeliveryJob, proof: DeliveryProof, deliveredAtMs: number): void
 }

@@ -104,6 +104,18 @@ async function waitForRequest(transport: FakeTransport, method: string) {
   throw new Error(`${method} request not observed`)
 }
 
+async function waitForRequestNumber(transport: FakeTransport, method: string, number: number) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const requests = transport.sent.filter(
+      (message) => 'method' in message && 'id' in message && message.method === method,
+    )
+    const request = requests[number - 1]
+    if (request !== undefined && 'id' in request) return request
+    await Bun.sleep(1)
+  }
+  throw new Error(`${method} request #${number} not observed`)
+}
+
 let root: string
 let database: Database
 let transport: FakeTransport
@@ -371,6 +383,180 @@ describe('durable text runtime composition', () => {
     expect(
       database.query<{ project_id: string }, []>('SELECT project_id FROM sessions').get()?.project_id,
     ).toBe('other')
+  })
+
+  test('runs Guided Plan as a durable confirm-before-execute flow', async () => {
+    runtime.ingest({
+      update_id: 820,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: '/plan on',
+      },
+    }, NOW)
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+
+    runtime.ingest({
+      update_id: 821,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'реализуй безопасный экспорт',
+      },
+    }, NOW + 1)
+    clockNow = NOW + 2
+    const planning = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-guided' } } })
+    const planTurn = await waitForRequestNumber(transport, 'turn/start', 1)
+    expect(planTurn).toMatchObject({
+      params: {
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly' },
+        input: [{ type: 'text', text: expect.stringContaining('PLANNING ONLY') }],
+      },
+    })
+    transport.emit({ id: planTurn.id, result: { turn: { id: 'turn-plan' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-guided', turnId: 'turn-plan',
+        item: { type: 'agentMessage', id: 'plan-answer', text: '1. Изменить\n2. Проверить', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: { threadId: 'thread-guided', turn: { id: 'turn-plan', status: 'completed', items: [] } },
+    })
+    expect((await planning).outcome).toBe('enqueued')
+    const plan = database.query<{ token: string; state: string }, []>(
+      'SELECT token, state FROM guided_plans',
+    ).get()
+    expect(plan).toMatchObject({ state: 'AWAITING_CONFIRMATION' })
+    if (plan === null) throw new Error('guided plan was not persisted')
+
+    runtime.ingest({
+      update_id: 822,
+      callback_query: {
+        id: 'confirm-guided', data: `dx:p:${plan.token}:go`, from: { id: 7001, is_bot: false },
+        message: { message_id: 999, chat: { id: 7001, type: 'private' } },
+      },
+    }, NOW + 2)
+    const executing = runtime.processInboundOnce()
+    const resume = await waitForRequest(transport, 'thread/resume')
+    expect(resume).toMatchObject({ params: { threadId: 'thread-guided', cwd: '/srv/workspace' } })
+    transport.emit({ id: resume.id, result: { thread: { id: 'thread-guided' } } })
+    const executeTurn = await waitForRequestNumber(transport, 'turn/start', 2)
+    expect(executeTurn).toMatchObject({
+      params: {
+        sandboxPolicy: { type: 'workspaceWrite' },
+        input: [{ type: 'text', text: expect.stringContaining('APPROVED PLAN') }],
+      },
+    })
+    expect(
+      ('params' in executeTurn
+        ? executeTurn.params as { approvalPolicy?: string }
+        : {}).approvalPolicy,
+    ).not.toBe('never')
+    transport.emit({ id: executeTurn.id, result: { turn: { id: 'turn-execute' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-guided', turnId: 'turn-execute',
+        item: { type: 'agentMessage', id: 'execute-answer', text: 'Реализовано.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-guided', turn: { id: 'turn-execute', status: 'completed', items: [] },
+      },
+    })
+    expect((await executing).outcome).toBe('enqueued')
+    expect(database.query<{ state: string }, []>('SELECT state FROM guided_plans').get()?.state)
+      .toBe('COMPLETED')
+  })
+
+  test('offers a durable busy choice and queues the prompt only after confirmation', async () => {
+    runtime.ingest({
+      update_id: 830,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'долгая первая задача',
+      },
+    }, NOW)
+    const first = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-busy-runtime' } } })
+    const firstTurn = await waitForRequestNumber(transport, 'turn/start', 1)
+    transport.emit({ id: firstTurn.id, result: { turn: { id: 'turn-busy-runtime' } } })
+
+    runtime.ingest({
+      update_id: 831,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'вторая задача',
+      },
+    }, NOW + 1)
+    clockNow = NOW + 2
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    expect(transport.sent.filter(
+      (message) => 'method' in message && message.method === 'turn/start',
+    )).toHaveLength(1)
+    const busy = database.query<{ token: string; state: string }, []>(
+      'SELECT token, state FROM telegram_busy_prompts',
+    ).get()
+    expect(busy).toMatchObject({ state: 'PENDING' })
+    if (busy === null) throw new Error('busy prompt was not persisted')
+
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-busy-runtime', turnId: 'turn-busy-runtime',
+        item: { type: 'agentMessage', id: 'first-answer', text: 'Первая готова.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-busy-runtime',
+        turn: { id: 'turn-busy-runtime', status: 'completed', items: [] },
+      },
+    })
+    expect((await first).outcome).toBe('enqueued')
+
+    runtime.ingest({
+      update_id: 832,
+      callback_query: {
+        id: 'queue-busy', data: `dx:b:${busy.token}:queue`, from: { id: 7001, is_bot: false },
+        message: { message_id: 998, chat: { id: 7001, type: 'private' } },
+      },
+    }, NOW + 3)
+    clockNow = NOW + 4
+    const queued = runtime.processInboundOnce()
+    const resume = await waitForRequest(transport, 'thread/resume')
+    transport.emit({ id: resume.id, result: { thread: { id: 'thread-busy-runtime' } } })
+    const secondTurn = await waitForRequestNumber(transport, 'turn/start', 2)
+    expect(secondTurn).toMatchObject({
+      params: { input: [{ type: 'text', text: 'вторая задача', text_elements: [] }] },
+    })
+    transport.emit({ id: secondTurn.id, result: { turn: { id: 'turn-queued-runtime' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-busy-runtime', turnId: 'turn-queued-runtime',
+        item: { type: 'agentMessage', id: 'second-answer', text: 'Вторая готова.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-busy-runtime',
+        turn: { id: 'turn-queued-runtime', status: 'completed', items: [] },
+      },
+    })
+    expect((await queued).outcome).toBe('enqueued')
+    expect(database.query<{ state: string }, []>(
+      'SELECT state FROM telegram_busy_prompts',
+    ).get()?.state).toBe('COMPLETED')
   })
 
   test('downloads a photo durably, sends localImage and journals unknown events', async () => {

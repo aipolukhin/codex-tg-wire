@@ -15,6 +15,7 @@ export interface AgentProjectSettingsRecord {
   effort: string | null
   sandbox: AgentSandboxMode | null
   approvalPolicy: AgentApprovalPolicy | null
+  guidedPlanEnabled: boolean
   createdAtMs: number
   updatedAtMs: number
 }
@@ -24,6 +25,7 @@ export interface AgentProjectSettingsPatch {
   effort?: string | null
   sandbox?: AgentSandboxMode | null
   approvalPolicy?: AgentApprovalPolicy | null
+  guidedPlanEnabled?: boolean
 }
 
 interface SettingsRow {
@@ -51,6 +53,7 @@ function settingsFromRow(row: SettingsRow): AgentProjectSettingsRecord {
     effort: row.effort,
     sandbox: row.sandbox,
     approvalPolicy: row.approval_policy,
+    guidedPlanEnabled: false,
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
   }
@@ -106,7 +109,11 @@ export class SqliteAgentSettingsRepository implements AgentSettingsProvider {
          WHERE bot_id = ? AND chat_id = ? AND project_id = ?`,
       )
       .get(botId, chatId, projectId)
-    return row === null ? null : settingsFromRow(row)
+    if (row === null) return null
+    return {
+      ...settingsFromRow(row),
+      guidedPlanEnabled: this.isGuidedPlanEnabled(botId, chatId, projectId),
+    }
   }
 
   updateProjectSettings(
@@ -152,6 +159,24 @@ export class SqliteAgentSettingsRepository implements AgentSettingsProvider {
         nowMs,
       ],
     )
+    if (patch.guidedPlanEnabled !== undefined) {
+      this.database.run(
+        `INSERT INTO guided_plan_preferences
+          (bot_id, chat_id, project_id, enabled, created_at_ms, updated_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (bot_id, chat_id, project_id) DO UPDATE SET
+           enabled = excluded.enabled,
+           updated_at_ms = excluded.updated_at_ms`,
+        [
+          botId,
+          chatId,
+          projectId,
+          patch.guidedPlanEnabled ? 1 : 0,
+          nowMs,
+          nowMs,
+        ],
+      )
+    }
     const updated = this.getProjectSettings(botId, chatId, projectId)
     if (updated === null) throw new Error('agent project settings update did not produce a row')
     return updated
@@ -168,5 +193,15 @@ export class SqliteAgentSettingsRepository implements AgentSettingsProvider {
         ? {}
         : { approvalPolicy: settings.approvalPolicy }),
     }
+  }
+
+  private isGuidedPlanEnabled(botId: string, chatId: string, projectId: string): boolean {
+    const row = this.database
+      .query<{ enabled: number }, [string, string, string]>(
+        `SELECT enabled FROM guided_plan_preferences
+         WHERE bot_id = ? AND chat_id = ? AND project_id = ?`,
+      )
+      .get(botId, chatId, projectId)
+    return row?.enabled === 1
   }
 }

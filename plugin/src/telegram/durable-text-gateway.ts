@@ -29,6 +29,7 @@ import type {
   TelegramMediaKind,
 } from './durable-outbound-media.js'
 import type { VoiceTranscriber } from './durable-voice-transcriber.js'
+import type { SqliteTelegramMessageRouteRepository } from '../durable/message-route-repository.js'
 
 export interface TelegramMediaOptions {
   caption?: string
@@ -95,6 +96,7 @@ export interface DurableTelegramTextGatewayOptions {
   outboundMediaStore?: DurableOutboundMediaStore
   albumSource?: { albumFragmentsFor(updateRowId: number): readonly InboxUpdate[] }
   voiceTranscriber?: VoiceTranscriber
+  messageRoutes?: SqliteTelegramMessageRouteRepository
 }
 
 export type PreparedTextDelivery = {
@@ -133,6 +135,7 @@ interface TelegramMessagePayload {
     chat?: { id?: string | number; type?: string }
     from?: { id?: string | number; is_bot?: boolean }
     text?: string
+    reply_to_message?: { message_id?: number }
     caption?: string
     photo?: Array<{
       file_id?: string
@@ -363,6 +366,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly outboundMediaStore: DurableOutboundMediaStore | undefined
   private readonly albumSource: DurableTelegramTextGatewayOptions['albumSource']
   private readonly voiceTranscriber: VoiceTranscriber | undefined
+  private readonly messageRoutes: SqliteTelegramMessageRouteRepository | undefined
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -380,6 +384,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.outboundMediaStore = options.outboundMediaStore
     this.albumSource = options.albumSource
     this.voiceTranscriber = options.voiceTranscriber
+    this.messageRoutes = options.messageRoutes
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -414,11 +419,21 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const text = textParts.join('\n\n')
     const trimmed = text.trim()
     if (trimmed.startsWith('/') || (trimmed.length === 0 && attachments.length === 0)) return null
+    const projectId = this.projectIdForChat(authorized.chatId)
+    const replyId = authorized.message.reply_to_message?.message_id
+    const route = Number.isSafeInteger(replyId) && (replyId as number) > 0
+      ? this.messageRoutes?.findByTelegramMessage(
+          update.botId,
+          authorized.chatId,
+          replyId as number,
+        ) ?? null
+      : null
     return {
       chatId: authorized.chatId,
-      projectId: this.projectIdForChat(authorized.chatId),
+      projectId: route?.projectId ?? projectId,
       text,
       ...(attachments.length === 0 ? {} : { attachments }),
+      ...(route === null ? {} : { preferredThreadId: route.threadId }),
     }
   }
 
@@ -468,7 +483,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const message = this.authorizedMessage(update)
     if (message === null) return null
     const match = message.text.trim().match(
-      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume|model|effort|sandbox|approval|cwd)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
+      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume|model|effort|sandbox|approval|cwd|settings|auth|login|limits|usage|version|sessions|attach|handback|rename|unarchive|fork|compact|diff|file|review|plan)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
     )
     if (match === null || match[1] === undefined) return null
     const addressedUsername = match[2]?.toLowerCase()
@@ -589,6 +604,26 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
           callbackMessageId: messageId as number,
         }
       }
+      const feature = callback.data.match(
+        /^dx:(s|b|p):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
+      )
+      if (feature !== null && feature[1] !== undefined && feature[3] !== undefined) {
+        const featureName = feature[1] === 's'
+          ? 'settings'
+          : feature[1] === 'b'
+            ? 'busy'
+            : 'plan'
+        if (featureName !== 'settings' && feature[2] === undefined) return null
+        return {
+          kind: 'feature_action',
+          feature: featureName,
+          chatId: normalizedChatId,
+          token: feature[2] ?? 'settings',
+          action: feature[3],
+          callbackQueryId: callback.id,
+          callbackMessageId: messageId as number,
+        }
+      }
       return null
     }
 
@@ -597,6 +632,17 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const escapedUsername = this.botUsername?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const usernamePart = escapedUsername === null ? '' : `(?:@${escapedUsername})?`
     const normalizedText = message.text.trim()
+    const revision = normalizedText.match(
+      new RegExp(`^/revise${usernamePart}\\s+([a-f0-9]{12})\\s+([\\s\\S]+)$`, 'i'),
+    )
+    if (revision?.[1] !== undefined && revision[2] !== undefined) {
+      return {
+        kind: 'guided_plan_revision',
+        chatId: message.chatId,
+        token: revision[1].toLowerCase(),
+        text: revision[2].trim(),
+      }
+    }
     const elicitation = normalizedText.match(
       new RegExp(`^/elicit${usernamePart}\\s+([a-f0-9]{12})\\s+([1-9]\\d?)\\s+([\\s\\S]+)$`, 'i'),
     )
@@ -647,24 +693,66 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const sourceKeys = chunks.map((_, index) => index === 0
       ? input.sourceKey
       : `${input.sourceKey}:chunk:${index + 1}`)
-    return chunks.map((chunk, index) => ({
-      sourceKey: sourceKeys[index] as string,
+    return chunks.map((chunk, index) => {
+      const sourceKey = sourceKeys[index] as string
+      if (input.result.presentation !== 'busy_choice') {
+        this.messageRoutes?.register({
+          sourceKey,
+          botId: input.update.botId,
+          chatId: input.message.chatId,
+          projectId: input.message.projectId,
+          threadId: input.result.threadId,
+          createdAtMs: input.nowMs + index,
+        })
+      }
+      return {
+      sourceKey,
       ...(index === 0 ? {} : { dependsOnSourceKey: sourceKeys[index - 1] as string }),
       kind: 'send_text',
       payload: {
         chatId: input.message.chatId,
         text: chunk.text,
-        ...(chunk.html ? { options: { parse_mode: 'HTML' } } : {}),
+        ...(chunk.html || (index === chunks.length - 1 && input.result.buttons !== undefined)
+          ? {
+              options: {
+                ...(chunk.html ? { parse_mode: 'HTML' as const } : {}),
+                ...(index === chunks.length - 1 && input.result.buttons !== undefined
+                  ? { reply_markup: { inline_keyboard: input.result.buttons.map((row) => row.map((button) => (
+                      'callbackData' in button
+                        ? { text: button.text, callback_data: button.callbackData }
+                        : { text: button.text, url: button.url }
+                    ))) } }
+                  : {}),
+              },
+            }
+          : {}),
       },
       createdAtMs: input.nowMs + index,
-    }))
+      }
+    })
   }
 
   buildCommandDelivery(input: CommandDelivery): DeliveryJobInput {
     return {
       sourceKey: input.sourceKey,
       kind: 'send_text',
-      payload: { chatId: input.command.chatId, text: input.result.text },
+      payload: {
+        chatId: input.command.chatId,
+        text: input.result.text,
+        ...(input.result.buttons === undefined
+          ? {}
+          : {
+              options: {
+                reply_markup: {
+                  inline_keyboard: input.result.buttons.map((row) => row.map((button) => (
+                    'callbackData' in button
+                      ? { text: button.text, callback_data: button.callbackData }
+                      : { text: button.text, url: button.url }
+                  ))),
+                },
+              },
+            }),
+      },
       createdAtMs: input.nowMs,
     }
   }
@@ -891,6 +979,16 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       throw new TelegramDeliveryPayloadError('Telegram returned an invalid message_id')
     }
     return { remoteId: `telegram:${sent.message_id}` }
+  }
+
+  recordDelivery(job: DeliveryJob, proof: { remoteId: string }, deliveredAtMs: number): void {
+    const match = proof.remoteId.match(/^telegram:([1-9]\d*)$/)
+    if (match?.[1] === undefined) return
+    this.messageRoutes?.markDelivered(
+      job.sourceKey,
+      Number.parseInt(match[1], 10),
+      deliveredAtMs,
+    )
   }
 
   private authorizedMessage(update: InboxUpdate): { chatId: string; text: string } | null {

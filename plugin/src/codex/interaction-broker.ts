@@ -727,6 +727,12 @@ export class CodexInteractionBroker implements InteractionHandler {
   }
 
   async handleInteraction(operation: InteractionOperation): Promise<InteractionResult> {
+    if (
+      operation.response.kind === 'feature_action' ||
+      operation.response.kind === 'guided_plan_revision'
+    ) {
+      return this.enqueueClosedResponse(operation, 'Этот callback обрабатывает control-plane')
+    }
     const interaction = this.interactions.getByToken(operation.response.token)
     if (interaction === null || interaction.connectionId !== this.connectionId) {
       return this.enqueueClosedResponse(operation, 'Запрос не найден')
@@ -1445,7 +1451,11 @@ export class CodexInteractionBroker implements InteractionHandler {
     cardText: string,
   ): InteractionResult {
     const response = operation.response
-    if (response.kind === 'user_input_text' || response.kind === 'mcp_elicitation_text') {
+    if (
+      response.kind === 'user_input_text' ||
+      response.kind === 'mcp_elicitation_text' ||
+      response.kind === 'guided_plan_revision'
+    ) {
       return this.enqueueClosedResponse(operation, toast)
     }
     const nowMs = this.now()
@@ -1473,7 +1483,11 @@ export class CodexInteractionBroker implements InteractionHandler {
   private enqueueClosedResponse(operation: InteractionOperation, text: string): InteractionResult {
     const response = operation.response
     const nowMs = this.now()
-    if (response.kind !== 'user_input_text' && response.kind !== 'mcp_elicitation_text') {
+    if (
+      response.kind !== 'user_input_text' &&
+      response.kind !== 'mcp_elicitation_text' &&
+      response.kind !== 'guided_plan_revision'
+    ) {
       const ack = this.outbox.enqueue({
         sourceKey: `${operation.operationKey}:callback-ack`,
         kind: 'reaction',

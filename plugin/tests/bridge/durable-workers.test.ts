@@ -61,8 +61,10 @@ interface PreparedDelivery {
 class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
   readonly prepared: DeliveryJob[] = []
   readonly executed: PreparedDelivery[] = []
+  readonly recorded: DeliveryJob[] = []
   prepareFailure: Error | undefined
   executeFailure: Error | undefined
+  recordFailure: Error | undefined
   remoteId = 'telegram:message:101'
   onExecute: (() => void) | undefined
   executeGate: Promise<void> | undefined
@@ -134,6 +136,11 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
     await this.executeGate
     if (this.executeFailure !== undefined) throw this.executeFailure
     return { remoteId: this.remoteId }
+  }
+
+  recordDelivery(job: DeliveryJob): void {
+    if (this.recordFailure !== undefined) throw this.recordFailure
+    this.recorded.push(job)
   }
 }
 
@@ -447,6 +454,25 @@ describe('OutboxDeliveryWorker failure boundaries', () => {
     expect(await worker.runOnce()).toEqual({ outcome: 'ambiguous', jobId: 'missing-proof' })
     expect(outbox.get('missing-proof')?.state).toBe('AMBIGUOUS')
     expect(outbox.get('missing-proof')?.remoteId).toBeNull()
+  })
+
+  test('derived reply-route failure cannot undo a proven delivery', async () => {
+    enqueue('route-failure')
+    telegram.recordFailure = new Error('route metadata unavailable')
+    const worker = new OutboxDeliveryWorker(outbox, telegram, {
+      workerId: 'sender-a',
+      now: () => nowMs,
+    })
+
+    expect(await worker.runOnce()).toEqual({
+      outcome: 'delivered',
+      jobId: 'route-failure',
+      remoteId: telegram.remoteId,
+    })
+    expect(outbox.get('route-failure')).toMatchObject({
+      state: 'DELIVERED',
+      remoteId: telegram.remoteId,
+    })
   })
 
   test('bounded preparation retries end in FAILED', async () => {

@@ -355,4 +355,62 @@ describe('CodexAppServerClient typed operations', () => {
     transport.emit({ id: 5, result: {} })
     await interrupt
   })
+
+  test('uses native account, session lifecycle and review methods', async () => {
+    const transport = new FakeTransport()
+    const client = await initialize(transport)
+
+    const cases: Array<{
+      run: () => Promise<unknown>
+      method: string
+      params?: unknown
+      result: unknown
+    }> = [
+      { run: () => client.readAccount(), method: 'account/read', params: {}, result: {
+        account: null, requiresOpenaiAuth: true,
+      } },
+      { run: () => client.startDeviceLogin(), method: 'account/login/start',
+        params: { type: 'chatgptDeviceCode' }, result: {
+          type: 'chatgptDeviceCode', loginId: 'login-1', verificationUrl: 'https://example.com',
+          userCode: 'ABCD-EFGH',
+        } },
+      { run: () => client.readRateLimits(), method: 'account/rateLimits/read', result: {
+        rateLimits: {}, rateLimitsByLimitId: null, rateLimitResetCredits: null,
+      } },
+      { run: () => client.readAccountUsage({ threadId: 'thread-1' }), method: 'account/usage/read',
+        params: { threadId: 'thread-1' }, result: { summary: {}, dailyUsageBuckets: null } },
+      { run: () => client.listThreads({ cwd: ['/srv/project'] }), method: 'thread/list',
+        params: { cwd: ['/srv/project'] }, result: {
+          data: [], nextCursor: null, backwardsCursor: null,
+        } },
+      { run: () => client.setThreadName({ threadId: 'thread-1', name: 'Release' }),
+        method: 'thread/name/set', params: { threadId: 'thread-1', name: 'Release' }, result: {} },
+      { run: () => client.archiveThread({ threadId: 'thread-1' }), method: 'thread/archive',
+        params: { threadId: 'thread-1' }, result: {} },
+      { run: () => client.unarchiveThread({ threadId: 'thread-1' }), method: 'thread/unarchive',
+        params: { threadId: 'thread-1' }, result: {} },
+      { run: () => client.forkThread({ threadId: 'thread-1', cwd: '/srv/project' }),
+        method: 'thread/fork', params: { threadId: 'thread-1', cwd: '/srv/project' },
+        result: { thread: { id: 'thread-fork' } } },
+      { run: () => client.compactThread({ threadId: 'thread-1' }), method: 'thread/compact/start',
+        params: { threadId: 'thread-1' }, result: {} },
+      { run: () => client.startReview({
+          threadId: 'thread-1', target: { type: 'uncommittedChanges' }, delivery: 'inline',
+        }), method: 'review/start', params: {
+          threadId: 'thread-1', target: { type: 'uncommittedChanges' }, delivery: 'inline',
+        }, result: { turn: { id: 'review-1' }, reviewThreadId: 'thread-1' } },
+    ]
+
+    for (const entry of cases) {
+      const promise = entry.run()
+      await Promise.resolve()
+      const sent = transport.sent.at(-1)
+      expect(sent).toMatchObject({ method: entry.method })
+      if (entry.params === undefined) expect(sent).not.toHaveProperty('params')
+      else expect(sent).toMatchObject({ params: entry.params })
+      if (sent === undefined || !('id' in sent)) throw new Error('request was not sent')
+      transport.emit({ id: sent.id, result: entry.result })
+      await promise
+    }
+  })
 })

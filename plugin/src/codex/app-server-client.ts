@@ -6,19 +6,33 @@ import {
   type TransportClose,
 } from './transport.js'
 import type {
+  AccountLoginStartParams,
+  AccountLoginStartResult,
+  AccountRateLimitsResult,
+  AccountReadParams,
+  AccountReadResult,
+  AccountUsageParams,
+  AccountUsageResult,
   InitializeParams,
   InitializeResult,
   ModelListParams,
   ModelListResult,
   OutboundMessage,
   RequestId,
+  ReviewStartParams,
+  ReviewStartResult,
   RpcErrorBody,
   ServerNotification,
   ServerRequest,
+  ThreadForkParams,
+  ThreadIdParams,
+  ThreadListParams,
+  ThreadListResult,
   ThreadReadParams,
   ThreadReadResult,
   ThreadResult,
   ThreadResumeParams,
+  ThreadSetNameParams,
   ThreadStartParams,
   TurnInterruptParams,
   TurnStartParams,
@@ -215,6 +229,51 @@ export class CodexAppServerClient {
 
   listModels(params: ModelListParams = {}): Promise<ModelListResult> {
     return this.request<ModelListResult>('model/list', params)
+  }
+
+  readAccount(params: AccountReadParams = {}): Promise<AccountReadResult> {
+    return this.request<AccountReadResult>('account/read', params)
+  }
+
+  startDeviceLogin(): Promise<AccountLoginStartResult> {
+    const params: AccountLoginStartParams = { type: 'chatgptDeviceCode' }
+    return this.request<AccountLoginStartResult>('account/login/start', params)
+  }
+
+  readRateLimits(): Promise<AccountRateLimitsResult> {
+    return this.request<AccountRateLimitsResult>('account/rateLimits/read')
+  }
+
+  readAccountUsage(params: AccountUsageParams = {}): Promise<AccountUsageResult> {
+    return this.request<AccountUsageResult>('account/usage/read', params)
+  }
+
+  listThreads(params: ThreadListParams = {}): Promise<ThreadListResult> {
+    return this.request<ThreadListResult>('thread/list', params)
+  }
+
+  async setThreadName(params: ThreadSetNameParams): Promise<void> {
+    await this.request<Record<string, never>>('thread/name/set', params)
+  }
+
+  async archiveThread(params: ThreadIdParams): Promise<void> {
+    await this.request<Record<string, never>>('thread/archive', params)
+  }
+
+  async unarchiveThread(params: ThreadIdParams): Promise<void> {
+    await this.request<Record<string, never>>('thread/unarchive', params)
+  }
+
+  forkThread(params: ThreadForkParams): Promise<ThreadResult> {
+    return this.request<ThreadResult>('thread/fork', params)
+  }
+
+  async compactThread(params: ThreadIdParams): Promise<void> {
+    await this.request<Record<string, never>>('thread/compact/start', params)
+  }
+
+  startReview(params: ReviewStartParams): Promise<ReviewStartResult> {
+    return this.request<ReviewStartResult>('review/start', params)
   }
 
   async respond(requestId: RequestId, result: unknown): Promise<void> {

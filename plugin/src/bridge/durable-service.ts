@@ -186,6 +186,8 @@ export async function bootstrapDurableBridgeService(
       codexClient,
       telegramApi: telegram,
       botId: identity.botId,
+      bridgeVersion: compatibility.bridgeVersion,
+      codexVersion: compatibility.codexCliVersion,
       projects: config.projects.map((project) => ({
         id: project.id,
         cwd: project.cwd,

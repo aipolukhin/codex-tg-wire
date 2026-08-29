@@ -50,17 +50,22 @@ describe('durable database migrations', () => {
     expect(tables).toEqual([
       'agent_project_settings',
       'codex_interactions',
+      'codex_turn_diffs',
       'codex_turn_ux',
       'codex_unhandled_notifications',
       'delivery_jobs',
       'delivery_problem_actions',
+      'guided_plan_preferences',
+      'guided_plans',
       'schema_migrations',
       'sessions',
       'telegram_album_fragments',
       'telegram_album_groups',
       'telegram_attachment_proofs',
       'telegram_attachments',
+      'telegram_busy_prompts',
       'telegram_chat_preferences',
+      'telegram_message_routes',
       'telegram_poll_cursors',
       'telegram_updates',
       'thread_bindings',
@@ -73,7 +78,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(16)
+    expect(migrations?.count).toBe(17)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {

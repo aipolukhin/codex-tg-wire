@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { Database } from 'bun:sqlite'
 
 import { openDurableDatabase } from '../../src/durable/database.js'
+import { SqliteTelegramMessageRouteRepository } from '../../src/durable/message-route-repository.js'
 import {
   SqliteInboxRepository,
   SqliteOutboxRepository,
@@ -343,6 +344,14 @@ describe('DurableTelegramTextGateway inbound', () => {
       name: 'cwd',
       args: 'other',
     })
+    expect(gateway.extractCommand(make('/settings'))).toMatchObject({ name: 'settings' })
+    expect(gateway.extractCommand(make('/sessions archived'))).toMatchObject({
+      name: 'sessions', args: 'archived',
+    })
+    expect(gateway.extractCommand(make('/review base main'))).toMatchObject({
+      name: 'review', args: 'base main',
+    })
+    expect(gateway.extractCommand(make('/plan on'))).toMatchObject({ name: 'plan', args: 'on' })
     expect(gateway.extractCommand(make('/stop@other_bot'))).toBeNull()
     expect(gateway.extractCommand(make('/unknown'))).toBeNull()
   })
@@ -450,6 +459,35 @@ describe('DurableTelegramTextGateway inbound', () => {
       text: '42',
     })
 
+    const busy = acceptedUpdate({
+      callback_query: {
+        id: 'cb-busy', data: 'dx:b:012345abcdef:replace', from: { id: 7001 },
+        message: { message_id: 60, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(busy)).toMatchObject({
+      kind: 'feature_action', feature: 'busy', token: '012345abcdef', action: 'replace',
+    })
+    const settings = acceptedUpdate({
+      callback_query: {
+        id: 'cb-settings', data: 'dx:s:set:sandbox:workspace-write', from: { id: 7001 },
+        message: { message_id: 61, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(settings)).toMatchObject({
+      kind: 'feature_action', feature: 'settings', action: 'set:sandbox:workspace-write',
+    })
+    const revision = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: '/revise@my_bot 012345abcdef добавь rollback',
+      },
+    })
+    expect(gateway.extractInteractionResponse(revision)).toEqual({
+      kind: 'guided_plan_revision', chatId: '7001', token: '012345abcdef',
+      text: 'добавь rollback',
+    })
+
     expect(gateway.extractInteractionResponse(acceptedUpdate({
       callback_query: {
         id: 'cb-bad',
@@ -458,6 +496,32 @@ describe('DurableTelegramTextGateway inbound', () => {
         message: { message_id: 57, chat: { id: 7001, type: 'private' } },
       },
     }))).toBeNull()
+  })
+
+  test('routes a reply to the thread that produced the replied-to Telegram message', () => {
+    const routes = new SqliteTelegramMessageRouteRepository(database)
+    routes.register({
+      sourceKey: 'turn:route:final', botId: 'primary', chatId: '7001',
+      projectId: 'other', threadId: 'thread-origin', createdAtMs: NOW,
+    })
+    routes.markDelivered('turn:route:final', 777, NOW + 1)
+    const routedGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: ['7001'],
+      defaultProjectId: 'workspace',
+      messageRoutes: routes,
+    })
+    const update = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'продолжай именно это',
+        reply_to_message: { message_id: 777 },
+      },
+    })
+    expect(routedGateway.extractText(update)).toEqual({
+      chatId: '7001', projectId: 'other', text: 'продолжай именно это',
+      preferredThreadId: 'thread-origin',
+    })
   })
 })
 

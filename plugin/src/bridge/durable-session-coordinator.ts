@@ -148,6 +148,29 @@ export class DurableSessionCoordinator implements SessionCoordinator {
   private async execute(operation: TextTurnOperation): Promise<TextTurnResult> {
     const project = this.projects.resolve(operation.projectId)
     if (project === null) throw new UnknownProjectError(operation.projectId)
+    if (operation.preferredThreadId !== undefined) {
+      const selected = this.sessions.selectThread(
+        operation.botId,
+        operation.chatId,
+        operation.projectId,
+        this.backendName,
+        operation.preferredThreadId,
+        true,
+        this.now(),
+      )
+      if (selected.outcome === 'blocked') {
+        throw new TurnQueuedBehindTurnError(selected.turn.id, selected.turn.id)
+      }
+      if (
+        selected.outcome === 'no_session' ||
+        selected.outcome === 'not_found' ||
+        selected.outcome === 'unavailable'
+      ) {
+        throw new UnknownProjectError(
+          `${operation.projectId}: reply target ${operation.preferredThreadId} is unavailable`,
+        )
+      }
+    }
     const prepared = this.sessions.prepareTextOperation(operation, this.backendName, this.now())
     if (!prepared.created) {
       if (prepared.turn.state === 'COMPLETED') return cachedResult(prepared.turn)
@@ -183,7 +206,9 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     ) ?? {}
     const settings: AgentTurnSettings = {
       ...overrides,
-      sandbox: overrides.sandbox ?? project.sandboxMode ?? 'workspace-write',
+      ...operation.trustedSettingsOverride,
+      sandbox: operation.trustedSettingsOverride?.sandbox ??
+        overrides.sandbox ?? project.sandboxMode ?? 'workspace-write',
     }
     const writableRoots = [...new Set([project.cwd, ...(project.writableRoots ?? [])])]
     this.notifyUx(() => this.uxObserver?.onPreparing(operation, settings))

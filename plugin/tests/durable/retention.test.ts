@@ -122,6 +122,48 @@ describe('DurableDataRetention', () => {
         OLD,
       ],
     )
+    database.run(
+      `INSERT INTO telegram_busy_prompts
+        (id, token, source_operation_key, bot_id, chat_id, project_id, input_json,
+         blocking_thread_id, blocking_turn_id, state, response_json, created_at_ms,
+         updated_at_ms, resolved_at_ms)
+       VALUES ('busy-1', '111111111111', 'busy-source', 'bot', '100', 'main', ?,
+         'thread-1', 'turn-1', 'COMPLETED', ?, ?, ?, ?)`,
+      [
+        JSON.stringify({ text: 'private queued prompt' }),
+        JSON.stringify({ finalText: 'private result' }),
+        OLD,
+        OLD,
+        OLD,
+      ],
+    )
+    database.run(
+      `INSERT INTO guided_plans
+        (id, token, source_operation_key, bot_id, chat_id, project_id, input_json,
+         thread_id, planning_turn_id, plan_text, state, result_json, last_error,
+         created_at_ms, updated_at_ms, resolved_at_ms)
+       VALUES ('plan-1', '222222222222', 'plan-source', 'bot', '100', 'main', ?,
+         'thread-1', 'turn-plan', 'private plan', 'COMPLETED', ?, 'private error', ?, ?, ?)`,
+      [
+        JSON.stringify({ text: 'private plan request' }),
+        JSON.stringify({ finalText: 'private execution result' }),
+        OLD,
+        OLD,
+        OLD,
+      ],
+    )
+    database.run(
+      `INSERT INTO codex_turn_diffs (thread_id, turn_id, diff_text, updated_at_ms)
+       VALUES ('thread-1', 'turn-1', 'private source diff', ?)`,
+      [OLD],
+    )
+    database.run(
+      `INSERT INTO telegram_message_routes
+        (source_key, bot_id, chat_id, project_id, thread_id, telegram_message_id,
+         created_at_ms, delivered_at_ms)
+       VALUES ('route-1', 'bot', '100', 'main', 'thread-1', 99, ?, ?)`,
+      [OLD, OLD],
+    )
 
     const outboundPath = join(outbound, 'private.bin')
     writeFileSync(outboundPath, 'private outbound')
@@ -142,7 +184,10 @@ describe('DurableDataRetention', () => {
       turnsScrubbed: 1,
       deliveriesScrubbed: 1,
       interactionsScrubbed: 1,
+      controlInteractionsScrubbed: 2,
       attachmentsScrubbed: 1,
+      turnDiffsRemoved: 1,
+      messageRoutesRemoved: 1,
       attachmentFilesRemoved: 1,
       outboundFilesRemoved: 1,
     })
@@ -165,6 +210,31 @@ describe('DurableDataRetention', () => {
     expect(database.query<{ request_json: string; answers_json: string }, []>(
       "SELECT request_json, answers_json FROM codex_interactions WHERE id='interaction-1'",
     ).get()).toEqual({ request_json: '{"scrubbed":true}', answers_json: '{}' })
+    expect(database.query<{
+      input_json: string
+      response_json: string | null
+    }, []>(
+      "SELECT input_json, response_json FROM telegram_busy_prompts WHERE id='busy-1'",
+    ).get()).toEqual({ input_json: '{"scrubbed":true}', response_json: null })
+    expect(database.query<{
+      input_json: string
+      plan_text: string
+      result_json: string | null
+      last_error: string | null
+    }, []>(
+      "SELECT input_json, plan_text, result_json, last_error FROM guided_plans WHERE id='plan-1'",
+    ).get()).toEqual({
+      input_json: '{"scrubbed":true}',
+      plan_text: '[scrubbed]',
+      result_json: null,
+      last_error: null,
+    })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM codex_turn_diffs',
+    ).get()?.count).toBe(0)
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM telegram_message_routes',
+    ).get()?.count).toBe(0)
     expect(new SqliteOutboxRepository(database).get('old-delivery')?.payload).toEqual({ scrubbed: true })
     database.close()
   })

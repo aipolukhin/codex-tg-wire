@@ -20,8 +20,11 @@ export interface DurableRetentionResult {
   turnsScrubbed: number
   deliveriesScrubbed: number
   interactionsScrubbed: number
+  controlInteractionsScrubbed: number
   albumsScrubbed: number
   attachmentsScrubbed: number
+  turnDiffsRemoved: number
+  messageRoutesRemoved: number
   attachmentFilesRemoved: number
   outboundFilesRemoved: number
 }
@@ -49,8 +52,11 @@ function emptyResult(): DurableRetentionResult {
     turnsScrubbed: 0,
     deliveriesScrubbed: 0,
     interactionsScrubbed: 0,
+    controlInteractionsScrubbed: 0,
     albumsScrubbed: 0,
     attachmentsScrubbed: 0,
+    turnDiffsRemoved: 0,
+    messageRoutesRemoved: 0,
     attachmentFilesRemoved: 0,
     outboundFilesRemoved: 0,
   }
@@ -240,6 +246,32 @@ export class DurableDataRetention {
            AND (request_json != ? OR answers_json != '{}' OR response_json IS NOT NULL OR last_error IS NOT NULL)`,
         [SCRUBBED_PAYLOAD, cutoffMs, SCRUBBED_PAYLOAD],
       ).changes
+      const busyScrubbed = this.database.run(
+        `UPDATE telegram_busy_prompts
+         SET input_json = ?, response_json = NULL
+         WHERE state NOT IN ('PENDING', 'PROCESSING')
+           AND updated_at_ms < ?
+           AND (input_json != ? OR response_json IS NOT NULL)`,
+        [SCRUBBED_PAYLOAD, cutoffMs, SCRUBBED_PAYLOAD],
+      ).changes
+      const plansScrubbed = this.database.run(
+        `UPDATE guided_plans
+         SET input_json = ?, plan_text = '[scrubbed]', result_json = NULL, last_error = NULL
+         WHERE state IN ('COMPLETED', 'CANCELLED', 'FAILED')
+           AND updated_at_ms < ?
+           AND (input_json != ? OR plan_text != '[scrubbed]'
+             OR result_json IS NOT NULL OR last_error IS NOT NULL)`,
+        [SCRUBBED_PAYLOAD, cutoffMs, SCRUBBED_PAYLOAD],
+      ).changes
+      const turnDiffsRemoved = this.database.run(
+        'DELETE FROM codex_turn_diffs WHERE updated_at_ms < ?',
+        [cutoffMs],
+      ).changes
+      const messageRoutesRemoved = this.database.run(
+        `DELETE FROM telegram_message_routes
+         WHERE coalesce(delivered_at_ms, created_at_ms) < ?`,
+        [cutoffMs],
+      ).changes
       const albumsScrubbed = this.database.run(
         `UPDATE telegram_album_groups
          SET last_error = NULL
@@ -251,8 +283,11 @@ export class DurableDataRetention {
         turnsScrubbed,
         deliveriesScrubbed,
         interactionsScrubbed,
+        controlInteractionsScrubbed: busyScrubbed + plansScrubbed,
         albumsScrubbed,
         attachmentsScrubbed,
+        turnDiffsRemoved,
+        messageRoutesRemoved,
       }
     }).immediate()
 

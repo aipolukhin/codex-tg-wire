@@ -454,6 +454,72 @@ export class SqliteSessionRepository {
       .map(threadRegistryFromRow)
   }
 
+  /**
+   * Imports a thread discovered through App Server thread/list and selects it
+   * for this Telegram project. The global (backend, thread_id) uniqueness
+   * check prevents one owner route from silently stealing another route.
+   */
+  attachExternalThread(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    backend: string,
+    threadId: string,
+    nowMs: number,
+  ): SelectThreadResult {
+    return this.database.transaction((): SelectThreadResult => {
+      let session = this.findSession(botId, chatId, projectId)
+      if (session === null) {
+        const id = crypto.randomUUID()
+        this.database.run(
+          `INSERT INTO sessions
+            (id, bot_id, chat_id, project_id, state, created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+          [id, botId, chatId, projectId, nowMs, nowMs],
+        )
+        session = this.requireSession(id)
+      }
+      const owner = this.database
+        .query<{ session_id: string }, [string, string]>(
+          'SELECT session_id FROM thread_registry WHERE backend = ? AND thread_id = ?',
+        )
+        .get(backend, threadId)
+      if (owner !== null && owner.session_id !== session.id) {
+        throw new SessionStateConflictError(
+          `thread ${threadId} is already routed to another Telegram session`,
+        )
+      }
+      const blocking = this.findBlockingTurn(session.id)
+      if (blocking !== null) return { outcome: 'blocked', turn: blocking }
+      this.upsertThreadRegistry(session.id, backend, threadId, nowMs)
+      const binding = this.findBinding(session.id, backend)
+      if (binding?.threadId === threadId) {
+        return {
+          outcome: 'already_selected',
+          thread: this.requireThreadRegistry(session.id, backend, threadId),
+        }
+      }
+      if (binding !== null) this.database.run('DELETE FROM thread_bindings WHERE id = ?', [binding.id])
+      this.database.run(
+        `INSERT INTO thread_bindings
+          (id, session_id, backend, thread_id, state, created_at_ms, updated_at_ms)
+         VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+        [crypto.randomUUID(), session.id, backend, threadId, nowMs, nowMs],
+      )
+      this.database.run(
+        `UPDATE thread_registry
+         SET state = 'AVAILABLE', updated_at_ms = ?, last_used_at_ms = ?
+         WHERE session_id = ? AND backend = ? AND thread_id = ?`,
+        [nowMs, nowMs, session.id, backend, threadId],
+      )
+      return {
+        outcome: 'selected',
+        thread: this.requireThreadRegistry(session.id, backend, threadId),
+        previousThreadId: binding?.threadId ?? null,
+      }
+    }).immediate()
+  }
+
   selectThread(
     botId: string,
     chatId: string,

@@ -482,6 +482,90 @@ const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 17,
+    name: 'm65_control_plane',
+    statements: [
+      `CREATE TABLE guided_plan_preferences (
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (bot_id, chat_id, project_id)
+      )`,
+      `CREATE TABLE codex_turn_diffs (
+        thread_id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL,
+        diff_text TEXT NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      )`,
+      `CREATE INDEX codex_turn_diffs_turn_idx
+        ON codex_turn_diffs (turn_id, updated_at_ms)`,
+      `CREATE TABLE telegram_message_routes (
+        source_key TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        telegram_message_id INTEGER CHECK
+          (telegram_message_id IS NULL OR telegram_message_id > 0),
+        created_at_ms INTEGER NOT NULL,
+        delivered_at_ms INTEGER
+      )`,
+      `CREATE UNIQUE INDEX telegram_message_routes_remote_idx
+        ON telegram_message_routes (bot_id, chat_id, telegram_message_id)
+        WHERE telegram_message_id IS NOT NULL`,
+      `CREATE TABLE telegram_busy_prompts (
+        id TEXT PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        source_operation_key TEXT NOT NULL UNIQUE,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        input_json TEXT NOT NULL,
+        blocking_thread_id TEXT NOT NULL,
+        blocking_turn_id TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (state IN ('PENDING', 'PROCESSING', 'STEERED', 'QUEUED',
+            'REPLACED', 'CANCELLED', 'COMPLETED', 'FAILED')),
+        action TEXT CHECK (action IS NULL OR action IN
+          ('steer', 'queue', 'replace', 'cancel')),
+        action_operation_key TEXT UNIQUE,
+        response_json TEXT,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        resolved_at_ms INTEGER
+      )`,
+      `CREATE INDEX telegram_busy_prompts_state_idx
+        ON telegram_busy_prompts (state, updated_at_ms)`,
+      `CREATE TABLE guided_plans (
+        id TEXT PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        source_operation_key TEXT NOT NULL UNIQUE,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        input_json TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        planning_turn_id TEXT NOT NULL,
+        plan_text TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        state TEXT NOT NULL DEFAULT 'AWAITING_CONFIRMATION'
+          CHECK (state IN ('AWAITING_CONFIRMATION', 'REVISION_REQUESTED',
+            'REVISING', 'EXECUTING', 'COMPLETED', 'CANCELLED', 'FAILED')),
+        action_operation_key TEXT,
+        result_json TEXT,
+        last_error TEXT,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        resolved_at_ms INTEGER
+      )`,
+      `CREATE INDEX guided_plans_state_idx
+        ON guided_plans (state, updated_at_ms)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

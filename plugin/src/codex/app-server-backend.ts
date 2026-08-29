@@ -1,27 +1,47 @@
 import type {
   AgentBackend,
   AgentActivity,
+  AgentAccountSnapshot,
+  AgentArtifactStore,
+  AgentDeviceLogin,
   AgentExecutionPolicy,
   AgentEventDiagnostics,
   AgentModel,
+  AgentNativeThread,
+  AgentRateLimit,
+  AgentReviewTarget,
   AgentSandboxMode,
   AgentTextTurnInput,
   AgentTurnProgress,
   AgentTurnInspection,
   AgentTurnInspectionInput,
+  AgentTurnDiff,
   AgentTurnLifecycle,
+  AgentUsageSnapshot,
   TextTurnResult,
 } from '../bridge/contracts.js'
 import { AppServerClosedError, type CodexAppServerClient } from './app-server-client.js'
 import { textInput } from './protocol.js'
 import type {
+  AccountLoginStartResult,
+  AccountRateLimitsResult,
+  AccountReadResult,
+  AccountUsageParams,
+  AccountUsageResult,
   ServerNotification,
   ModelListParams,
   ModelListResult,
+  ReviewStartParams,
+  ReviewStartResult,
+  ThreadForkParams,
+  ThreadIdParams,
+  ThreadListParams,
+  ThreadListResult,
   ThreadReadParams,
   ThreadReadResult,
   ThreadResumeParams,
   ThreadResult,
+  ThreadSetNameParams,
   ThreadStartParams,
   TurnInterruptParams,
   TurnSteerParams,
@@ -41,6 +61,17 @@ interface CodexBackendClient {
   interruptTurn(params: TurnInterruptParams): Promise<void>
   steerTurn(params: TurnSteerParams): Promise<TurnSteerResult>
   listModels(params?: ModelListParams): Promise<ModelListResult>
+  readAccount?(params?: { refreshToken?: boolean }): Promise<AccountReadResult>
+  startDeviceLogin?(): Promise<AccountLoginStartResult>
+  readRateLimits?(): Promise<AccountRateLimitsResult>
+  readAccountUsage?(params?: AccountUsageParams): Promise<AccountUsageResult>
+  listThreads?(params?: ThreadListParams): Promise<ThreadListResult>
+  setThreadName?(params: ThreadSetNameParams): Promise<void>
+  archiveThread?(params: ThreadIdParams): Promise<void>
+  unarchiveThread?(params: ThreadIdParams): Promise<void>
+  forkThread?(params: ThreadForkParams): Promise<ThreadResult>
+  compactThread?(params: ThreadIdParams): Promise<void>
+  startReview?(params: ReviewStartParams): Promise<ReviewStartResult>
   onNotification(listener: (notification: ServerNotification) => void): () => void
   onClose(listener: (close: TransportClose) => void): () => void
 }
@@ -78,6 +109,7 @@ export interface CodexAppServerBackendOptions {
     'threadId' | 'clientUserMessageId' | 'input' | 'cwd'
   >
   eventDiagnostics?: AgentEventDiagnostics
+  artifactStore?: AgentArtifactStore
 }
 
 export class CodexTurnBusyError extends Error {
@@ -288,6 +320,23 @@ function nonNegativeInteger(value: unknown): number | null {
   return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null
 }
 
+function scalarText(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  if (typeof value === 'bigint') return value.toString()
+  return null
+}
+
+function requiredMethod<T extends (...args: never[]) => unknown>(
+  method: T | undefined,
+  name: string,
+): T {
+  if (method === undefined) {
+    throw new CodexTurnProtocolError(`Codex App Server method ${name} is unavailable`)
+  }
+  return method
+}
+
 function itemActivity(item: unknown): AgentActivity | null {
   if (!isRecord(item) || typeof item.type !== 'string') return null
   switch (item.type) {
@@ -361,6 +410,8 @@ export class CodexAppServerBackend implements AgentBackend {
     'threadId' | 'clientUserMessageId' | 'input' | 'cwd'
   >
   private readonly eventDiagnostics: AgentEventDiagnostics | undefined
+  private readonly artifactStore: AgentArtifactStore | undefined
+  private readonly volatileDiffs = new Map<string, AgentTurnDiff>()
   private readonly pendingByThread = new Map<string, PendingTurn>()
   private readonly unsubscribeNotification: () => void
   private readonly unsubscribeClose: () => void
@@ -372,6 +423,7 @@ export class CodexAppServerBackend implements AgentBackend {
     this.threadResumeDefaults = options.threadResumeDefaults ?? {}
     this.turnDefaults = options.turnDefaults ?? {}
     this.eventDiagnostics = options.eventDiagnostics
+    this.artifactStore = options.artifactStore
     this.unsubscribeNotification = client.onNotification((event) => this.handleNotification(event))
     this.unsubscribeClose = client.onClose((close) => this.handleClose(close))
   }
@@ -400,6 +452,171 @@ export class CodexAppServerBackend implements AgentBackend {
       seenCursors.add(cursor)
     }
     throw new CodexTurnProtocolError('model/list exceeded 100 pages')
+  }
+
+  async readAccount(): Promise<AgentAccountSnapshot> {
+    const method = requiredMethod(this.client.readAccount, 'account/read').bind(this.client)
+    const result = await method({ refreshToken: false })
+    if (result.account === null) {
+      return {
+        kind: 'none', email: null, planType: null,
+        requiresOpenaiAuth: result.requiresOpenaiAuth,
+      }
+    }
+    if (result.account.type === 'chatgpt') {
+      return {
+        kind: 'chatgpt',
+        email: result.account.email,
+        planType: result.account.planType,
+        requiresOpenaiAuth: result.requiresOpenaiAuth,
+      }
+    }
+    return {
+      kind: result.account.type,
+      email: null,
+      planType: null,
+      requiresOpenaiAuth: result.requiresOpenaiAuth,
+    }
+  }
+
+  async startDeviceLogin(): Promise<AgentDeviceLogin> {
+    const method = requiredMethod(this.client.startDeviceLogin, 'account/login/start')
+      .bind(this.client)
+    const result = await method()
+    if (
+      result.type !== 'chatgptDeviceCode' ||
+      typeof result.loginId !== 'string' ||
+      typeof result.verificationUrl !== 'string' ||
+      typeof result.userCode !== 'string'
+    ) {
+      throw new CodexTurnProtocolError('account/login/start did not return a device code')
+    }
+    return {
+      loginId: result.loginId,
+      verificationUrl: result.verificationUrl,
+      userCode: result.userCode,
+    }
+  }
+
+  async readRateLimits(): Promise<AgentRateLimit[]> {
+    const method = requiredMethod(this.client.readRateLimits, 'account/rateLimits/read')
+      .bind(this.client)
+    const result = await method()
+    const source = result.rateLimitsByLimitId === null
+      ? [[result.rateLimits.limitId ?? 'default', result.rateLimits] as const]
+      : Object.entries(result.rateLimitsByLimitId)
+          .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== undefined)
+    return source.map(([id, value]) => ({
+      id,
+      name: value.limitName,
+      primary: value.primary,
+      secondary: value.secondary,
+      planType: value.planType,
+      reachedType: value.rateLimitReachedType,
+    }))
+  }
+
+  async readUsage(threadId?: string): Promise<AgentUsageSnapshot> {
+    const method = requiredMethod(this.client.readAccountUsage, 'account/usage/read')
+      .bind(this.client)
+    const result = await method(threadId === undefined ? {} : { threadId })
+    const usage = result.threadUsage ?? null
+    return {
+      lifetimeTokens: scalarText(result.summary.lifetimeTokens),
+      peakDailyTokens: scalarText(result.summary.peakDailyTokens),
+      currentStreakDays: scalarText(result.summary.currentStreakDays),
+      recentDaily: (result.dailyUsageBuckets ?? []).slice(-7).map((bucket) => ({
+        date: bucket.startDate,
+        tokens: scalarText(bucket.tokens) ?? '0',
+      })),
+      thread: usage === null
+        ? null
+        : {
+            id: usage.threadId,
+            creditsMicros: scalarText(usage.estimatedUsageCreditsMicros) ?? '0',
+            usdMicros: scalarText(usage.estimatedUsageUsdMicros),
+          },
+    }
+  }
+
+  async listNativeThreads(input: {
+    cwd: readonly string[]
+    archived?: boolean
+    search?: string
+  }): Promise<AgentNativeThread[]> {
+    const method = requiredMethod(this.client.listThreads, 'thread/list').bind(this.client)
+    const threads: AgentNativeThread[] = []
+    const seen = new Set<string>()
+    let cursor: string | null = null
+    for (let page = 0; page < 100; page += 1) {
+      const result = await method({
+        cursor,
+        limit: 100,
+        sortKey: 'updated_at',
+        sortDirection: 'desc',
+        archived: input.archived ?? false,
+        cwd: [...input.cwd],
+        useStateDbOnly: true,
+        ...(input.search === undefined ? {} : { searchTerm: input.search }),
+      })
+      for (const thread of result.data) {
+        if (seen.has(thread.id)) continue
+        seen.add(thread.id)
+        threads.push({
+          id: thread.id,
+          cwd: typeof thread.cwd === 'string' ? thread.cwd : '',
+          name: typeof thread.name === 'string' ? thread.name : null,
+          preview: typeof thread.preview === 'string' ? thread.preview : '',
+          createdAtSeconds: typeof thread.createdAt === 'number' ? thread.createdAt : 0,
+          updatedAtSeconds: typeof thread.updatedAt === 'number' ? thread.updatedAt : 0,
+          status: isRecord(thread.status) && typeof thread.status.type === 'string'
+            ? thread.status.type
+            : typeof thread.status === 'string' ? thread.status : 'unknown',
+          archived: input.archived ?? false,
+        })
+      }
+      cursor = result.nextCursor
+      if (cursor === null) return threads
+      if (seen.has(`cursor:${cursor}`)) {
+        throw new CodexTurnProtocolError('thread/list cursor loop detected')
+      }
+      seen.add(`cursor:${cursor}`)
+    }
+    throw new CodexTurnProtocolError('thread/list exceeded 100 pages')
+  }
+
+  async renameThread(threadId: string, name: string): Promise<void> {
+    await requiredMethod(this.client.setThreadName, 'thread/name/set')
+      .call(this.client, { threadId, name })
+  }
+
+  async archiveNativeThread(threadId: string): Promise<void> {
+    await requiredMethod(this.client.archiveThread, 'thread/archive')
+      .call(this.client, { threadId })
+  }
+
+  async unarchiveNativeThread(threadId: string): Promise<void> {
+    await requiredMethod(this.client.unarchiveThread, 'thread/unarchive')
+      .call(this.client, { threadId })
+  }
+
+  async forkNativeThread(threadId: string, cwd: string): Promise<string> {
+    const result = await requiredMethod(this.client.forkThread, 'thread/fork')
+      .call(this.client, { threadId, cwd })
+    return result.thread.id
+  }
+
+  async compactThread(threadId: string): Promise<void> {
+    await requiredMethod(this.client.compactThread, 'thread/compact/start')
+      .call(this.client, { threadId })
+  }
+
+  getLatestDiff(threadId: string): AgentTurnDiff | null {
+    return this.artifactStore?.getLatestTurnDiff(threadId) ?? this.volatileDiffs.get(threadId) ?? null
+  }
+
+  getActiveTurn(threadId: string): string | null {
+    return this.pendingByThread.get(threadId)?.turnId ?? null
   }
 
   async runTextTurn(
@@ -461,6 +678,63 @@ export class CodexAppServerBackend implements AgentBackend {
       return { threadId, turnId: terminal.id, finalText: text }
     } finally {
       this.clearPending(threadId, pending)
+    }
+  }
+
+  async runReview(input: {
+    operationKey: string
+    threadId: string
+    target: AgentReviewTarget
+  }): Promise<TextTurnResult> {
+    if (this.pendingByThread.has(input.threadId)) {
+      throw new CodexTurnBusyError(input.threadId)
+    }
+    const pending = this.createPending(input.threadId, {})
+    this.pendingByThread.set(input.threadId, pending)
+    try {
+      const started = await requiredMethod(this.client.startReview, 'review/start')
+        .call(this.client, {
+          threadId: input.threadId,
+          target: input.target,
+          delivery: 'inline',
+        })
+      if (started.reviewThreadId !== input.threadId) {
+        throw new CodexTurnProtocolError(
+          `inline review started on ${started.reviewThreadId}, expected ${input.threadId}`,
+        )
+      }
+      if (pending.turnId !== null && pending.turnId !== started.turn.id) {
+        throw new CodexTurnProtocolError(
+          `review/start returned ${started.turn.id} after events for ${pending.turnId}`,
+        )
+      }
+      pending.turnId = started.turn.id
+      const terminal = await pending.promise
+      if (terminal.id !== started.turn.id) {
+        throw new CodexTurnProtocolError(
+          `review completed as ${terminal.id}, expected ${started.turn.id}`,
+        )
+      }
+      if (terminal.status === 'interrupted') throw new CodexTurnInterruptedError(terminal.id)
+      if (terminal.status === 'failed') {
+        throw new CodexTurnFailedError(terminal.id, terminal.errorMessage)
+      }
+      if (terminal.status !== 'completed') {
+        throw new CodexTurnProtocolError(
+          `review completed with non-terminal status ${terminal.status}`,
+        )
+      }
+      const text = finalText(terminal, pending.messages)
+      if (text.trim().length === 0) {
+        throw new CodexTurnProtocolError(`Codex review ${terminal.id} completed without a final message`)
+      }
+      return {
+        threadId: input.threadId,
+        turnId: terminal.id,
+        finalText: text,
+      }
+    } finally {
+      this.clearPending(input.threadId, pending)
     }
   }
 
@@ -594,6 +868,23 @@ export class CodexAppServerBackend implements AgentBackend {
       const pending = this.pendingByThread.get(progress.threadId)
       if (pending !== undefined && (pending.turnId === null || pending.turnId === progress.turnId)) {
         void Promise.resolve(pending.lifecycle.onProgress?.(progress)).catch(() => undefined)
+      }
+    }
+    if (notification.method === 'turn/diff/updated' && isRecord(notification.params)) {
+      const params = notification.params
+      if (
+        typeof params.threadId === 'string' &&
+        typeof params.turnId === 'string' &&
+        typeof params.diff === 'string'
+      ) {
+        const value: AgentTurnDiff = {
+          threadId: params.threadId,
+          turnId: params.turnId,
+          diff: params.diff,
+          updatedAtMs: Date.now(),
+        }
+        this.volatileDiffs.set(value.threadId, value)
+        this.artifactStore?.recordTurnDiff(value)
       }
     }
     if (notification.method === 'turn/started') {

@@ -213,6 +213,137 @@ export interface ModelListResult {
   nextCursor: string | null
 }
 
+// Account and thread control types intentionally mirror only the stable
+// fields rendered by the Telegram control plane. Unknown App Server fields
+// remain available through index signatures so a compatible Codex patch can
+// add metadata without forcing a bridge release.
+export interface AccountReadParams {
+  refreshToken?: boolean
+}
+
+export type Account =
+  | { type: 'apiKey' }
+  | { type: 'chatgpt'; email: string | null; planType: string }
+  | { type: 'amazonBedrock'; usesCodexManagedCredentials: boolean }
+
+export interface AccountReadResult {
+  account: Account | null
+  requiresOpenaiAuth: boolean
+}
+
+export type AccountLoginStartParams = { type: 'chatgptDeviceCode' }
+
+export type AccountLoginStartResult =
+  | {
+      type: 'chatgptDeviceCode'
+      loginId: string
+      verificationUrl: string
+      userCode: string
+    }
+  | { type: string; [key: string]: unknown }
+
+export interface RateLimitWindow {
+  usedPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+}
+
+export interface RateLimitSnapshot {
+  limitId: string | null
+  limitName: string | null
+  primary: RateLimitWindow | null
+  secondary: RateLimitWindow | null
+  credits: unknown | null
+  planType: string | null
+  rateLimitReachedType: string | null
+  [key: string]: unknown
+}
+
+export interface AccountRateLimitsResult {
+  rateLimits: RateLimitSnapshot
+  rateLimitsByLimitId: Record<string, RateLimitSnapshot | undefined> | null
+  rateLimitResetCredits: unknown | null
+}
+
+export interface AccountUsageParams {
+  threadId?: string | null
+}
+
+export interface AccountUsageResult {
+  summary: {
+    lifetimeTokens: number | string | null
+    peakDailyTokens: number | string | null
+    longestRunningTurnSec: number | string | null
+    currentStreakDays: number | string | null
+    longestStreakDays: number | string | null
+    [key: string]: unknown
+  }
+  dailyUsageBuckets: Array<{
+    startDate: string
+    tokens: number | string
+    [key: string]: unknown
+  }> | null
+  threadUsage?: {
+    threadId: string
+    estimatedUsageCreditsMicros: number | string
+    estimatedUsageUsdMicros: number | string | null
+    groups: unknown[]
+    [key: string]: unknown
+  } | null
+}
+
+export interface ThreadListParams {
+  cursor?: string | null
+  limit?: number | null
+  sortKey?: 'created_at' | 'updated_at' | null
+  sortDirection?: 'asc' | 'desc' | null
+  archived?: boolean | null
+  cwd?: string | string[] | null
+  useStateDbOnly?: boolean
+  searchTerm?: string | null
+}
+
+export interface ThreadListResult {
+  data: AppServerThread[]
+  nextCursor: string | null
+  backwardsCursor: string | null
+}
+
+export interface ThreadSetNameParams {
+  threadId: string
+  name: string
+}
+
+export interface ThreadIdParams {
+  threadId: string
+}
+
+export interface ThreadForkParams extends ThreadIdParams {
+  lastTurnId?: string | null
+  cwd?: string | null
+}
+
+export interface ReviewTargetUncommitted {
+  type: 'uncommittedChanges'
+}
+
+export type ReviewTarget =
+  | ReviewTargetUncommitted
+  | { type: 'baseBranch'; branch: string }
+  | { type: 'commit'; sha: string; title: string | null }
+  | { type: 'custom'; instructions: string }
+
+export interface ReviewStartParams {
+  threadId: string
+  target: ReviewTarget
+  delivery?: 'inline' | 'detached' | null
+}
+
+export interface ReviewStartResult {
+  turn: AppServerTurn
+  reviewThreadId: string
+}
+
 export interface ServerNotification {
   method: string
   params?: unknown

@@ -15,6 +15,8 @@ import {
 import type {
   ModelListParams,
   ModelListResult,
+  ReviewStartParams,
+  ReviewStartResult,
   ServerNotification,
   ThreadReadParams,
   ThreadReadResult,
@@ -38,17 +40,73 @@ class FakeBackendClient {
   readonly interrupts: TurnInterruptParams[] = []
   readonly steers: TurnSteerParams[] = []
   readonly modelLists: ModelListParams[] = []
+  readonly reviews: ReviewStartParams[] = []
   readonly notificationListeners = new Set<(notification: ServerNotification) => void>()
   readonly closeListeners = new Set<(close: TransportClose) => void>()
   threadIds = ['thread-1']
   turnIds = new Map<string, string>([['thread-1', 'turn-1']])
   emitDuringTurnStart: (() => void) | undefined
+  emitDuringReviewStart: (() => void) | undefined
   modelPages: ModelListResult[] = [{ data: [], nextCursor: null }]
   threadReadResults = new Map<string, ThreadReadResult>()
 
   async listModels(_params: ModelListParams = {}): Promise<ModelListResult> {
     this.modelLists.push(_params)
     return this.modelPages.shift() ?? { data: [], nextCursor: null }
+  }
+
+  async readAccount() {
+    return {
+      account: { type: 'chatgpt' as const, email: 'owner@example.com', planType: 'pro' },
+      requiresOpenaiAuth: true,
+    }
+  }
+
+  async startDeviceLogin() {
+    return {
+      type: 'chatgptDeviceCode' as const,
+      loginId: 'login-1', verificationUrl: 'https://example.com/device', userCode: 'ABCD',
+    }
+  }
+
+  async readRateLimits() {
+    return {
+      rateLimits: {
+        limitId: 'codex', limitName: 'Codex',
+        primary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+        secondary: null, credits: null, planType: 'pro', rateLimitReachedType: null,
+      },
+      rateLimitsByLimitId: null,
+      rateLimitResetCredits: null,
+    }
+  }
+
+  async readAccountUsage() {
+    return {
+      summary: {
+        lifetimeTokens: 123, peakDailyTokens: 45, longestRunningTurnSec: null,
+        currentStreakDays: 3, longestStreakDays: 4,
+      },
+      dailyUsageBuckets: [{ startDate: '2026-08-29', tokens: 12 }],
+      threadUsage: null,
+    }
+  }
+
+  async listThreads() {
+    return {
+      data: [{
+        id: 'native-1', cwd: '/workspace/project', name: 'Release', preview: 'ship it',
+        createdAt: 10, updatedAt: 20, status: { type: 'idle' },
+      }],
+      nextCursor: null,
+      backwardsCursor: null,
+    }
+  }
+
+  async startReview(params: ReviewStartParams): Promise<ReviewStartResult> {
+    this.reviews.push(params)
+    this.emitDuringReviewStart?.()
+    return { turn: { id: 'review-turn-1' }, reviewThreadId: params.threadId }
   }
 
   async startThread(params: ThreadStartParams): Promise<ThreadResult> {
@@ -148,6 +206,64 @@ async function waitForTurnStart(client: FakeBackendClient, count = 1): Promise<v
 }
 
 describe('CodexAppServerBackend text turns', () => {
+  test('normalizes native account, usage, limits and local session metadata', async () => {
+    const backend = new CodexAppServerBackend(new FakeBackendClient())
+    expect(await backend.readAccount()).toEqual({
+      kind: 'chatgpt', email: 'owner@example.com', planType: 'pro', requiresOpenaiAuth: true,
+    })
+    expect(await backend.startDeviceLogin()).toMatchObject({
+      loginId: 'login-1', verificationUrl: 'https://example.com/device', userCode: 'ABCD',
+    })
+    expect(await backend.readRateLimits()).toEqual([expect.objectContaining({
+      id: 'codex', name: 'Codex', primary: expect.objectContaining({ usedPercent: 12.5 }),
+    })])
+    expect(await backend.readUsage()).toMatchObject({
+      lifetimeTokens: '123', peakDailyTokens: '45', currentStreakDays: '3',
+      recentDaily: [{ date: '2026-08-29', tokens: '12' }],
+    })
+    expect(await backend.listNativeThreads({ cwd: ['/workspace/project'] })).toEqual([
+      expect.objectContaining({ id: 'native-1', cwd: '/workspace/project', name: 'Release' }),
+    ])
+  })
+
+  test('captures the latest diff and completes a native inline review', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    client.emit({
+      method: 'turn/diff/updated',
+      params: { threadId: 'review-thread', turnId: 'review-turn-1', diff: 'diff --git a/a b/a' },
+    })
+    expect(backend.getLatestDiff('review-thread')).toMatchObject({
+      turnId: 'review-turn-1', diff: expect.stringContaining('diff --git'),
+    })
+    client.emitDuringReviewStart = () => {
+      client.emit({
+        method: 'item/completed',
+        params: {
+          threadId: 'review-thread', turnId: 'review-turn-1',
+          item: { type: 'agentMessage', id: 'review-answer', text: 'Нашёл проблему.', phase: 'final_answer' },
+        },
+      })
+      client.emit({
+        method: 'turn/completed',
+        params: {
+          threadId: 'review-thread',
+          turn: { id: 'review-turn-1', status: 'completed', items: [] },
+        },
+      })
+    }
+    expect(await backend.runReview({
+      operationKey: 'telegram:review:1',
+      threadId: 'review-thread',
+      target: { type: 'uncommittedChanges' },
+    })).toEqual({
+      threadId: 'review-thread', turnId: 'review-turn-1', finalText: 'Нашёл проблему.',
+    })
+    expect(client.reviews).toEqual([{
+      threadId: 'review-thread', target: { type: 'uncommittedChanges' }, delivery: 'inline',
+    }])
+  })
+
   test('projects progress and usage without forwarding command, plan or reasoning content', async () => {
     const client = new FakeBackendClient()
     const backend = new CodexAppServerBackend(client)

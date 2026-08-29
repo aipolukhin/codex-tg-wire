@@ -18,6 +18,9 @@ import type {
 import { SqliteAgentSettingsRepository } from '../durable/settings-repository.js'
 import { SqliteAttachmentRepository } from '../durable/attachment-repository.js'
 import { SqliteCodexEventRepository } from '../durable/codex-event-repository.js'
+import { SqliteCodexArtifactRepository } from '../durable/codex-artifact-repository.js'
+import { SqliteControlInteractionRepository } from '../durable/control-interaction-repository.js'
+import { SqliteTelegramMessageRouteRepository } from '../durable/message-route-repository.js'
 import { SqliteCodexInteractionRepository } from '../durable/interaction-repository.js'
 import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
@@ -59,6 +62,8 @@ import {
   type OutboxDeliveryWorkerOptions,
 } from './outbox-delivery-worker.js'
 import { PersonalAlphaCommands } from './personal-alpha-commands.js'
+import { M65SessionCoordinator } from './m65-session-coordinator.js'
+import { M65InteractionHandler } from './m65-interaction-handler.js'
 import type { AgentApprovalPolicy, AgentSandboxMode } from './contracts.js'
 import {
   StartupTurnRecovery,
@@ -86,6 +91,8 @@ export interface DurableTextRuntimeOptions {
   }
   albumFlushMs?: number
   voiceTranscriber?: VoiceTranscriber
+  bridgeVersion?: string
+  codexVersion?: string
   retention?: {
     enabled: boolean
     payloadMaxAgeMs: number
@@ -221,6 +228,8 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const outbox = new SqliteOutboxRepository(options.database)
   const sessions = new SqliteSessionRepository(options.database)
   const settings = new SqliteAgentSettingsRepository(options.database)
+  const controls = new SqliteControlInteractionRepository(options.database)
+  const messageRoutes = new SqliteTelegramMessageRouteRepository(options.database)
   const attachmentStore = options.telegram.attachmentDirectory === undefined
     ? undefined
     : options.telegramApi.downloadAttachment === undefined
@@ -247,6 +256,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
   const backendOptions: CodexAppServerBackendOptions = {
     eventDiagnostics: new SqliteCodexEventRepository(options.database),
+    artifactStore: new SqliteCodexArtifactRepository(options.database),
     ...(options.codex?.turnTimeoutMs === undefined ? {} : { turnTimeoutMs: options.codex.turnTimeoutMs }),
     ...(options.codex?.threadStartDefaults === undefined
       ? {}
@@ -279,12 +289,20 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
     albumSource: inbox,
     ...(options.voiceTranscriber === undefined ? {} : { voiceTranscriber: options.voiceTranscriber }),
+    messageRoutes,
   })
-  const coordinator = new DurableSessionCoordinator(
+  const baseCoordinator = new DurableSessionCoordinator(
     sessions,
     backend,
     new StaticProjectResolver(options.projects),
     { settingsProvider: settings, uxObserver: ux },
+  )
+  const coordinator = new M65SessionCoordinator(
+    baseCoordinator,
+    sessions,
+    settings,
+    controls,
+    backend,
   )
   const approvalDefault = options.codex?.turnDefaults?.approvalPolicy
   const sandboxDefault = options.codex?.threadStartDefaults?.sandbox
@@ -299,12 +317,27 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
       ? {}
       : { allowedSandboxModes: options.codex.allowedSandboxModes }),
     uxStatus: ux,
+    ...(options.bridgeVersion === undefined ? {} : { bridgeVersion: options.bridgeVersion }),
+    ...(options.codexVersion === undefined ? {} : { codexVersion: options.codexVersion }),
+    ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
   })
+  const featureInteractions = new M65InteractionHandler(
+    interactions,
+    controls,
+    sessions,
+    settings,
+    backend,
+    baseCoordinator,
+    commands,
+    outbox,
+    telegram,
+    options.telegram.defaultProjectId,
+  )
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',
     commandHandler: commands,
-    interactionHandler: interactions,
+    interactionHandler: featureInteractions,
   })
   const outbound = new OutboxDeliveryWorker(outbox, telegram, {
     ...options.outboxWorker,

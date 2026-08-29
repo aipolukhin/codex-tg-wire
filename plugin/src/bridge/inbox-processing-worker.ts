@@ -178,6 +178,9 @@ export class InboxProcessingWorker {
       projectId: message.projectId,
       text: message.text,
       attachments: [],
+      ...(message.preferredThreadId === undefined
+        ? {}
+        : { preferredThreadId: message.preferredThreadId }),
     }
     if (this.telegram.prepareInboundMessage !== undefined) {
       const prepared = await this.telegram.prepareInboundMessage(update, message)
@@ -219,6 +222,9 @@ export class InboxProcessingWorker {
       ...(preparedMessage.attachments.length === 0
         ? {}
         : { attachments: preparedMessage.attachments }),
+      ...(preparedMessage.preferredThreadId === undefined
+        ? {}
+        : { preferredThreadId: preparedMessage.preferredThreadId }),
     })
     const completedAtMs = this.now()
     const deliveries = this.telegram.buildFinalTextDeliveries({

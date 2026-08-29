@@ -89,7 +89,14 @@ export class OutboxDeliveryWorker<PreparedDelivery = unknown> {
       return { outcome: 'ambiguous', jobId: job.id }
     }
 
-    const delivered = this.outbox.markDelivered(job.id, this.workerId, remoteId, this.now())
+    const deliveredAtMs = this.now()
+    const delivered = this.outbox.markDelivered(job.id, this.workerId, remoteId, deliveredAtMs)
+    try {
+      this.telegram.recordDelivery?.(delivered, { remoteId }, deliveredAtMs)
+    } catch {
+      // Reply routing is derived metadata. It must never turn a Telegram send
+      // with durable remote proof into a failed or ambiguous delivery.
+    }
     return { outcome: 'delivered', jobId: job.id, remoteId: delivered.remoteId as string }
   }
 

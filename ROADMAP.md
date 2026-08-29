@@ -19,7 +19,8 @@
 - [x] Добавлен durable SessionCoordinator: operation replay, provisional bindings и conservative `UNKNOWN`.
 - [x] Добавлены deny-by-default Telegram text gateway и composition root полного text slice.
 - [x] Добавлен polling ingress с SQLite cursor: durable insert всегда предшествует offset advance.
-- [ ] Добавить команды personal alpha (`/start`, `/new`, `/status`, `/stop`) и supervisor loop.
+- [x] Добавлены durable-команды personal alpha: `/start`, `/new`, `/status`, `/stop`.
+- [ ] Добавить supervisor loops, lease reaper и graceful shutdown.
 
 ## 1. Что именно мы строим
 

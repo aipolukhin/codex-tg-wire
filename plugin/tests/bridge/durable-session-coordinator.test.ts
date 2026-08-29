@@ -9,6 +9,8 @@ import type {
   AgentBackend,
   AgentTextTurnInput,
   AgentTurnLifecycle,
+  CommandOperation,
+  PersonalAlphaCommandName,
   TextTurnOperation,
   TextTurnResult,
 } from '../../src/bridge/contracts.js'
@@ -19,6 +21,7 @@ import {
   TurnRecoveryRequiredError,
   UnknownProjectError,
 } from '../../src/bridge/durable-session-coordinator.js'
+import { PersonalAlphaCommands } from '../../src/bridge/personal-alpha-commands.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
 import { SqliteInboxRepository } from '../../src/durable/sqlite-repositories.js'
 import { SqliteSessionRepository } from '../../src/durable/session-repository.js'
@@ -38,6 +41,7 @@ class FakeDefiniteTurnError extends Error {
 
 class FakeAgentBackend implements AgentBackend {
   readonly calls: AgentTextTurnInput[] = []
+  readonly interrupts: Array<{ threadId: string; turnId: string }> = []
   failureStage: FailureStage | undefined
   nextThreadId = 'codex-thread-1'
   nextTurnId = 'codex-turn-1'
@@ -68,7 +72,9 @@ class FakeAgentBackend implements AgentBackend {
     }
   }
 
-  async interruptTurn(): Promise<void> {}
+  async interruptTurn(threadId: string, turnId: string): Promise<void> {
+    this.interrupts.push({ threadId, turnId })
+  }
 }
 
 let root: string
@@ -78,6 +84,7 @@ let inbox: SqliteInboxRepository
 let sessions: SqliteSessionRepository
 let backend: FakeAgentBackend
 let coordinator: DurableSessionCoordinator
+let commands: PersonalAlphaCommands
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dashi-session-coordinator-'))
@@ -92,6 +99,7 @@ beforeEach(() => {
     new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
     { now: () => nowMs },
   )
+  commands = new PersonalAlphaCommands(sessions, backend)
 })
 
 afterEach(() => {
@@ -115,6 +123,16 @@ function operation(remoteUpdateId: number): TextTurnOperation {
     chatId: '7001',
     projectId: 'workspace',
     text: `message ${remoteUpdateId}`,
+  }
+}
+
+function command(name: PersonalAlphaCommandName): CommandOperation {
+  return {
+    operationKey: `telegram:primary:command:${name}`,
+    botId: 'primary',
+    inboxUpdateId: 0,
+    updateId: 0,
+    command: { chatId: '7001', projectId: 'workspace', name, args: '' },
   }
 }
 
@@ -235,5 +253,59 @@ describe('DurableSessionCoordinator', () => {
     await expect(coordinator.runTextTurn(op)).rejects.toBeInstanceOf(UnknownProjectError)
     expect(backend.calls).toHaveLength(0)
     expect(sessions.getTurnByOperationKey(op.operationKey)).toBeNull()
+  })
+})
+
+describe('PersonalAlphaCommands', () => {
+  test('renders help/status and resets a completed thread', async () => {
+    expect((await commands.handleCommand(command('start'))).text).toContain('/status')
+    expect((await commands.handleCommand(command('status'))).text).toContain('Thread ещё не создан')
+
+    await coordinator.runTextTurn(operation(620))
+    const status = (await commands.handleCommand(command('status'))).text
+    expect(status).toContain('codex-thread-1 (ACTIVE)')
+    expect(status).toContain('codex-turn-1 (COMPLETED)')
+
+    expect((await commands.handleCommand(command('new'))).text).toContain('отвязан')
+    backend.nextThreadId = 'codex-thread-2'
+    backend.nextTurnId = 'codex-turn-2'
+    await coordinator.runTextTurn(operation(621))
+    expect(backend.calls[1]?.threadId).toBeNull()
+    expect(sessions.getTurnByOperationKey('telegram:primary:621:turn')?.backendTurnId).toBe(
+      'codex-turn-2',
+    )
+  })
+
+  test('/new refuses an uncertain turn instead of discarding its binding', async () => {
+    backend.failureStage = 'after_thread'
+    await expect(coordinator.runTextTurn(operation(622))).rejects.toThrow()
+    const response = await commands.handleCommand(command('new'))
+    expect(response.text).toContain('UNKNOWN')
+    expect(response.text).toContain('Нельзя')
+  })
+
+  test('/stop interrupts the active backend turn', async () => {
+    let release!: () => void
+    backend.wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const running = coordinator.runTextTurn(operation(623))
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const turn = sessions.getTurnByOperationKey('telegram:primary:623:turn')
+      if (turn?.backendTurnId !== null && turn?.backendTurnId !== undefined) break
+      await Promise.resolve()
+    }
+
+    expect((await commands.handleCommand(command('stop'))).text).toContain('Остановка')
+    expect(backend.interrupts).toEqual([
+      { threadId: 'codex-thread-1', turnId: 'codex-turn-1' },
+    ])
+    release()
+    await running
+  })
+
+  test('/stop reports idle state without calling backend', async () => {
+    expect((await commands.handleCommand(command('stop'))).text).toBe('Активного turn нет.')
+    expect(backend.interrupts).toHaveLength(0)
   })
 })

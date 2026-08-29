@@ -6,6 +6,31 @@ export interface IncomingTextMessage {
   text: string
 }
 
+export type PersonalAlphaCommandName = 'start' | 'new' | 'status' | 'stop'
+
+export interface IncomingCommand {
+  chatId: string
+  projectId: string
+  name: PersonalAlphaCommandName
+  args: string
+}
+
+export interface CommandOperation {
+  operationKey: string
+  botId: string
+  inboxUpdateId: number
+  updateId: number
+  command: IncomingCommand
+}
+
+export interface CommandResult {
+  text: string
+}
+
+export interface CommandHandler {
+  handleCommand(operation: CommandOperation): Promise<CommandResult>
+}
+
 export interface TextTurnOperation {
   operationKey: string
   inboxUpdateId: number
@@ -61,6 +86,14 @@ export interface FinalTextDelivery {
   nowMs: number
 }
 
+export interface CommandDelivery {
+  update: InboxUpdate
+  command: IncomingCommand
+  result: CommandResult
+  sourceKey: string
+  nowMs: number
+}
+
 /**
  * The only Telegram boundary used by the durable workers. prepareDelivery may
  * validate payloads or fetch retry-safe media. executeDelivery performs the
@@ -68,7 +101,9 @@ export interface FinalTextDelivery {
  */
 export interface TelegramGateway<PreparedDelivery = unknown> {
   extractText(update: InboxUpdate): IncomingTextMessage | null
+  extractCommand?(update: InboxUpdate): IncomingCommand | null
   buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput
+  buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
   prepareDelivery(job: DeliveryJob): Promise<PreparedDelivery>
   executeDelivery(prepared: PreparedDelivery): Promise<DeliveryProof>
 }

@@ -31,6 +31,7 @@ import {
   type DeliveryRunResult,
   type OutboxDeliveryWorkerOptions,
 } from './outbox-delivery-worker.js'
+import { PersonalAlphaCommands } from './personal-alpha-commands.js'
 
 export interface DurableTextRuntimeOptions {
   database: Database
@@ -40,7 +41,7 @@ export interface DurableTextRuntimeOptions {
   projects: readonly ProjectDefinition[]
   telegram: DurableTelegramTextGatewayOptions
   codex?: CodexAppServerBackendOptions
-  inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId'> & { workerId?: string }
+  inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId' | 'commandHandler'> & { workerId?: string }
   outboxWorker?: Omit<OutboxDeliveryWorkerOptions, 'workerId'> & { workerId?: string }
 }
 
@@ -89,9 +90,11 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     backend,
     new StaticProjectResolver(options.projects),
   )
+  const commands = new PersonalAlphaCommands(sessions, backend)
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',
+    commandHandler: commands,
   })
   const outbound = new OutboxDeliveryWorker(outbox, telegram, {
     ...options.outboxWorker,

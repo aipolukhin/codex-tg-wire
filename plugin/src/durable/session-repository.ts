@@ -47,6 +47,18 @@ export interface PreparedTextOperation {
   turn: TurnRecord
 }
 
+export interface SessionOverview {
+  session: SessionRecord | null
+  binding: ThreadBindingRecord | null
+  latestTurn: TurnRecord | null
+  activeTurn: TurnRecord | null
+}
+
+export type ResetBindingResult =
+  | { outcome: 'no_session' | 'already_new' }
+  | { outcome: 'reset'; previousThreadId: string }
+  | { outcome: 'blocked'; turn: TurnRecord }
+
 interface SessionRow {
   id: string
   bot_id: string
@@ -321,6 +333,42 @@ export class SqliteSessionRepository {
     return this.findBinding(sessionId, backend)
   }
 
+  getOverview(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    backend = 'codex',
+  ): SessionOverview {
+    const session = this.findSession(botId, chatId, projectId)
+    if (session === null) {
+      return { session: null, binding: null, latestTurn: null, activeTurn: null }
+    }
+    return {
+      session,
+      binding: this.findBinding(session.id, backend),
+      latestTurn: this.findLatestTurn(session.id),
+      activeTurn: this.findBlockingTurn(session.id),
+    }
+  }
+
+  resetBinding(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    backend: string,
+  ): ResetBindingResult {
+    return this.database.transaction((): ResetBindingResult => {
+      const session = this.findSession(botId, chatId, projectId)
+      if (session === null) return { outcome: 'no_session' }
+      const blocking = this.findBlockingTurn(session.id)
+      if (blocking !== null) return { outcome: 'blocked', turn: blocking }
+      const binding = this.findBinding(session.id, backend)
+      if (binding === null) return { outcome: 'already_new' }
+      this.database.run('DELETE FROM thread_bindings WHERE id = ?', [binding.id])
+      return { outcome: 'reset', previousThreadId: binding.threadId }
+    }).immediate()
+  }
+
   private findSession(botId: string, chatId: string, projectId: string): SessionRecord | null {
     const row = this.database
       .query<SessionRow, [string, string, string]>(
@@ -359,6 +407,28 @@ export class SqliteSessionRepository {
     const row = this.database
       .query<TurnRow, [string]>('SELECT * FROM turns WHERE operation_key = ?')
       .get(operationKey)
+    return row === null ? null : turnFromRow(row)
+  }
+
+  private findLatestTurn(sessionId: string): TurnRecord | null {
+    const row = this.database
+      .query<TurnRow, [string]>(
+        `SELECT * FROM turns
+         WHERE session_id = ?
+         ORDER BY source_update_id DESC, created_at_ms DESC, id DESC LIMIT 1`,
+      )
+      .get(sessionId)
+    return row === null ? null : turnFromRow(row)
+  }
+
+  private findBlockingTurn(sessionId: string): TurnRecord | null {
+    const row = this.database
+      .query<TurnRow, [string]>(
+        `SELECT * FROM turns
+         WHERE session_id = ? AND state IN ('ACTIVE', 'UNKNOWN')
+         ORDER BY created_at_ms DESC, id DESC LIMIT 1`,
+      )
+      .get(sessionId)
     return row === null ? null : turnFromRow(row)
   }
 

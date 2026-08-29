@@ -3,7 +3,11 @@ import type {
   InboxUpdate,
   OutboxRepository,
 } from '../durable/contracts.js'
-import type { SessionCoordinator, TelegramGateway } from './contracts.js'
+import type {
+  CommandHandler,
+  SessionCoordinator,
+  TelegramGateway,
+} from './contracts.js'
 import {
   exponentialRetryPolicy,
   safeErrorSummary,
@@ -23,6 +27,7 @@ export interface InboxProcessingWorkerOptions {
   retryPolicy?: RetryPolicy
   now?: () => number
   errorSummary?: (error: unknown) => string
+  commandHandler?: CommandHandler
 }
 
 const DEFAULT_LEASE_MS = 60_000
@@ -37,6 +42,7 @@ export class InboxProcessingWorker {
   private readonly retryPolicy: RetryPolicy
   private readonly now: () => number
   private readonly errorSummary: (error: unknown) => string
+  private readonly commandHandler: CommandHandler | undefined
 
   constructor(
     private readonly inbox: InboxRepository,
@@ -50,6 +56,7 @@ export class InboxProcessingWorker {
     this.retryPolicy = options.retryPolicy ?? exponentialRetryPolicy()
     this.now = options.now ?? Date.now
     this.errorSummary = options.errorSummary ?? safeErrorSummary
+    this.commandHandler = options.commandHandler
   }
 
   async runOnce(): Promise<InboxRunResult> {
@@ -62,6 +69,36 @@ export class InboxProcessingWorker {
     if (update === null) return { outcome: 'idle' }
 
     try {
+      const command = this.telegram.extractCommand?.(update) ?? null
+      if (command !== null && this.commandHandler !== undefined) {
+        const commandKey = `${operationKey(update)}:command:${command.name}`
+        const result = await this.commandHandler.handleCommand({
+          operationKey: commandKey,
+          botId: update.botId,
+          inboxUpdateId: update.id,
+          updateId: update.updateId,
+          command,
+        })
+        const completedAtMs = this.now()
+        const buildDelivery = this.telegram.buildCommandDelivery
+        if (buildDelivery === undefined) {
+          throw new Error('Telegram gateway cannot build command replies')
+        }
+        const enqueue = this.outbox.enqueue({
+          ...buildDelivery.call(this.telegram, {
+            update,
+            command,
+            result,
+            sourceKey: `${commandKey}:reply`,
+            nowMs: completedAtMs,
+          }),
+          sourceKey: `${commandKey}:reply`,
+          createdAtMs: completedAtMs,
+        })
+        this.inbox.markProcessed(update.id, this.workerId, completedAtMs)
+        return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
+      }
+
       const message = this.telegram.extractText(update)
       if (message === null) {
         this.inbox.markProcessed(update.id, this.workerId, this.now())

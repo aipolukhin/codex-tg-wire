@@ -200,4 +200,22 @@ describe('durable text runtime composition', () => {
       }),
     ).toThrow('default Telegram project is not configured')
   })
+
+  test('routes /start through inbox and outbox without starting Codex', async () => {
+    runtime.ingest({
+      update_id: 802,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/start',
+      },
+    }, NOW)
+
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    expect(
+      transport.sent.some((message) => 'method' in message && message.method === 'thread/start'),
+    ).toBe(false)
+    expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
+    expect(telegram.sent[0]?.text).toContain('/new')
+  })
 })

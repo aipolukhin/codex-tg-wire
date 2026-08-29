@@ -47,6 +47,7 @@ beforeEach(() => {
     allowedChatIds: ['7001'],
     defaultProjectId: 'workspace',
     extraSecrets: ['private-marker'],
+    botUsername: 'my_bot',
   })
 })
 
@@ -90,6 +91,20 @@ describe('DurableTelegramTextGateway inbound', () => {
     for (const message of messages) {
       expect(gateway.extractText(acceptedUpdate({ message }))).toBeNull()
     }
+  })
+
+  test('parses only supported commands addressed to this bot', () => {
+    const make = (text: string) => acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text,
+      },
+    })
+    expect(gateway.extractCommand(make('/status'))).toMatchObject({ name: 'status', args: '' })
+    expect(gateway.extractCommand(make('/new@my_bot now'))).toMatchObject({ name: 'new', args: 'now' })
+    expect(gateway.extractCommand(make('/stop@other_bot'))).toBeNull()
+    expect(gateway.extractCommand(make('/threads'))).toBeNull()
   })
 })
 

@@ -276,6 +276,29 @@ export class SqliteInboxRepository implements InboxRepository {
     ).changes
   }
 
+  releaseForTurnRecovery(id: number, nowMs: number): InboxUpdate | null {
+    this.database.run(
+      `UPDATE telegram_updates
+       SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', available_at_ms = ?,
+           lease_owner = NULL, lease_expires_at_ms = NULL,
+           last_error = 'completed Codex turn recovered after restart'
+       WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
+      [nowMs, id],
+    )
+    return this.get(id)
+  }
+
+  quarantineForTurnRecovery(id: number, reason: string, nowMs: number): InboxUpdate | null {
+    this.database.run(
+      `UPDATE telegram_updates
+       SET state = 'FAILED', lease_owner = NULL, lease_expires_at_ms = NULL,
+           processed_at_ms = ?, last_error = ?
+       WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
+      [nowMs, reason, id],
+    )
+    return this.get(id)
+  }
+
   private require(id: number): InboxUpdate {
     const update = this.get(id)
     if (update === null) throw new Error(`inbox update ${id} not found`)
@@ -460,6 +483,38 @@ export class SqliteOutboxRepository implements OutboxRepository {
         [nowMs, nowMs],
       ).changes
       return { retryable, ambiguous, expired }
+    }).immediate()
+  }
+
+  retireBySourcePrefix(sourcePrefix: string, reason: string, nowMs: number): DeliveryJob[] {
+    if (sourcePrefix.length === 0) throw new TypeError('sourcePrefix must not be empty')
+    if (reason.length === 0) throw new TypeError('reason must not be empty')
+    return this.database.transaction(() => {
+      const rows = this.database
+        .query<DeliveryRow, [number, string]>(
+          `SELECT * FROM delivery_jobs
+           WHERE substr(source_key, 1, ?) = ?
+           ORDER BY created_at_ms, id`,
+        )
+        .all(sourcePrefix.length, sourcePrefix)
+      this.database.run(
+        `UPDATE delivery_jobs
+         SET state = 'ARCHIVED', lease_owner = NULL, lease_expires_at_ms = NULL,
+             last_error = ?, updated_at_ms = ?
+         WHERE substr(source_key, 1, ?) = ?
+           AND (state IN ('PENDING', 'RETRY_WAIT')
+             OR (state = 'LEASED' AND send_started_at_ms IS NULL))`,
+        [reason, nowMs, sourcePrefix.length, sourcePrefix],
+      )
+      this.database.run(
+        `UPDATE delivery_jobs
+         SET state = 'AMBIGUOUS', lease_owner = NULL, lease_expires_at_ms = NULL,
+             last_error = 'interaction prompt send was in flight during restart', updated_at_ms = ?
+         WHERE substr(source_key, 1, ?) = ?
+           AND state = 'LEASED' AND send_started_at_ms IS NOT NULL`,
+        [nowMs, sourcePrefix.length, sourcePrefix],
+      )
+      return rows.map((row) => this.require(row.id))
     }).immediate()
   }
 

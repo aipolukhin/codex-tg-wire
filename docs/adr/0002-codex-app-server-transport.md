@@ -31,6 +31,14 @@ same lifecycle reliably.
 - Treat a newly returned thread id as provisional until its first turn creates
   a rollout. With Codex CLI `0.149.1`, `thread/start` without a turn does not
   survive an App Server restart: `thread/resume` returns `no rollout found`.
+- Reconcile a turn left active by a dead bridge with
+  `thread/read({ includeTurns: true })`, which reads stored history without
+  resuming or subscribing. Never start a replacement turn during recovery.
+- Accept only a terminal `completed`, `failed`, or `interrupted` record as
+  evidence. Treat persisted `inProgress`, missing correlation, read failure, or
+  a completed turn without final output as `UNKNOWN`.
+- Treat server-initiated approval and user-input request ids as connection-bound.
+  A request from an old App Server connection is `STALE`, not replayable.
 
 ## Consequences
 
@@ -38,5 +46,6 @@ same lifecycle reliably.
 - The bridge does not depend on experimental remote transport.
 - The narrow types must be reviewed whenever the compatibility fingerprint
   changes.
-- Process supervision and recovery policy remain work for the next milestone.
+- Startup recovery is fail-closed and has record/replay fault tests. The
+  protocol behavior follows the [official App Server lifecycle and `thread/read` contract](https://developers.openai.com/codex/app-server).
 - Session storage must not present a provisional thread as restart-durable.

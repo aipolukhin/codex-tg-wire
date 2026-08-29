@@ -4,6 +4,8 @@ import type {
   AgentModel,
   AgentSandboxMode,
   AgentTextTurnInput,
+  AgentTurnInspection,
+  AgentTurnInspectionInput,
   AgentTurnLifecycle,
   TextTurnResult,
 } from '../bridge/contracts.js'
@@ -13,6 +15,8 @@ import type {
   ServerNotification,
   ModelListParams,
   ModelListResult,
+  ThreadReadParams,
+  ThreadReadResult,
   ThreadResumeParams,
   ThreadResult,
   ThreadStartParams,
@@ -29,6 +33,7 @@ import { KNOWN_CODEX_NOTIFICATION_METHODS } from './known-notifications.js'
 interface CodexBackendClient {
   startThread(params: ThreadStartParams): Promise<ThreadResult>
   resumeThread(params: ThreadResumeParams): Promise<ThreadResult>
+  readThread(params: ThreadReadParams): Promise<ThreadReadResult>
   startTurn(params: TurnStartParams): Promise<TurnStartResult>
   interruptTurn(params: TurnInterruptParams): Promise<void>
   steerTurn(params: TurnSteerParams): Promise<TurnSteerResult>
@@ -208,6 +213,40 @@ function parseTerminalTurn(params: unknown): { threadId: string; turn: TerminalT
   }
 }
 
+function parseStoredTurn(value: unknown): TerminalTurn | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null
+  if (
+    value.status !== 'completed' &&
+    value.status !== 'interrupted' &&
+    value.status !== 'failed' &&
+    value.status !== 'inProgress'
+  ) {
+    return null
+  }
+  const messages = Array.isArray(value.items)
+    ? value.items.map(parseAgentMessage).filter((item): item is AgentMessage => item !== null)
+    : []
+  const errorMessage = isRecord(value.error) && typeof value.error.message === 'string'
+    ? value.error.message
+    : null
+  return {
+    id: value.id,
+    status: value.status,
+    errorMessage,
+    messages,
+  }
+}
+
+function storedTurnClientIds(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.items)) return []
+  return value.items.flatMap((item) => {
+    if (!isRecord(item) || item.type !== 'userMessage' || typeof item.clientId !== 'string') {
+      return []
+    }
+    return [item.clientId]
+  })
+}
+
 function finalText(turn: TerminalTurn, streamed: Map<string, AgentMessage>): string {
   const messages = new Map(streamed)
   for (const message of turn.messages) messages.set(message.id, message)
@@ -333,6 +372,35 @@ export class CodexAppServerBackend implements AgentBackend {
       return { threadId, turnId: terminal.id, finalText: text }
     } finally {
       this.clearPending(threadId, pending)
+    }
+  }
+
+  async inspectTurn(input: AgentTurnInspectionInput): Promise<AgentTurnInspection> {
+    const result = await this.client.readThread({ threadId: input.threadId, includeTurns: true })
+    const rawTurns = Array.isArray(result.thread.turns) ? result.thread.turns : []
+    let rawTurn: unknown
+    if (input.turnId !== null) {
+      rawTurn = rawTurns.find((turn) => isRecord(turn) && turn.id === input.turnId)
+    } else {
+      const matches = rawTurns.filter((turn) => storedTurnClientIds(turn).includes(input.operationKey))
+      if (matches.length === 1) rawTurn = matches[0]
+    }
+    const turn = parseStoredTurn(rawTurn)
+    if (turn === null) {
+      return { state: 'UNKNOWN', turnId: input.turnId, reason: 'turn_not_found' }
+    }
+    if (turn.status === 'inProgress') {
+      return { state: 'UNKNOWN', turnId: turn.id, reason: 'turn_in_progress' }
+    }
+    if (turn.status === 'failed') return { state: 'FAILED', turnId: turn.id }
+    if (turn.status === 'interrupted') return { state: 'INTERRUPTED', turnId: turn.id }
+    const text = finalText(turn, new Map())
+    if (text.trim().length === 0) {
+      return { state: 'UNKNOWN', turnId: turn.id, reason: 'missing_final_message' }
+    }
+    return {
+      state: 'COMPLETED',
+      result: { threadId: input.threadId, turnId: turn.id, finalText: text },
     }
   }
 

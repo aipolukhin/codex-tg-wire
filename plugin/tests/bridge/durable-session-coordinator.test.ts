@@ -508,6 +508,12 @@ describe('PersonalAlphaCommands', () => {
     const response = await commands.handleCommand(command('new'))
     expect(response.text).toContain('UNKNOWN')
     expect(response.text).toContain('Нельзя')
+    expect(response.text).toContain('/new force')
+
+    const forced = await commands.handleCommand(command('new', 'force'))
+    expect(forced.text).toContain('закрыт вручную')
+    expect(sessions.getTurnByOperationKey('telegram:primary:622:turn')?.state).toBe('FAILED')
+    expect(sessions.getOverview('primary', '7001', 'workspace').binding).toBeNull()
   })
 
   test('/stop interrupts the active backend turn', async () => {

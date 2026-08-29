@@ -165,6 +165,8 @@ export async function bootstrapDurableBridgeService(
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
     })
+    const recovery = await runtime.recoverStartup()
+    options.logger?.info('durable startup recovery completed', recovery)
     const poller = new DurableTelegramPoller(
       identity.botId,
       telegram,

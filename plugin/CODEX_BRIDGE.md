@@ -40,12 +40,31 @@ Personal alpha поддерживает обычный текст и коман�
 
 Bridge-managed Codex threads хранятся отдельно от текущего binding:
 
-- `/new` отвязывает current thread, но не забывает его;
+- `/new` отвязывает current thread, но не забывает его; при `UNKNOWN` нужен явный `/new force`;
 - `/threads` показывает выбранный, доступные и локально архивированные threads;
 - `/switch <thread-id>` выбирает доступный thread; `/resume <thread-id>` явно возвращает локально архивированный;
 - `/archive <thread-id>` локально архивирует thread. Если передан id delivery job, эта же команда выполняет действие problem center.
 
 Switch/archive current thread запрещены при `ACTIVE` или `UNKNOWN` turn. Registry и выбор переживают restart; следующее обычное сообщение продолжает выбранный thread через Codex `thread/resume`.
+
+## Восстановление после рестарта
+
+До запуска polling и workers bridge проверяет каждый turn, оставшийся `ACTIVE`.
+Стабильный `thread/read` с `includeTurns: true` читает сохранённую историю без
+`thread/resume`, подписки или нового model call:
+
+- доказанный `COMPLETED` с final message сохраняется локально, а исходный Telegram update снова проходит обычный idempotent путь и доставляет ответ;
+- `FAILED` и `INTERRUPTED` закрывают исходный update без автоматического повтора;
+- `inProgress`, отсутствующий turn, ошибка чтения или completed без final message становятся `UNKNOWN`; новая работа автоматически не запускается;
+- если ответ `turn/start` потерялся до записи backend turn id, bridge ищет ровно один turn по сохранённому `clientUserMessageId = operationKey`;
+- `/new force` явно помечает `UNKNOWN` как оставленный оператором и отвязывает thread. Обычный `/new` этого не делает.
+
+Server request живёт только в том App Server connection, который его создал.
+Поэтому approval/user-input от прошлого процесса становится `STALE`: ещё не
+отправленная карточка архивируется, уже доставленная редактируется и лишается
+кнопок, а prompt, для которого отправка началась без remote proof, остаётся
+`AMBIGUOUS` в problem center. Ответ на старую кнопку никогда не уходит в новый
+App Server connection.
 
 Problem center показывает только безопасные метаданные delivery jobs, без тела сообщения и transport error detail:
 
@@ -88,4 +107,4 @@ Problem center показывает только безопасные метад
 - первый валидный ответ выигрывает, повторный или callback от старого App Server соединения ничего не разрешает;
 - вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
 
-Это personal alpha: permission-profile/MCP approvals, albums, audio/video/voice, outbound media и recovery активного turn ещё идут следующими срезами roadmap.
+Это personal alpha: permission-profile/MCP approvals, albums, audio/video/voice и outbound media ещё идут следующими срезами roadmap. Durable recovery text/Codex interaction kernel закрыт; media/upload recovery и retention относятся к M4/M5.

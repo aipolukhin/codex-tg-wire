@@ -128,6 +128,11 @@ export interface ThreadResumeParams {
   personality?: Personality | null
 }
 
+export interface ThreadReadParams {
+  threadId: string
+  includeTurns?: boolean
+}
+
 export interface AppServerThread {
   id: string
   [key: string]: unknown
@@ -141,6 +146,10 @@ export interface AppServerTurn {
 export interface ThreadResult {
   thread: AppServerThread
   [key: string]: unknown
+}
+
+export interface ThreadReadResult {
+  thread: AppServerThread
 }
 
 export interface TurnStartParams {

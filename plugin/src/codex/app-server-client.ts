@@ -15,6 +15,8 @@ import type {
   RpcErrorBody,
   ServerNotification,
   ServerRequest,
+  ThreadReadParams,
+  ThreadReadResult,
   ThreadResult,
   ThreadResumeParams,
   ThreadStartParams,
@@ -193,6 +195,10 @@ export class CodexAppServerClient {
 
   resumeThread(params: ThreadResumeParams): Promise<ThreadResult> {
     return this.request<ThreadResult>('thread/resume', params)
+  }
+
+  readThread(params: ThreadReadParams): Promise<ThreadReadResult> {
+    return this.request<ThreadReadResult>('thread/read', params)
   }
 
   startTurn(params: TurnStartParams): Promise<TurnStartResult> {

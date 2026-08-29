@@ -160,20 +160,27 @@ export class PersonalAlphaCommands implements CommandHandler {
 
   private reset(operation: CommandOperation): string {
     const command = operation.command
+    const force = command.args.trim().toLowerCase() === 'force'
     const reset = this.sessions.resetBinding(
       operation.botId,
       command.chatId,
       command.projectId,
       this.backendName,
+      force,
+      this.now(),
     )
     switch (reset.outcome) {
       case 'no_session':
       case 'already_new':
         return 'Новый thread будет создан следующим сообщением.'
       case 'reset':
-        return `Thread ${reset.previousThreadId} отвязан. Следующее сообщение создаст новый.`
+        return reset.abandonedUnknownTurns > 0
+          ? `UNKNOWN turn закрыт вручную, thread ${reset.previousThreadId} отвязан. Следующее сообщение создаст новый.`
+          : `Thread ${reset.previousThreadId} отвязан. Следующее сообщение создаст новый.`
       case 'blocked':
-        return `Нельзя создать новый thread: turn ${reset.turn.backendTurnId ?? reset.turn.id} имеет состояние ${reset.turn.state}.`
+        return reset.turn.state === 'UNKNOWN'
+          ? `Нельзя автоматически отбросить UNKNOWN turn ${reset.turn.backendTurnId ?? reset.turn.id}. Если принимаешь риск незавершённой работы, используй /new force.`
+          : `Нельзя создать новый thread: turn ${reset.turn.backendTurnId ?? reset.turn.id} имеет состояние ${reset.turn.state}.`
     }
   }
 

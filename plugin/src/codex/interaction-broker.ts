@@ -273,6 +273,25 @@ function closeText(state: CodexInteractionRecord['state']): string {
   return state === 'EXPIRED' ? 'Запрос истёк' : 'Запрос уже закрыт'
 }
 
+function telegramMessageId(remoteId: string | null): number | null {
+  const match = remoteId?.match(/^telegram:(\d+)$/)
+  if (match?.[1] === undefined) return null
+  const value = Number(match[1])
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+function payloadChatId(payload: unknown): string | null {
+  if (!isRecord(payload)) return null
+  return typeof payload.chatId === 'string' ? payload.chatId : null
+}
+
+export interface CodexInteractionRecoverySweep {
+  interactions: number
+  retiredPrompts: number
+  closedCards: number
+  ambiguousPrompts: number
+}
+
 export class CodexInteractionBroker implements InteractionHandler {
   readonly connectionId: string
   private readonly backendName: string
@@ -339,6 +358,75 @@ export class CodexInteractionBroker implements InteractionHandler {
       return this.handleApproval(operation, interaction, operation.response)
     }
     return this.handleUserInput(operation, interaction, operation.response)
+  }
+
+  recoverStartup(): CodexInteractionRecoverySweep {
+    const stale = this.interactions.listStaleForRecovery()
+    const sweep: CodexInteractionRecoverySweep = {
+      interactions: stale.length,
+      retiredPrompts: 0,
+      closedCards: 0,
+      ambiguousPrompts: 0,
+    }
+    for (const interaction of stale) {
+      const prefix = interaction.kind === 'USER_INPUT'
+        ? `codex-interaction:${interaction.id}:question:`
+        : `codex-interaction:${interaction.id}:prompt`
+      const jobs = this.outbox.retireBySourcePrefix(
+        prefix,
+        'interaction became stale after App Server restart',
+        this.now(),
+      )
+      let needsNotice = false
+      for (const job of jobs) {
+        if (job.state === 'ARCHIVED') {
+          sweep.retiredPrompts += 1
+          continue
+        }
+        if (job.state === 'AMBIGUOUS') {
+          sweep.ambiguousPrompts += 1
+          needsNotice = true
+          continue
+        }
+        if (job.state !== 'DELIVERED') continue
+        const chatId = payloadChatId(job.payload)
+        const messageId = telegramMessageId(job.remoteId)
+        if (chatId === null || messageId === null) {
+          needsNotice = true
+          continue
+        }
+        this.outbox.enqueue({
+          sourceKey: `codex-interaction:${interaction.id}:restart-close:${job.id}`,
+          sessionId: interaction.sessionId,
+          kind: 'edit',
+          payload: {
+            chatId,
+            messageId,
+            text: '⚠️ Запрос закрыт после перезапуска моста. Повтори действие, если оно ещё нужно.',
+            options: { reply_markup: { inline_keyboard: [] } },
+          },
+          createdAtMs: this.now(),
+        })
+        sweep.closedCards += 1
+      }
+      if (needsNotice) {
+        const context = this.sessions.getContextByThread(interaction.threadId, this.backendName)
+        if (context !== null) {
+          this.outbox.enqueue({
+            sourceKey: `codex-interaction:${interaction.id}:restart-notice`,
+            sessionId: interaction.sessionId,
+            kind: 'send_text',
+            payload: {
+              chatId: context.session.chatId,
+              text: '⚠️ Один запрос Codex мог появиться в Telegram во время перезапуска, но больше не может быть отвечен. Повтори действие, если оно ещё нужно.',
+            },
+            createdAtMs: this.now(),
+          })
+        }
+      }
+      this.interactions.markRecoveryHandled(interaction.id, this.now())
+    }
+    return sweep
   }
 
   close(): void {
@@ -748,6 +836,12 @@ export class CodexInteractionBroker implements InteractionHandler {
 
   private markConnectionStale(): void {
     this.interactions.markConnectionStale(this.connectionId, this.now())
+    try {
+      this.recoverStartup()
+    } catch {
+      // The recovery marker stays NULL until every durable outbox mutation is
+      // recorded, so the next process can safely repeat this pass.
+    }
     for (const id of [...this.timers.keys()]) this.clearTimer(id)
   }
 

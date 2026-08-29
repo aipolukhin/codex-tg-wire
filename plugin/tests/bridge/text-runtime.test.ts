@@ -13,7 +13,11 @@ import type {
   TransportClose,
 } from '../../src/codex/transport.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
-import { SqliteOutboxRepository } from '../../src/durable/sqlite-repositories.js'
+import {
+  SqliteInboxRepository,
+  SqliteOutboxRepository,
+} from '../../src/durable/sqlite-repositories.js'
+import { SqliteSessionRepository } from '../../src/durable/session-repository.js'
 import type { TelegramAttachmentDownload } from '../../src/telegram/durable-attachment-store.js'
 
 const NOW = 1_800_000_000_000
@@ -430,5 +434,70 @@ describe('durable text runtime composition', () => {
         'SELECT state, rejection_reason FROM telegram_attachments',
       ).get(),
     ).toEqual({ state: 'REJECTED', rejection_reason: 'mime_not_allowed' })
+  })
+
+  test('runs startup reconciliation before replaying a completed accepted update', async () => {
+    const update = {
+      update_id: 808,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: 'finish across restart',
+      },
+    }
+    const accepted = runtime.ingest(update, NOW)
+    const inbox = new SqliteInboxRepository(database)
+    inbox.claimNext({ workerId: 'dead-worker', nowMs: NOW, leaseDurationMs: 60_000 })
+    const sessions = new SqliteSessionRepository(database)
+    const operationKey = 'telegram:primary:808:turn'
+    const prepared = sessions.prepareTextOperation({
+      operationKey,
+      inboxUpdateId: accepted.update.id,
+      botId: 'primary',
+      updateId: 808,
+      chatId: '7001',
+      projectId: 'workspace',
+      text: 'finish across restart',
+    }, 'codex', NOW)
+    sessions.markDispatching(prepared.turn.id, 'codex', 'thread-recovered', true, NOW)
+    sessions.markBackendTurnStarted(
+      prepared.turn.id,
+      'turn-recovered',
+      'codex',
+      'thread-recovered',
+      NOW,
+    )
+
+    const recovering = runtime.recoverStartup()
+    const read = await waitForRequest(transport, 'thread/read')
+    transport.emit({
+      id: read.id,
+      result: {
+        thread: {
+          id: 'thread-recovered',
+          turns: [{
+            id: 'turn-recovered',
+            status: 'completed',
+            error: null,
+            items: [{
+              type: 'agentMessage',
+              id: 'answer-recovered',
+              text: 'Recovered through runtime.',
+              phase: 'final_answer',
+            }],
+          }],
+        },
+      },
+    })
+    expect((await recovering).turns).toMatchObject({ candidates: 1, completed: 1 })
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
+    expect(telegram.sent.at(-1)).toEqual({
+      chatId: '7001',
+      text: 'Recovered through runtime.',
+    })
+    expect(
+      transport.sent.some((message) => 'method' in message && message.method === 'turn/start'),
+    ).toBe(false)
   })
 })

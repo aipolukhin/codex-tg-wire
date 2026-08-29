@@ -16,6 +16,8 @@ import type {
   ModelListParams,
   ModelListResult,
   ServerNotification,
+  ThreadReadParams,
+  ThreadReadResult,
   ThreadResumeParams,
   ThreadResult,
   ThreadStartParams,
@@ -30,6 +32,7 @@ import type { TransportClose } from '../../src/codex/transport.js'
 class FakeBackendClient {
   readonly threadStarts: ThreadStartParams[] = []
   readonly threadResumes: ThreadResumeParams[] = []
+  readonly threadReads: ThreadReadParams[] = []
   readonly turnStarts: TurnStartParams[] = []
   readonly interrupts: TurnInterruptParams[] = []
   readonly steers: TurnSteerParams[] = []
@@ -40,6 +43,7 @@ class FakeBackendClient {
   turnIds = new Map<string, string>([['thread-1', 'turn-1']])
   emitDuringTurnStart: (() => void) | undefined
   modelPages: ModelListResult[] = [{ data: [], nextCursor: null }]
+  threadReadResults = new Map<string, ThreadReadResult>()
 
   async listModels(_params: ModelListParams = {}): Promise<ModelListResult> {
     this.modelLists.push(_params)
@@ -56,6 +60,13 @@ class FakeBackendClient {
   async resumeThread(params: ThreadResumeParams): Promise<ThreadResult> {
     this.threadResumes.push(params)
     return { thread: { id: params.threadId } }
+  }
+
+  async readThread(params: ThreadReadParams): Promise<ThreadReadResult> {
+    this.threadReads.push(params)
+    return this.threadReadResults.get(params.threadId) ?? {
+      thread: { id: params.threadId, turns: [] },
+    }
   }
 
   async startTurn(params: TurnStartParams): Promise<TurnStartResult> {
@@ -325,6 +336,81 @@ describe('CodexAppServerBackend text turns', () => {
     ])
     emitCompleted(client, 'thread-existing', 'turn-2', 'legacy final', null)
     expect((await result).finalText).toBe('legacy final')
+    backend.close()
+  })
+
+  test('inspects stored terminal turns without resuming or starting work', async () => {
+    const client = new FakeBackendClient()
+    client.threadReadResults.set('thread-stored', {
+      thread: {
+        id: 'thread-stored',
+        turns: [{
+          id: 'turn-stored',
+          status: 'completed',
+          items: [
+            {
+              type: 'userMessage',
+              id: 'user-stored',
+              clientId: 'telegram:primary:501:turn',
+              content: [],
+            },
+            {
+              type: 'agentMessage',
+              id: 'answer-stored',
+              text: 'Восстановленный ответ',
+              phase: 'final_answer',
+            },
+          ],
+          error: null,
+        }],
+      },
+    })
+    const backend = new CodexAppServerBackend(client)
+
+    expect(await backend.inspectTurn({
+      threadId: 'thread-stored',
+      turnId: null,
+      operationKey: 'telegram:primary:501:turn',
+    })).toEqual({
+      state: 'COMPLETED',
+      result: {
+        threadId: 'thread-stored',
+        turnId: 'turn-stored',
+        finalText: 'Восстановленный ответ',
+      },
+    })
+    expect(client.threadReads).toEqual([{
+      threadId: 'thread-stored',
+      includeTurns: true,
+    }])
+    expect(client.threadResumes).toEqual([])
+    expect(client.turnStarts).toEqual([])
+    backend.close()
+  })
+
+  test('keeps stored in-progress and incomplete completed turns UNKNOWN', async () => {
+    const client = new FakeBackendClient()
+    client.threadReadResults.set('thread-stored', {
+      thread: {
+        id: 'thread-stored',
+        turns: [
+          { id: 'turn-active', status: 'inProgress', items: [], error: null },
+          { id: 'turn-empty', status: 'completed', items: [], error: null },
+        ],
+      },
+    })
+    const backend = new CodexAppServerBackend(client)
+
+    expect(await backend.inspectTurn({
+      threadId: 'thread-stored',
+      turnId: 'turn-active',
+      operationKey: 'op-active',
+    })).toEqual({ state: 'UNKNOWN', turnId: 'turn-active', reason: 'turn_in_progress' })
+    expect(await backend.inspectTurn({
+      threadId: 'thread-stored',
+      turnId: 'turn-empty',
+      operationKey: 'op-empty',
+    })).toEqual({ state: 'UNKNOWN', turnId: 'turn-empty', reason: 'missing_final_message' })
     backend.close()
   })
 

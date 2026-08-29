@@ -34,6 +34,7 @@ export interface CodexInteractionRecord {
   updatedAtMs: number
   expiresAtMs: number
   resolvedAtMs: number | null
+  recoveryHandledAtMs: number | null
   lastError: string | null
 }
 
@@ -77,6 +78,7 @@ interface InteractionRow {
   updated_at_ms: number
   expires_at_ms: number
   resolved_at_ms: number | null
+  recovery_handled_at_ms: number | null
   last_error: string | null
 }
 
@@ -109,6 +111,7 @@ function interactionFromRow(row: InteractionRow): CodexInteractionRecord {
     updatedAtMs: row.updated_at_ms,
     expiresAtMs: row.expires_at_ms,
     resolvedAtMs: row.resolved_at_ms,
+    recoveryHandledAtMs: row.recovery_handled_at_ms,
     lastError: row.last_error,
   }
 }
@@ -301,6 +304,7 @@ export class SqliteCodexInteractionRepository {
     return this.database.run(
       `UPDATE codex_interactions
        SET state = 'STALE', updated_at_ms = ?, resolved_at_ms = ?,
+           recovery_handled_at_ms = NULL,
            last_error = 'App Server connection closed before resolution'
        WHERE connection_id = ? AND state IN ('PENDING', 'RESOLVING')`,
       [nowMs, nowMs, connectionId],
@@ -311,10 +315,32 @@ export class SqliteCodexInteractionRepository {
     return this.database.run(
       `UPDATE codex_interactions
        SET state = 'STALE', updated_at_ms = ?, resolved_at_ms = ?,
+           recovery_handled_at_ms = NULL,
            last_error = 'interaction belongs to a previous App Server connection'
        WHERE connection_id != ? AND state IN ('PENDING', 'RESOLVING')`,
       [nowMs, nowMs, activeConnectionId],
     ).changes
+  }
+
+  listStaleForRecovery(): CodexInteractionRecord[] {
+    return this.database
+      .query<InteractionRow, []>(
+        `SELECT * FROM codex_interactions
+         WHERE state = 'STALE' AND recovery_handled_at_ms IS NULL
+         ORDER BY created_at_ms, id`,
+      )
+      .all()
+      .map(interactionFromRow)
+  }
+
+  markRecoveryHandled(id: string, nowMs: number): CodexInteractionRecord {
+    this.database.run(
+      `UPDATE codex_interactions
+       SET recovery_handled_at_ms = ?, updated_at_ms = ?
+       WHERE id = ? AND state = 'STALE' AND recovery_handled_at_ms IS NULL`,
+      [nowMs, nowMs, id],
+    )
+    return this.require(id)
   }
 
   private require(id: string): CodexInteractionRecord {

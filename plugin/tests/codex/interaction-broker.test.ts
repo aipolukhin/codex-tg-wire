@@ -324,6 +324,8 @@ describe('CodexInteractionBroker', () => {
     client.emitClose()
     const live = interactions.getByServerRequest('connection-1', 'approval-live')
     expect(live?.state).toBe('STALE')
+    expect(live?.recoveryHandledAtMs).toBe(NOW)
+    expect(outbox.getBySourceKey(`codex-interaction:${live?.id}:prompt`)?.state).toBe('ARCHIVED')
   })
 
   test('fails closed when an approval card expires', async () => {
@@ -354,7 +356,7 @@ describe('CodexInteractionBroker', () => {
     )
   })
 
-  test('startup invalidates pending requests left by a killed connection', () => {
+  test('startup invalidates old requests and closes or retires their Telegram prompts', () => {
     const context = sessions.getContextByThread('thread-1')
     if (context === null) throw new Error('test session is not bound')
     const abandoned = interactions.create({
@@ -369,12 +371,123 @@ describe('CodexInteractionBroker', () => {
       createdAtMs: NOW - 1_000,
       expiresAtMs: NOW + 60_000,
     }).interaction
+    const deliveredPrompt = outbox.enqueue({
+      sourceKey: `codex-interaction:${abandoned.id}:prompt`,
+      sessionId: abandoned.sessionId,
+      kind: 'send_text',
+      payload: {
+        chatId: '7001',
+        text: 'old approval',
+        options: { reply_markup: { inline_keyboard: [[{ text: 'Allow', callback_data: 'old' }]] } },
+      },
+      createdAtMs: NOW - 1_000,
+    }).job
+    outbox.claimNext({ workerId: 'sender-old', nowMs: NOW - 999, leaseDurationMs: 60_000 })
+    outbox.markSendStarted(deliveredPrompt.id, 'sender-old', NOW - 998)
+    outbox.markDelivered(deliveredPrompt.id, 'sender-old', 'telegram:55', NOW - 997)
 
     const restarted = new CodexInteractionBroker(client, interactions, sessions, outbox, {
       connectionId: 'connection-restarted',
       now: () => NOW,
     })
     expect(interactions.get(abandoned.id)?.state).toBe('STALE')
+    expect(restarted.recoverStartup()).toEqual({
+      interactions: 1,
+      retiredPrompts: 0,
+      closedCards: 1,
+      ambiguousPrompts: 0,
+    })
+    expect(interactions.get(abandoned.id)).toMatchObject({
+      state: 'STALE',
+      recoveryHandledAtMs: NOW,
+    })
+    expect(outbox.getBySourceKey(
+      `codex-interaction:${abandoned.id}:restart-close:${deliveredPrompt.id}`,
+    )?.payload).toEqual({
+      chatId: '7001',
+      messageId: 55,
+      text: '⚠️ Запрос закрыт после перезапуска моста. Повтори действие, если оно ещё нужно.',
+      options: { reply_markup: { inline_keyboard: [] } },
+    })
+    expect(restarted.recoverStartup().interactions).toBe(0)
+    restarted.close()
+  })
+
+  test('archives an unsent stale prompt before outbound workers can deliver it', () => {
+    const context = sessions.getContextByThread('thread-1')
+    if (context === null) throw new Error('test session is not bound')
+    const abandoned = interactions.create({
+      connectionId: 'connection-killed',
+      serverRequestId: 'old-unsent',
+      sessionId: context.session.id,
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'old-unsent-item',
+      kind: 'USER_INPUT',
+      request: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'old-unsent-item' },
+      createdAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 60_000,
+    }).interaction
+    const prompt = outbox.enqueue({
+      sourceKey: `codex-interaction:${abandoned.id}:question:0`,
+      sessionId: abandoned.sessionId,
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'old question' },
+      createdAtMs: NOW - 1_000,
+    }).job
+
+    const restarted = new CodexInteractionBroker(client, interactions, sessions, outbox, {
+      connectionId: 'connection-restarted',
+      now: () => NOW,
+    })
+    expect(restarted.recoverStartup()).toMatchObject({
+      interactions: 1,
+      retiredPrompts: 1,
+    })
+    expect(outbox.get(prompt.id)?.state).toBe('ARCHIVED')
+    restarted.close()
+  })
+
+  test('quarantines an in-flight stale prompt as AMBIGUOUS and sends a safe notice', () => {
+    const context = sessions.getContextByThread('thread-1')
+    if (context === null) throw new Error('test session is not bound')
+    const abandoned = interactions.create({
+      connectionId: 'connection-killed',
+      serverRequestId: 'old-in-flight',
+      sessionId: context.session.id,
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'old-flight-item',
+      kind: 'FILE_APPROVAL',
+      request: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'old-flight-item' },
+      createdAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 60_000,
+    }).interaction
+    const prompt = outbox.enqueue({
+      sourceKey: `codex-interaction:${abandoned.id}:prompt`,
+      sessionId: abandoned.sessionId,
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'possibly sent approval' },
+      createdAtMs: NOW - 1_000,
+    }).job
+    outbox.claimNext({ workerId: 'sender-dead', nowMs: NOW - 999, leaseDurationMs: 60_000 })
+    outbox.markSendStarted(prompt.id, 'sender-dead', NOW - 998)
+
+    const restarted = new CodexInteractionBroker(client, interactions, sessions, outbox, {
+      connectionId: 'connection-restarted',
+      now: () => NOW,
+    })
+    expect(restarted.recoverStartup()).toMatchObject({
+      interactions: 1,
+      ambiguousPrompts: 1,
+    })
+    expect(outbox.get(prompt.id)?.state).toBe('AMBIGUOUS')
+    expect(outbox.getBySourceKey(
+      `codex-interaction:${abandoned.id}:restart-notice`,
+    )?.payload).toMatchObject({
+      chatId: '7001',
+      text: expect.stringContaining('больше не может быть отвечен'),
+    })
     restarted.close()
   })
 

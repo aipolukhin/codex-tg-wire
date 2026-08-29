@@ -188,9 +188,30 @@ export interface AgentTurnLifecycle {
   onTurnStarted?(threadId: string, turnId: string): void | Promise<void>
 }
 
+export type AgentTurnInspection =
+  | { state: 'COMPLETED'; result: TextTurnResult }
+  | { state: 'FAILED'; turnId: string }
+  | { state: 'INTERRUPTED'; turnId: string }
+  | {
+      state: 'UNKNOWN'
+      turnId: string | null
+      reason:
+        | 'turn_not_found'
+        | 'turn_in_progress'
+        | 'missing_final_message'
+        | 'inspection_failed'
+    }
+
+export interface AgentTurnInspectionInput {
+  threadId: string
+  turnId: string | null
+  operationKey: string
+}
+
 export interface AgentBackend {
   listModels(): Promise<AgentModel[]>
   runTextTurn(input: AgentTextTurnInput, lifecycle?: AgentTurnLifecycle): Promise<TextTurnResult>
+  inspectTurn?(input: AgentTurnInspectionInput): Promise<AgentTurnInspection>
   interruptTurn(threadId: string, turnId: string): Promise<void>
   steerTurn(input: {
     operationKey: string

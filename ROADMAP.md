@@ -12,7 +12,10 @@
 - [x] Codex CLI compatibility manifest и deterministic schema fingerprint.
 - [x] Fake subprocess tests и smoke против реального Codex CLI `0.149.1`.
 - [x] Зафиксировано: `thread/start` без первого turn не переживает restart — rollout ещё не создан.
-- [ ] Проверить restart во время active turn, approval и user-input request.
+- [x] Закрыт restart recovery active turn/approval/user-input: `thread/read(includeTurns)`
+  по официальному contract и fault fixtures доказывает terminal result без resume;
+  `inProgress` остаётся `UNKNOWN`, старые server requests становятся `STALE`, а их
+  Telegram prompts закрываются или карантинятся.
 - [x] Начат M1: SQLite/WAL migrations, durable inbox/outbox, leases, dedupe, TTL и crash recovery.
 - [x] Добавлены provider-neutral contracts и fake-backed durable text workers с fault tests.
 - [x] Добавлен реальный Codex App Server `AgentBackend` для create/resume text turns и terminal events.
@@ -194,6 +197,15 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 - `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server. **Готово:** выбор проекта и overrides хранятся в SQLite по bot/chat/project; `/cwd` принимает только id из `projects[]`, а `danger-full-access` доступен только при явном включении в `allowedSandboxModes`.
 - Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn. **Готов первый срез:** одиночные photo и image documents идут нативным `localImage`, разрешённые text/PDF/JSON/XML/CSV documents — через приватный durable file и bridge-generated path metadata. Albums, audio/video и outbound media остаются M4.
 - Неизвестные App Server events сохраняются диагностически и безопасно игнорируются, не валят процесс. **Готово:** каталог известных методов проверяется вместе с generated schema, а unknown method агрегируется в bounded SQLite-журнал без params/body.
+- Restart recovery не запускает заменяющий turn. **Готово:** startup reconciler читает
+  сохранённый turn через стабильный `thread/read(includeTurns: true)`; `COMPLETED`
+  возвращается в исходную inbox operation, `FAILED/INTERRUPTED` закрываются без
+  повтора, а `inProgress`, отсутствующий turn или completed без доказанного final
+  переходят в `UNKNOWN`. Потерянный ответ `turn/start` коррелируется по
+  `clientUserMessageId = operationKey`. Старые approval/user-input requests получают
+  `STALE`; недоставленные карточки архивируются, доставленные редактируются без
+  кнопок, post-send uncertainty остаётся `AMBIGUOUS`. `/new force` — явный
+  операторский выход из `UNKNOWN`, обычный `/new` по-прежнему fail-closed.
 
 Gate M3: все поддержанные flows покрыты record/replay fixtures и contract tests; upgrade Codex CLI либо проходит schema check, либо блокируется понятной ошибкой.
 

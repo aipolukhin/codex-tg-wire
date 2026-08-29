@@ -135,6 +135,7 @@ export interface OutboxRepository {
   markDelivered(id: string, workerId: string, remoteId: string, nowMs: number): DeliveryJob
   failLease(id: string, workerId: string, error: string, nowMs: number, retryAtMs?: number): LeaseFailure
   recoverExpiredLeases(nowMs: number): RecoveryResult
+  retireBySourcePrefix(sourcePrefix: string, reason: string, nowMs: number): DeliveryJob[]
   listProblems(state: DeliveryProblemState, limit?: number): DeliveryJob[]
   actOnProblem(input: DeliveryProblemActionInput): DeliveryProblemActionResult
 }

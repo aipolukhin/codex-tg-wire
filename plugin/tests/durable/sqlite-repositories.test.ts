@@ -69,7 +69,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(9)
+    expect(migrations?.count).toBe(10)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -102,6 +102,11 @@ describe('durable database migrations', () => {
       thread_id TEXT NOT NULL,
       state TEXT NOT NULL,
       created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )`)
+    legacy.run(`CREATE TABLE codex_interactions (
+      id TEXT PRIMARY KEY,
+      state TEXT NOT NULL,
       updated_at_ms INTEGER NOT NULL
     )`)
     legacy.run(

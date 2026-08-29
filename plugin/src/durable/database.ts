@@ -282,6 +282,15 @@ const MIGRATIONS: readonly Migration[] = [
         ON codex_unhandled_notifications (last_seen_at_ms)`,
     ],
   },
+  {
+    version: 10,
+    name: 'codex_interaction_recovery_marker',
+    statements: [
+      'ALTER TABLE codex_interactions ADD COLUMN recovery_handled_at_ms INTEGER',
+      `CREATE INDEX codex_interactions_recovery_idx
+        ON codex_interactions (state, recovery_handled_at_ms, updated_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

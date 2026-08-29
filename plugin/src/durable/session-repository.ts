@@ -74,9 +74,15 @@ export interface ThreadSessionContext {
   binding: ThreadBindingRecord
 }
 
+export interface ActiveTurnRecoveryCandidate {
+  session: SessionRecord
+  binding: ThreadBindingRecord | null
+  turn: TurnRecord
+}
+
 export type ResetBindingResult =
   | { outcome: 'no_session' | 'already_new' }
-  | { outcome: 'reset'; previousThreadId: string }
+  | { outcome: 'reset'; previousThreadId: string; abandonedUnknownTurns: number }
   | { outcome: 'blocked'; turn: TurnRecord }
 
 export type SelectThreadResult =
@@ -377,13 +383,15 @@ export class SqliteSessionRepository {
     state: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN',
     errorName: string,
     nowMs: number,
+    backendTurnId: string | null = null,
   ): TurnRecord {
     const finishedAtMs = state === 'UNKNOWN' ? null : nowMs
     const changed = this.database.run(
       `UPDATE turns
-       SET state = ?, final_response_json = ?, finished_at_ms = ?
+       SET state = ?, backend_turn_id = COALESCE(?, backend_turn_id),
+           final_response_json = ?, finished_at_ms = ?
        WHERE id = ? AND state = 'ACTIVE'`,
-      [state, JSON.stringify({ error: errorName }), finishedAtMs, localTurnId],
+      [state, backendTurnId, JSON.stringify({ error: errorName }), finishedAtMs, localTurnId],
     ).changes
     if (changed !== 1) {
       throw new SessionStateConflictError(`turn ${localTurnId} cannot transition to ${state}`)
@@ -400,6 +408,23 @@ export class SqliteSessionRepository {
 
   getTurnByOperationKey(operationKey: string): TurnRecord | null {
     return this.findTurnByOperationKey(operationKey)
+  }
+
+  listActiveTurnsForRecovery(backend = 'codex'): ActiveTurnRecoveryCandidate[] {
+    return this.database
+      .query<TurnRow, []>(
+        `SELECT * FROM turns WHERE state = 'ACTIVE'
+         ORDER BY created_at_ms, id`,
+      )
+      .all()
+      .map((row) => {
+        const turn = turnFromRow(row)
+        return {
+          turn,
+          session: this.requireSession(turn.sessionId),
+          binding: this.findBinding(turn.sessionId, backend),
+        }
+      })
   }
 
   getBinding(sessionId: string, backend = 'codex'): ThreadBindingRecord | null {
@@ -544,16 +569,37 @@ export class SqliteSessionRepository {
     chatId: string,
     projectId: string,
     backend: string,
+    abandonUnknown = false,
+    nowMs = Date.now(),
   ): ResetBindingResult {
     return this.database.transaction((): ResetBindingResult => {
       const session = this.findSession(botId, chatId, projectId)
       if (session === null) return { outcome: 'no_session' }
       const blocking = this.findBlockingTurn(session.id)
-      if (blocking !== null) return { outcome: 'blocked', turn: blocking }
+      if (blocking?.state === 'ACTIVE' || (blocking?.state === 'UNKNOWN' && !abandonUnknown)) {
+        return { outcome: 'blocked', turn: blocking }
+      }
+      let abandonedUnknownTurns = 0
+      if (blocking?.state === 'UNKNOWN') {
+        abandonedUnknownTurns = this.database.run(
+          `UPDATE turns
+           SET state = 'FAILED', finished_at_ms = ?,
+               final_response_json = '{"error":"OperatorAbandonedUnknownTurn"}'
+           WHERE session_id = ? AND state = 'UNKNOWN'`,
+          [nowMs, session.id],
+        ).changes
+      }
       const binding = this.findBinding(session.id, backend)
       if (binding === null) return { outcome: 'already_new' }
+      if (binding.state === 'PROVISIONAL') {
+        this.database.run(
+          `UPDATE thread_registry SET state = 'BROKEN', updated_at_ms = ?
+           WHERE session_id = ? AND backend = ? AND thread_id = ?`,
+          [nowMs, session.id, backend, binding.threadId],
+        )
+      }
       this.database.run('DELETE FROM thread_bindings WHERE id = ?', [binding.id])
-      return { outcome: 'reset', previousThreadId: binding.threadId }
+      return { outcome: 'reset', previousThreadId: binding.threadId, abandonedUnknownTurns }
     }).immediate()
   }
 

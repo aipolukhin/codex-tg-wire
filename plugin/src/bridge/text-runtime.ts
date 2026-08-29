@@ -5,7 +5,10 @@ import {
   CodexAppServerBackend,
   type CodexAppServerBackendOptions,
 } from '../codex/app-server-backend.js'
-import { CodexInteractionBroker } from '../codex/interaction-broker.js'
+import {
+  CodexInteractionBroker,
+  type CodexInteractionRecoverySweep,
+} from '../codex/interaction-broker.js'
 import type {
   TelegramUpdateInput,
   IngestResult,
@@ -47,6 +50,10 @@ import {
 } from './outbox-delivery-worker.js'
 import { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import type { AgentApprovalPolicy, AgentSandboxMode } from './contracts.js'
+import {
+  StartupTurnRecovery,
+  type TurnRecoverySweep,
+} from './startup-recovery.js'
 
 export interface DurableTextRuntimeOptions {
   database: Database
@@ -70,6 +77,10 @@ export interface DurableTextRuntime {
   processInboundOnce(): Promise<InboxRunResult>
   deliverOutboundOnce(): Promise<DeliveryRunResult>
   recoverExpiredLeases(): LeaseRecoverySweep
+  recoverStartup(): Promise<{
+    turns: TurnRecoverySweep
+    interactions: CodexInteractionRecoverySweep
+  }>
   close(): void
 }
 
@@ -216,6 +227,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     workerId: options.outboxWorker?.workerId ?? 'outbox-1',
   })
   const reaper = new DurableLeaseReaper(inbox, outbox)
+  const startupRecovery = new StartupTurnRecovery(sessions, inbox, outbox, backend)
 
   return {
     ingest(update: unknown, receivedAtMs = Date.now()): IngestResult {
@@ -233,6 +245,11 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     processInboundOnce: () => inbound.runOnce(),
     deliverOutboundOnce: () => outbound.runOnce(),
     recoverExpiredLeases: () => reaper.runOnce(),
+    async recoverStartup() {
+      const interactionSweep = interactions.recoverStartup()
+      const turnSweep = await startupRecovery.run()
+      return { turns: turnSweep, interactions: interactionSweep }
+    },
     close(): void {
       interactions.close()
       backend.close()

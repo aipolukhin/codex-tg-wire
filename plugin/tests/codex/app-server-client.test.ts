@@ -319,30 +319,40 @@ describe('CodexAppServerClient typed operations', () => {
     transport.emit({ id: 2, result: { thread: { id: 'thr_1' } } })
     await start
 
+    const read = client.readThread({ threadId: 'thr_1', includeTurns: true })
+    await Promise.resolve()
+    expect(transport.sent.at(-1)).toEqual({
+      id: 3,
+      method: 'thread/read',
+      params: { threadId: 'thr_1', includeTurns: true },
+    })
+    transport.emit({ id: 3, result: { thread: { id: 'thr_1', turns: [] } } })
+    await read
+
     const turn = client.startTurn({
       threadId: 'thr_1',
       input: [{ type: 'text', text: 'Run tests', text_elements: [] }],
     })
     await Promise.resolve()
     expect(transport.sent.at(-1)).toEqual({
-      id: 3,
+      id: 4,
       method: 'turn/start',
       params: {
         threadId: 'thr_1',
         input: [{ type: 'text', text: 'Run tests', text_elements: [] }],
       },
     })
-    transport.emit({ id: 3, result: { turn: { id: 'turn_1' } } })
+    transport.emit({ id: 4, result: { turn: { id: 'turn_1' } } })
     await turn
 
     const interrupt = client.interruptTurn({ threadId: 'thr_1', turnId: 'turn_1' })
     await Promise.resolve()
     expect(transport.sent.at(-1)).toEqual({
-      id: 4,
+      id: 5,
       method: 'turn/interrupt',
       params: { threadId: 'thr_1', turnId: 'turn_1' },
     })
-    transport.emit({ id: 4, result: {} })
+    transport.emit({ id: 5, result: {} })
     await interrupt
   })
 })

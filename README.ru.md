@@ -25,6 +25,13 @@ Telegram Bot API
         └──── problem center ◄── durable outbox
 ```
 
+Слоя tmux или terminal mirror здесь нет. Telegram — UI, наша SQLite отвечает
+за recovery доставки и control state, а полную возобновляемую историю thread
+хранит сам Codex в локальном `CODEX_HOME`. Процесс App Server одноразовый: после
+рестарта bridge подключается через `thread/read`/`thread/resume`; model requests
+уходят в OpenAI, но Telegram и наша SQLite не изображают второй полный Codex
+transcript.
+
 ## Зачем codex-tg-wire
 
 Простой мост умеет вызвать Codex и переслать ответ. Настоящие проблемы
@@ -46,8 +53,15 @@ codex-tg-wire не обещает невозможный end-to-end exactly-once
 ## Возможности
 
 - постоянные Codex threads: `/threads`, `/switch`, `/resume`, `/archive`, `/new`;
+- handoff нативных Codex-сессий: `/sessions`, `/attach`, `/handback`, `/rename`,
+  `/unarchive`, `/fork`, `/compact`;
 - `/stop`, `/steer` и restart-safe FIFO-очередь turns;
-- per-project `/model`, `/effort`, `/sandbox`, `/approval` и allowlisted `/cwd`;
+- единая кнопочная `/settings` для model, effort, sandbox, approval, allowlisted
+  cwd и optional Guided Plan gate;
+- управление аккаунтом: `/auth`, device-code `/login`, `/limits`, `/usage`, `/version`;
+- inspection: последний `/diff`, allowlisted `/file` и нативный inline `/review`;
+- reply-to-result routing, явный выбор при занятом turn и durable flow
+  plan → revise → confirm → execute;
 - durable command/file/permission approvals и user-input вопросы;
 - MCP elicitation: typed forms и HTTPS flows без credentials в URL;
 - rich Telegram HTML, ordered chunks, HUD, progress и heartbeat;
@@ -56,6 +70,18 @@ codex-tg-wire не обещает невозможный end-to-end exactly-once
 - обязательные user/chat allowlists, secret redaction и fail-closed policy gates;
 - systemd и non-root read-only Docker;
 - doctor, health/readiness/watchdog, backup/restore, retention, SBOM и atomic upgrade/rollback.
+
+### Telegram control plane
+
+| Зона | Команды и поведение |
+|---|---|
+| Аккаунт | `/auth`, `/login`, `/limits`, `/usage`, `/version` используют нативные account methods App Server; бот не просит пароль или token. |
+| Сессии | `/sessions [archived] [search]`, `/attach <id>`, `/handback`, `/rename`, `/unarchive`, `/fork`, `/compact` работают с локальным thread store Codex и ограничены cwd выбранного проекта. |
+| Настройки | `/settings` показывает inline controls для model, effort, sandbox, approval, project и Guided Plan. Старые текстовые команды остаются. |
+| Занятый turn | Второй prompt предлагает steer, durable queue, stop-and-replace или cancel. Выбор сохраняется и обрабатывается идемпотентно. |
+| Inspection | `/diff [path]`, `/file [--all] <path>` и `/review [uncommitted\|base <branch>\|commit <sha>\|custom <text>]`. File path разрешается только внутри настроенного project root. |
+| Guided Plan | `/plan on` составляет план под принудительными `read-only` + `approvalPolicy=never`, затем ждёт подтверждения в Telegram. План можно поправить, выполнить или отменить; state переживает restart. |
+| Reply routing | Reply на доставленный результат Codex продолжает именно тот thread, который создал Telegram-сообщение, даже после переключения session. |
 
 ## Установка
 

@@ -83,12 +83,16 @@ turn queue, Codex thread bindings, approvals, callbacks и App Server recovery.
 
 - [Gan-Xing/telegram-codex-app-bridge](https://github.com/Gan-Xing/telegram-codex-app-bridge) —
   практический mapping App Server threads/turns, approvals, user input и
-  Telegram controls. Не взята модель, где polling cursor зависит от полного
-  завершения обработки: codex-tg-wire сначала фиксирует raw update, затем
-  продвигает offset.
+  Telegram controls. M6.5 также использует как поведенческие референсы account
+  status/login, native session handoff, inline settings, diff/review и явный
+  busy-turn выбор. Код и state model не копировались: все действия проведены
+  через provider-neutral contracts, SQLite interactions и durable outbox. Не
+  взята модель, где polling cursor зависит от полного завершения обработки:
+  codex-tg-wire сначала фиксирует raw update, затем продвигает offset.
 - [woosungchoi/codex-telegram-bot](https://github.com/woosungchoi/codex-telegram-bot) —
-  сценарии очереди и восстановления прерванных Codex jobs. Не взяты JSON/JSONL
-  state files как транзакционная база и эвристический запуск замещающего turn.
+  сценарии очереди, reply-oriented продолжения и восстановления прерванных
+  Codex jobs. Не взяты JSON/JSONL state files как транзакционная база и
+  эвристический запуск замещающего turn.
 
 ## OpenAI Codex App Server
 
@@ -110,6 +114,10 @@ transport не объявлен поддерживаемым.
   session coordinator и startup reconciler.
 - Durable approval/user-input/MCP interaction broker с restart/stale rules.
 - Thread registry, project settings, problem center и audit ledger.
+- Native account/session commands, cwd-confined handoff, inline settings и
+  exact Telegram-message → Codex-thread route registry.
+- Persisted busy choices, turn-diff artifacts, safe file/review controls и
+  Guided Plan state machine.
 - Durable Telegram poller, gateway, attachment store, outbound media/album path,
   rate limiter и voice adapter.
 - HUD/event projector, heartbeat и unknown-notification journal.

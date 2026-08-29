@@ -24,6 +24,13 @@ Telegram Bot API
         └──── problem center ◄── durable outbox
 ```
 
+There is no tmux or terminal-mirroring layer. Telegram is the UI, bridge SQLite
+owns delivery/control recovery, and Codex's own local `CODEX_HOME` store owns
+the complete resumable thread history. The App Server process is disposable:
+after restart the bridge reconnects with `thread/read`/`thread/resume`; model
+requests still go to OpenAI, but Telegram and bridge SQLite are not treated as
+a second full Codex transcript.
+
 ## Why codex-tg-wire
 
 A basic bridge can call Codex and forward its answer. The hard part begins when
@@ -46,8 +53,15 @@ silently duplicating work.
 ## Features
 
 - persistent Codex threads: `/threads`, `/switch`, `/resume`, `/archive`, `/new`;
+- native Codex session handoff: `/sessions`, `/attach`, `/handback`, `/rename`,
+  `/unarchive`, `/fork`, `/compact`;
 - turn controls: `/stop`, `/steer`, restart-safe FIFO queue;
-- per-project `/model`, `/effort`, `/sandbox`, `/approval` and allowlisted `/cwd`;
+- one-button `/settings` for per-project model, effort, sandbox, approval,
+  allowlisted cwd and the optional Guided Plan gate;
+- account controls: `/auth`, device-code `/login`, `/limits`, `/usage`, `/version`;
+- inspection tools: latest `/diff`, allowlisted `/file` and native inline `/review`;
+- reply-to-result routing, explicit busy-turn choices and a durable plan → revise →
+  confirm → execute flow;
 - durable command/file/permission approvals and user-input questions;
 - MCP elicitation with typed forms and credential-free HTTPS flows;
 - rich Telegram HTML, ordered chunks, HUD, progress and heartbeat;
@@ -56,6 +70,18 @@ silently duplicating work.
 - deny-by-default user/chat allowlists, secret redaction and fail-closed policy gates;
 - systemd and non-root read-only Docker packaging;
 - doctor, health/readiness/watchdog, backup/restore, retention, SBOM and atomic upgrade/rollback.
+
+### Telegram control plane
+
+| Area | Commands and behavior |
+|---|---|
+| Account | `/auth`, `/login`, `/limits`, `/usage`, `/version` use native App Server account methods; the bot never asks for a password or token. |
+| Sessions | `/sessions [archived] [search]`, `/attach <id>`, `/handback`, `/rename`, `/unarchive`, `/fork`, `/compact` operate on Codex's local thread store and remain restricted to the selected project's cwd. |
+| Settings | `/settings` renders inline controls for model, effort, sandbox, approval, project and Guided Plan. Existing text commands remain available. |
+| Busy turn | A second prompt offers steer, durable queue, stop-and-replace or cancel instead of guessing intent. The selected action is persisted and idempotent. |
+| Inspection | `/diff [path]`, `/file [--all] <path>` and `/review [uncommitted\|base <branch>\|commit <sha>\|custom <text>]`. File paths are resolved beneath the configured project root. |
+| Guided Plan | `/plan on` drafts under forced `read-only` + `approvalPolicy=never`, then waits for Telegram confirmation. The owner can revise, execute or cancel; state survives restart. |
+| Reply routing | Replying to a delivered Codex result continues the exact thread that produced that Telegram message, even after switching sessions. |
 
 ## Install
 

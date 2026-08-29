@@ -6,6 +6,19 @@ Claude package version is not the codex-tg-wire release version.
 
 ## [Unreleased]
 
+### Telegram control plane (M6.5)
+
+- Added native account status, device-code login, rate limits, token usage and
+  bridge/Codex version commands.
+- Added cwd-filtered native Codex session discovery, attach/local handback,
+  rename, unarchive, fork and compact operations.
+- Added inline project settings, persisted busy-turn choices and exact
+  reply-to-thread routing.
+- Added durable turn-diff capture, safe project-file inspection, outbound file
+  delivery and native inline review targets.
+- Added an optional restart-safe Guided Plan gate with revise, confirm, execute
+  and cancel actions.
+
 ### Required before stable v1.0
 
 - Complete a clean operator installation from a published artifact.

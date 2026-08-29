@@ -2,6 +2,13 @@
 
 Это отдельный durable bridge-сервис, а не Claude Code channel runtime. Он принимает Telegram update в SQLite, запускает turn через Codex App Server и выполняет Telegram mutations только через durable outbox. Markdown финального ответа преобразуется в проверенный Telegram HTML; длинный ответ становится упорядоченной цепочкой сообщений до 4000 символов каждое. Media/file jobs используют content-addressed private spool и повторно проверяются перед каждой попыткой.
 
+Tmux и промежуточного terminal transcript в Codex runtime нет. Полный thread
+принадлежит локальному хранилищу Codex (`CODEX_HOME`), Telegram показывает его
+проекцию, а bridge SQLite хранит только нужные для доставки/recovery requests,
+results, ids, settings и interaction state. Retention scrub очищает завершённые
+busy/plan payloads, старые diffs и reply routes вместе с остальными durable
+payloads; активные control interactions не очищаются до завершения.
+
 ## Запуск
 
 Требования: Bun, установленный и авторизованный `codex`, Telegram bot token и собственные Telegram user/chat id.
@@ -52,6 +59,40 @@ Bridge-managed Codex threads хранятся отдельно от текуще
 - `/archive <thread-id>` локально архивирует thread. Если передан id delivery job, эта же команда выполняет действие problem center.
 
 Switch/archive current thread запрещены при `ACTIVE` или `UNKNOWN` turn. Registry и выбор переживают restart; следующее обычное сообщение продолжает выбранный thread через Codex `thread/resume`.
+
+## M6.5 control plane
+
+`/settings` объединяет model, effort, sandbox, approval, project и optional
+Guided Plan в inline keyboard. Значения остаются per bot/chat/project в SQLite;
+callback не несёт filesystem path или новых permissions, а только выбирает
+заранее разрешённое значение.
+
+Native App Server surface доступен без обхода durable ingress/egress:
+
+- `/auth`, `/login`, `/limits`, `/usage`, `/version` читают account state и
+  запускают ChatGPT device-code login; credential через Telegram не передаётся;
+- `/sessions [archived] [search]` показывает только sessions с cwd выбранного
+  проекта; `/attach`, `/rename`, `/unarchive`, `/fork`, `/compact` проверяют
+  thread через тот же cwd-filtered `thread/list`;
+- `/handback` печатает shell-quoted `codex resume <thread-id>` для продолжения
+  текущей сессии в локальном terminal;
+- `/diff [path]` читает последний persisted `turn/diff/updated`, `/file <path>`
+  даёт bounded text preview, `/file --all <path>` регистрирует разрешённый файл
+  в durable media spool, `/review` запускает stable `review/start` inline.
+
+Если thread занят, обычный prompt сохраняется как control interaction и
+владелец явно выбирает steer, очередь, stop-and-replace или cancel. Callback
+идемпотентен; падение процесса оставляет действие для retry, а не теряет prompt.
+После доказанной доставки финала сохраняется route `(bot, chat, message_id) →
+(project, thread)`, поэтому Telegram reply продолжает thread, который создал
+ответ, а не случайно выбранный позже.
+
+`/plan on` включает Guided Plan. Planning и revision turns получают не только
+instruction, но и принудительные `sandbox=read-only` + `approvalPolicy=never`:
+до подтверждения App Server физически не выдаёт write/escalation path. Результат
+сохраняется до показа кнопок; execute, revise и cancel — отдельные durable
+transitions. Выполнение начинается только после подтверждения и продолжает тот
+же Codex thread уже с обычной project execution policy.
 
 ## HUD и heartbeat
 

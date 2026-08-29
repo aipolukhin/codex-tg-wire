@@ -1,6 +1,6 @@
 # codex-tg-wire: roadmap durable Telegram ↔ Codex bridge
 
-Статус: M6 implementation complete; public `v1.0` ждёт live canary
+Статус: M6.5 implementation complete; public `v1.0` ждёт live canary
 Цель первого стабильного релиза: self-hosted Telegram-клиент для Codex с UX-паттернами Dashi и гарантиями доставки, перенесёнными из Telemax.
 
 ## Статус реализации — 2026-08-29
@@ -39,6 +39,9 @@
 - [x] Media fault gate покрывает retry до `send_started`, `AMBIGUOUS` после него, restart на upload boundary, tamper detection, единый album turn/proof и запрет автоматического повтора неизвестного результата.
 - [x] M5 implementation закрыт production doctor/backup/restore/readiness/watchdog/retention/rate-limit/chaos/supply-chain срезом; внешний 72-часовой soak ещё ожидается.
 - [x] M6 implementation закрыт: systemd/Docker, credential files, safe init, atomic upgrade/rollback, v1 compatibility matrix, security contract и artifact install→restart→resume acceptance.
+- [x] M6.5 закрыт: native account/session control plane, inline settings,
+  explicit busy choices, reply-to-thread routing, diff/file/review и durable
+  Guided Plan gate.
 
 ## 1. Что именно мы строим
 
@@ -123,6 +126,7 @@ Telegram Bot API
 | M4. Dashi UX port | Controls, streaming UI, media/files, HUD, heartbeat, redaction | 5–8 дней |
 | M5. Hardening и RC | Security, chaos/E2E, migrations, observability, packaging | 5–7 дней |
 | M6. `v1.0` | Документация, upgrade path, release artifacts, soak | 2–4 дня |
+| M6.5. Telegram control plane | Native sessions/account, inspection, reply routing, busy choices, Guided Plan | готово |
 
 Итого: примерно 5–7 недель до уверенного `v1.0`; полезный personal alpha — в конце M1, то есть примерно через 1.5 недели.
 
@@ -255,6 +259,30 @@ Gate M5: **ожидает 72-часовой live soak.** Harness и коротк
 Gate M6 implementation: **пройден герметично из release artifact.** Safe init создаёт чистую установку, doctor проходит, первый update создаёт thread, SQLite физически закрывается/открывается, follow-up продолжает тот же durable thread, обе доставки имеют remote proof. Команда: `bun run acceptance:codex:artifact`.
 
 Public Gate `v1.0`: ожидает реальный operator walkthrough и M5 72-часовой Telegram/Codex live soak. До этого артефакт остаётся hardened pre-release, даже при полностью закрытом M6 implementation.
+
+### M6.5 — Telegram control plane
+
+- [x] Native account surface: `/auth`, device-code `/login`, `/limits`,
+  `/usage`, `/version` через стабильные App Server methods.
+- [x] Native local sessions: cwd-filtered `/sessions`, safe `/attach` и
+  `/handback`, а также rename/archive/unarchive/fork/compact lifecycle.
+- [x] Inline `/settings` для model, effort, sandbox, approval, project и
+  Guided Plan; значения сохраняются per bot/chat/project.
+- [x] Второй prompt во время активного turn больше не угадывает намерение:
+  steer, durable queue, stop-and-replace и cancel — persisted/idempotent actions.
+- [x] Telegram reply на доставленный final message восстанавливает точный
+  Codex thread route после restart и даже после переключения current session.
+- [x] `turn/diff/updated` сохраняет последний unified diff; `/diff [path]`,
+  root-confined `/file [--all]` и native inline `/review` дают inspection loop.
+- [x] Optional `/plan on`: отдельный planning-only turn под принудительными
+  `read-only` + `approvalPolicy=never`, persisted approval, revision, cancel и
+  execution в том же thread без мутаций до подтверждения.
+- [x] SQLite migration 17 и feature callbacks покрыты restart/idempotency,
+  targeted E2E и полным regression suite.
+
+Gate M6.5: **пройден.** Stable generated schema Codex CLI `0.149.1` содержит
+все используемые account/thread/review/diff methods; `bun run typecheck` и
+полный suite проходят, а решения busy/plan и reply routes переживают restart.
 
 ## 6. Fault-injection matrix
 

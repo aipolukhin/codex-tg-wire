@@ -1,6 +1,6 @@
 # Dashi × Codex × Telemax: roadmap гибридного моста
 
-Статус: draft для обсуждения
+Статус: active implementation
 Цель первого стабильного релиза: self-hosted Telegram-клиент для Codex с UX Dashi и гарантиями доставки Telemax.
 
 ## Статус реализации — 2026-08-29
@@ -13,7 +13,8 @@
 - [x] Fake subprocess tests и smoke против реального Codex CLI `0.149.1`.
 - [x] Зафиксировано: `thread/start` без первого turn не переживает restart — rollout ещё не создан.
 - [ ] Проверить restart во время active turn, approval и user-input request.
-- [ ] Начать M1: SQLite inbox/outbox и первый durable Telegram → Codex → Telegram slice.
+- [x] Начат M1: SQLite/WAL migrations, durable inbox/outbox, leases, dedupe, TTL и crash recovery.
+- [ ] Подключить первый durable Telegram → Codex → Telegram slice поверх новых repositories.
 
 ## 1. Что именно мы строим
 

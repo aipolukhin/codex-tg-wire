@@ -1,0 +1,14 @@
+{
+  "stateDatabase": "./state/bridge.sqlite3",
+  "projects": [
+    {
+      "id": "main",
+      "cwd": "."
+    }
+  ],
+  "defaultProjectId": "main",
+  "telegram": {
+    "allowedUserIds": ["123456789"],
+    "allowedChatIds": ["123456789"]
+  }
+}

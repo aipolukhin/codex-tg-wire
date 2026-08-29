@@ -21,6 +21,7 @@
 - [x] Добавлен polling ingress с SQLite cursor: durable insert всегда предшествует offset advance.
 - [x] Добавлены durable-команды personal alpha: `/start`, `/new`, `/status`, `/stop`.
 - [x] Добавлены lease heartbeat, periodic reaper и supervisor loops с graceful drain.
+- [x] Добавлен standalone personal-alpha service: строгий конфиг без токена, grammY/Codex wiring и signal shutdown.
 
 ## 1. Что именно мы строим
 

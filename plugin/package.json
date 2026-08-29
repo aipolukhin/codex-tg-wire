@@ -7,6 +7,7 @@
   "bin": "./src/server.ts",
   "scripts": {
     "start": "bun run src/server.ts",
+    "start:codex": "bun run src/codex-telegram-service.ts",
     "test": "bun test",
     "test:codex": "bun test tests/codex",
     "typecheck": "tsc --noEmit",

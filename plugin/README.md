@@ -1,5 +1,7 @@
 # dashi-channel
 
+> Новый standalone-мост Telegram → **Codex App Server** развивается рядом с legacy Claude channel runtime. Инструкция personal alpha: [CODEX_BRIDGE.md](CODEX_BRIDGE.md), запуск — `bun run start:codex`.
+
 Custom Claude Code channel plugin для Orgrimmar Telegram agents. Замена Python `claude -p` gateway. Параллелен Anthropic Telegram plugin'у — наш fork с full Jarvis parity.
 
 Этот README — plugin-scoped (как запускать из `plugin/`, env vars, hooks, multichat). Общий обзор архитектуры и сравнение с gateway — в корневом [../README.md](../README.md) и [../docs/01-what-is-this.md](../docs/01-what-is-this.md).

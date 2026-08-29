@@ -401,7 +401,7 @@ describe('DurableSessionCoordinator', () => {
 
 describe('PersonalAlphaCommands', () => {
   test('renders help/status and resets a completed thread', async () => {
-    expect((await commands.handleCommand(command('start'))).text).toContain('/status')
+    expect((await commands.handleCommand(command('start'))).text).toContain('Codex готов')
     expect((await commands.handleCommand(command('status'))).text).toContain('Thread ещё не создан')
 
     await coordinator.runTextTurn(operation(620))

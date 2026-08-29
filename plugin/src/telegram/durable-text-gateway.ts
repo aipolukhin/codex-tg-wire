@@ -72,6 +72,7 @@ export interface TelegramTextApi {
     text: string,
     options: TelegramMessageOptions,
   ): Promise<{ message_id: number }>
+  deleteMessage?(chatId: string, messageId: number): Promise<true>
 }
 
 export type TelegramInlineButton =
@@ -128,10 +129,16 @@ export type PreparedTextDelivery = {
   jobId: string
   callbackQueryId: string
   text: string
+} | {
+  kind: 'delete'
+  jobId: string
+  chatId: string
+  messageId: number
 }
 
 interface TelegramMessagePayload {
   message?: {
+    message_id?: number
     chat?: { id?: string | number; type?: string }
     from?: { id?: string | number; is_bot?: boolean }
     text?: string
@@ -483,7 +490,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const message = this.authorizedMessage(update)
     if (message === null) return null
     const match = message.text.trim().match(
-      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume|model|effort|sandbox|approval|cwd|settings|auth|login|limits|usage|version|sessions|attach|handback|rename|unarchive|fork|compact|diff|file|review|plan)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
+      /^\/(start|new|status|stop|steer|failed|ambiguous|retry|resolved|archive|threads|switch|resume|model|effort|sandbox|approval|cwd|settings|auth|login|groq|limits|usage|version|sessions|attach|handback|rename|unarchive|fork|compact|diff|file|review|plan)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$/i,
     )
     if (match === null || match[1] === undefined) return null
     const addressedUsername = match[2]?.toLowerCase()
@@ -493,6 +500,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       projectId: this.projectIdForChat(message.chatId),
       name: match[1].toLowerCase() as PersonalAlphaCommandName,
       args: match[3]?.trim() ?? '',
+      ...(message.messageId === undefined ? {} : { messageId: message.messageId }),
     }
   }
 
@@ -605,20 +613,22 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         }
       }
       const feature = callback.data.match(
-        /^dx:(s|b|p):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
+        /^dx:(s|b|p|o):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
       )
       if (feature !== null && feature[1] !== undefined && feature[3] !== undefined) {
         const featureName = feature[1] === 's'
           ? 'settings'
           : feature[1] === 'b'
             ? 'busy'
-            : 'plan'
-        if (featureName !== 'settings' && feature[2] === undefined) return null
+            : feature[1] === 'p'
+              ? 'plan'
+              : 'onboarding'
+        if (featureName !== 'settings' && featureName !== 'onboarding' && feature[2] === undefined) return null
         return {
           kind: 'feature_action',
           feature: featureName,
           chatId: normalizedChatId,
-          token: feature[2] ?? 'settings',
+          token: feature[2] ?? featureName,
           action: feature[3],
           callbackQueryId: callback.id,
           callbackMessageId: messageId as number,
@@ -757,6 +767,19 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     }
   }
 
+  buildCommandCleanupDelivery(input: CommandDelivery): DeliveryJobInput {
+    const messageId = input.command.messageId
+    if (!Number.isSafeInteger(messageId) || (messageId as number) <= 0) {
+      throw new TelegramDeliveryPayloadError('sensitive command has no source message id')
+    }
+    return {
+      sourceKey: `${input.sourceKey}:delete-source`,
+      kind: 'delete',
+      payload: { chatId: input.command.chatId, messageId },
+      createdAtMs: input.nowMs,
+    }
+  }
+
   buildInboundRejectionDelivery(input: InboundRejectionDelivery): DeliveryJobInput {
     return {
       sourceKey: input.sourceKey,
@@ -767,6 +790,18 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   async prepareDelivery(job: DeliveryJob): Promise<PreparedTextDelivery> {
+    if (job.kind === 'delete') {
+      if (!isRecord(job.payload)) throw new TelegramDeliveryPayloadError('delete payload must be an object')
+      const chatId = job.payload.chatId
+      const messageId = job.payload.messageId
+      if (typeof chatId !== 'string' || !this.allowedChats.has(chatId)) {
+        throw new TelegramDeliveryPayloadError('delete chat is not allowlisted')
+      }
+      if (!Number.isSafeInteger(messageId) || (messageId as number) <= 0) {
+        throw new TelegramDeliveryPayloadError('delete message id is invalid')
+      }
+      return { kind: 'delete', jobId: job.id, chatId, messageId: messageId as number }
+    }
     if (job.kind === 'reaction') {
       if (!isRecord(job.payload)) throw new TelegramDeliveryPayloadError('reaction payload must be an object')
       const payload = job.payload as AnswerCallbackPayload
@@ -883,6 +918,13 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   async executeDelivery(prepared: PreparedTextDelivery): Promise<{ remoteId: string }> {
+    if (prepared.kind === 'delete') {
+      if (this.api.deleteMessage === undefined) {
+        throw new TelegramDeliveryPayloadError('Telegram API cannot delete messages')
+      }
+      await this.api.deleteMessage(prepared.chatId, prepared.messageId)
+      return { remoteId: `telegram:${prepared.messageId}` }
+    }
     if (prepared.kind === 'answer_callback') {
       if (this.api.answerCallbackQuery === undefined) {
         throw new TelegramDeliveryPayloadError('Telegram API cannot answer callback queries')
@@ -991,10 +1033,16 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     )
   }
 
-  private authorizedMessage(update: InboxUpdate): { chatId: string; text: string } | null {
+  private authorizedMessage(update: InboxUpdate): { chatId: string; text: string; messageId?: number } | null {
     const authorized = this.authorizedEnvelope(update)
     if (authorized === null || typeof authorized.message.text !== 'string') return null
-    return { chatId: authorized.chatId, text: authorized.message.text }
+    return {
+      chatId: authorized.chatId,
+      text: authorized.message.text,
+      ...(Number.isSafeInteger(authorized.message.message_id) && (authorized.message.message_id as number) > 0
+        ? { messageId: authorized.message.message_id as number }
+        : {}),
+    }
   }
 
   private authorizedEnvelope(update: InboxUpdate): {

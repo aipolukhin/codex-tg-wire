@@ -1,56 +1,108 @@
-name: dashi-codex-bridge
+name: codex-tg-wire
+
+x-build-args: &build-args
+  BUN_VERSION: ${BUN_VERSION:-1.4.0}
+  CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.149.1}
+  CODEX_TG_WIRE_UID: ${CODEX_TG_WIRE_IMAGE_UID:-10001}
+  CODEX_TG_WIRE_GID: ${CODEX_TG_WIRE_IMAGE_GID:-10001}
+  VERSION: ${CODEX_TG_WIRE_VERSION:-1.0.0}
+  REVISION: ${CODEX_TG_WIRE_REVISION:-unknown}
+
+x-container-security: &container-security
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 512
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,mode=1777
 
 services:
   bridge:
-    image: ${DASHI_BRIDGE_IMAGE:-dashi-codex-bridge:1.0.0}
+    image: ${CODEX_TG_WIRE_IMAGE:-codex-tg-wire:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
-      args:
-        BUN_VERSION: ${BUN_VERSION:-1.4.0}
-        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.149.1}
-        DASHI_UID: ${DASHI_UID:-10001}
-        DASHI_GID: ${DASHI_GID:-10001}
+      target: runtime
+      args: *build-args
     init: true
     restart: unless-stopped
-    read_only: true
-    user: "${DASHI_UID:-10001}:${DASHI_GID:-10001}"
+    user: "${CODEX_TG_WIRE_UID:?run ./docker.sh setup}:${CODEX_TG_WIRE_GID:?run ./docker.sh setup}"
     env_file:
-      - ${DASHI_BRIDGE_ENV_FILE:-./bridge.env}
+      - ${CODEX_TG_WIRE_CONFIG_DIR:?run ./docker.sh setup}/bridge.env
     environment:
       HOME: /var/lib/codex
       CODEX_HOME: /var/lib/codex
-      DASHI_CODEX_BRIDGE_CONFIG: /etc/dashi-codex-bridge/bridge.config.json
-      DASHI_TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram-token
-    secrets:
-      - telegram-token
+      DASHI_CODEX_BRIDGE_CONFIG: /etc/codex-tg-wire/bridge.config.json
+      DASHI_TELEGRAM_BOT_TOKEN_FILE: /etc/codex-tg-wire/telegram-token
     volumes:
       - type: bind
-        source: ${DASHI_BRIDGE_CONFIG:-./bridge.config.json}
-        target: /etc/dashi-codex-bridge/bridge.config.json
+        source: ${CODEX_TG_WIRE_CONFIG_DIR:?run ./docker.sh setup}
+        target: /etc/codex-tg-wire
         read_only: true
       - type: bind
-        source: ${DASHI_PROJECT_PATH:?set DASHI_PROJECT_PATH in deploy/docker/.env}
-        target: /workspace
-      - type: volume
-        source: bridge-state
-        target: /var/lib/dashi
-      - type: volume
-        source: codex-home
+        source: ${CODEX_TG_WIRE_PROJECT_PATH:?run ./docker.sh setup}
+        target: ${CODEX_TG_WIRE_PROJECT_PATH:?run ./docker.sh setup}
+      - type: bind
+        source: ${CODEX_TG_WIRE_STATE_DIR:?run ./docker.sh setup}
+        target: /var/lib/codex-tg-wire
+      - type: bind
+        source: ${CODEX_TG_WIRE_CODEX_HOME:?run ./docker.sh setup}
         target: /var/lib/codex
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 512
+    <<: *container-security
     stop_grace_period: 2m
 
-volumes:
-  bridge-state:
-  codex-home:
+  # One-shot config generator. It is profile-gated, so a normal `compose up`
+  # never starts it. docker.sh passes only non-secret values as arguments.
+  setup:
+    profiles: ["setup"]
+    image: ${CODEX_TG_WIRE_IMAGE:-codex-tg-wire:1.0.0}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: runtime
+      args: *build-args
+    user: "${CODEX_TG_WIRE_UID:?run ./docker.sh setup}:${CODEX_TG_WIRE_GID:?run ./docker.sh setup}"
+    environment:
+      HOME: /var/lib/codex
+      CODEX_HOME: /var/lib/codex
+    volumes:
+      - type: bind
+        source: ${CODEX_TG_WIRE_CONFIG_DIR:?run ./docker.sh setup}
+        target: /etc/codex-tg-wire
+      - type: bind
+        source: ${CODEX_TG_WIRE_PROJECT_PATH:?run ./docker.sh setup}
+        target: ${CODEX_TG_WIRE_PROJECT_PATH:?run ./docker.sh setup}
+        read_only: true
+      - type: bind
+        source: ${CODEX_TG_WIRE_STATE_DIR:?run ./docker.sh setup}
+        target: /var/lib/codex-tg-wire
+      - type: bind
+        source: ${CODEX_TG_WIRE_CODEX_HOME:?run ./docker.sh setup}
+        target: /var/lib/codex
+    entrypoint: ["bun", "run", "init:codex", "--"]
+    command: ["--help"]
+    <<: *container-security
 
-secrets:
-  telegram-token:
-    file: ${DASHI_TELEGRAM_TOKEN_FILE:-./telegram-token}
+  # One-shot official Codex CLI login. The helper is profile-gated and stores
+  # auth in the same host CODEX_HOME used by the bridge and local Codex CLI.
+  codex-login:
+    profiles: ["setup"]
+    image: ${CODEX_TG_WIRE_LOGIN_IMAGE:-codex-tg-wire-login:1.0.0}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: login
+      args: *build-args
+    user: "${CODEX_TG_WIRE_UID:?run ./docker.sh setup}:${CODEX_TG_WIRE_GID:?run ./docker.sh setup}"
+    environment:
+      HOME: /var/lib/codex
+      CODEX_HOME: /var/lib/codex
+    volumes:
+      - type: bind
+        source: ${CODEX_TG_WIRE_CODEX_HOME:?run ./docker.sh setup}
+        target: /var/lib/codex
+    ports:
+      - "127.0.0.1:1455:1456"
+    <<: *container-security

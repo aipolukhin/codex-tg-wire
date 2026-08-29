@@ -7,6 +7,7 @@ import type { Database } from 'bun:sqlite'
 
 import type {
   AgentBackend,
+  AgentAccountSnapshot,
   AgentNativeThread,
   AgentReviewTarget,
   AgentTextTurnInput,
@@ -65,7 +66,7 @@ class M65Backend implements AgentBackend {
 
   async steerTurn(): Promise<void> {}
 
-  async readAccount() {
+  async readAccount(): Promise<AgentAccountSnapshot> {
     return {
       kind: 'chatgpt' as const,
       email: 'owner@example.test',
@@ -205,6 +206,61 @@ afterEach(() => {
 })
 
 describe('M6.5 personal commands', () => {
+  test('renders a button-first terminal-free onboarding and protects Groq input', async () => {
+    backend.readAccount = async () => ({
+      kind: 'none' as const,
+      email: null,
+      planType: null,
+      requiresOpenaiAuth: true,
+    })
+    let configured = false
+    let installed = ''
+    const onboarding = new PersonalAlphaCommands(
+      new SqliteSessionRepository(database),
+      backend,
+      new SqliteOutboxRepository(database),
+      settings,
+      {
+        projects: [{ id: 'workspace', cwd: project }],
+        defaultProjectId: 'workspace',
+        voiceCredentials: {
+          setupUrl: 'https://console.groq.com/keys',
+          isConfigured: () => configured,
+          install: async (key) => { installed = key; configured = true },
+        },
+      },
+    )
+
+    const start = await onboarding.handleCommand(command('start'))
+    expect(start.text).toContain('терминал больше не нужен')
+    expect(start.buttons?.flat().map((button) => button.text)).toEqual([
+      '🔐 Шаг 1 · Подключить Codex',
+      '✅ Я вошёл · Проверить',
+      '🎙 Шаг 2 · Создать Groq key',
+      '🔑 Вставить Groq key',
+      '⏭ Пропустить voice',
+    ])
+
+    const key = 'gsk_1234567890abcdefghijklmnop'
+    const result = await onboarding.handleCommand(command('groq', key))
+    expect(installed).toBe(key)
+    expect(result.text).not.toContain(key)
+    expect(result.sensitiveInput).toBeTrue()
+    expect(result.deleteSourceMessage).toBeTrue()
+    expect(result.buttons?.[0]?.[0]?.text).toBe('🚀 Начать первую задачу')
+
+    const begin = await onboarding.handleOnboardingAction('begin')
+    expect(begin.buttons?.flat().map((button) => button.text)).toEqual([
+      '🛡 Сначала согласовать план',
+      '⚙️ Настроить модель и доступ',
+    ])
+    const panel = await onboarding.handleSettingsAction({
+      botId: 'primary', chatId: '7001', projectId: 'workspace',
+      operationKey: 'onboarding:settings', action: 'panel',
+    })
+    expect(panel.text).toContain('Guided Plan: off')
+  })
+
   test('renders account, version and inline settings controls', async () => {
     expect((await commands.handleCommand(command('auth'))).text).toContain('owner@example.test')
     expect((await commands.handleCommand(command('limits'))).text).toContain('25.0%')

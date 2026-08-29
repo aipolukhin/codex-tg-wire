@@ -153,6 +153,7 @@ describe('loadBridgeServiceConfig', () => {
     })
     expect(explicit.telegramToken).toBe('file-telegram-token')
     expect(explicit.voiceApiKey).toBe('file-groq-key')
+    expect(explicit.voiceCredentialPath).toBe(groqPath)
 
     const systemd = loadBridgeServiceConfig({
       env: {
@@ -162,6 +163,7 @@ describe('loadBridgeServiceConfig', () => {
     })
     expect(systemd.telegramToken).toBe('file-telegram-token')
     expect(systemd.voiceApiKey).toBe('file-groq-key')
+    expect(systemd.voiceCredentialPath).toBeNull()
   })
 
   test('prefers environment credentials and rejects unsafe credential files', () => {
@@ -295,11 +297,11 @@ describe('loadBridgeServiceConfig', () => {
     })).toThrow('invalid bridge config')
   })
 
-  test('keeps Groq credentials in env and requires them only for the selected adapter', () => {
+  test('allows pending Telegram Groq onboarding and still rejects hardcoded credentials', () => {
     const enabled = fixture({ voice: { provider: 'groq' } })
-    expect(() => loadBridgeServiceConfig({
+    expect(loadBridgeServiceConfig({
       env: { DASHI_CODEX_BRIDGE_CONFIG: enabled.path, DASHI_TELEGRAM_BOT_TOKEN: 'safe' },
-    })).toThrow('Groq API key is required')
+    }).voiceApiKey).toBeNull()
     expect(loadBridgeServiceConfig({
       env: {
         DASHI_CODEX_BRIDGE_CONFIG: enabled.path,

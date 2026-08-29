@@ -8,6 +8,7 @@ import type {
   AgentReviewTarget,
   AgentSandboxMode,
   AgentUxStatusProvider,
+  CommandButton,
   CommandHandler,
   CommandOperation,
   CommandResult,
@@ -22,6 +23,7 @@ import type {
 import { SqliteAgentSettingsRepository } from '../durable/settings-repository.js'
 import type { SqliteSessionRepository } from '../durable/session-repository.js'
 import type { DurableOutboundMediaStore } from '../telegram/durable-outbound-media.js'
+import type { VoiceCredentialControl } from './voice-credentials.js'
 
 export interface PersonalAlphaCommandsOptions {
   backendName?: string
@@ -35,6 +37,7 @@ export interface PersonalAlphaCommandsOptions {
   bridgeVersion?: string
   codexVersion?: string
   outboundMediaStore?: DurableOutboundMediaStore
+  voiceCredentials?: VoiceCredentialControl
 }
 
 const PROBLEM_LIST_LIMIT = 10
@@ -100,6 +103,7 @@ export class PersonalAlphaCommands implements CommandHandler {
   private readonly bridgeVersion: string
   private readonly codexVersion: string
   private readonly outboundMediaStore: DurableOutboundMediaStore | undefined
+  private readonly voiceCredentials: VoiceCredentialControl | undefined
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -121,6 +125,7 @@ export class PersonalAlphaCommands implements CommandHandler {
     this.bridgeVersion = options.bridgeVersion ?? 'dev'
     this.codexVersion = options.codexVersion ?? 'unknown'
     this.outboundMediaStore = options.outboundMediaStore
+    this.voiceCredentials = options.voiceCredentials
     if (!this.projects.has(this.defaultProjectId)) {
       throw new TypeError(`default project is not configured: ${this.defaultProjectId}`)
     }
@@ -132,20 +137,7 @@ export class PersonalAlphaCommands implements CommandHandler {
   async handleCommand(operation: CommandOperation): Promise<CommandResult> {
     switch (operation.command.name) {
       case 'start':
-        return {
-          text: [
-            'codex-tg-wire готов.',
-            'Отправь текст, чтобы запустить turn.',
-            '/new — новый thread · /status — состояние · /stop — остановить turn',
-            '/steer <текст> — уточнить задачу внутри активного turn',
-            '/threads — сохранённые Codex threads',
-            '/settings — единая панель настроек',
-            '/sessions · /attach · /handback — локальные Codex-сессии',
-            '/auth · /login · /usage · /limits — аккаунт Codex',
-            '/diff · /file · /review — inspection и review',
-            '/failed · /ambiguous — problem center доставки',
-          ].join('\n'),
-        }
+        return this.start()
       case 'status':
         return { text: this.status(operation) }
       case 'new':
@@ -186,6 +178,8 @@ export class PersonalAlphaCommands implements CommandHandler {
         return { text: await this.auth() }
       case 'login':
         return this.login()
+      case 'groq':
+        return this.groq(operation)
       case 'limits':
         return { text: await this.limits() }
       case 'usage':
@@ -214,6 +208,139 @@ export class PersonalAlphaCommands implements CommandHandler {
         return { text: await this.review(operation) }
       case 'plan':
         return { text: this.planMode(operation) }
+    }
+  }
+
+  private async start(): Promise<CommandResult> {
+    const lines = ['🚀 Настроим codex-tg-wire', 'После этого экрана терминал больше не нужен.']
+    const buttons: CommandButton[][] = []
+    let codexReady = true
+    if (this.backend.readAccount !== undefined) {
+      try {
+        const account = await this.backend.readAccount()
+        if (account.kind === 'none' && account.requiresOpenaiAuth) {
+          codexReady = false
+          if (this.backend.startDeviceLogin !== undefined) {
+            const login = await this.backend.startDeviceLogin()
+            lines.push(
+              '',
+              '1/2 · Подключи Codex',
+              `Открой вход и введи код: ${login.userCode}`,
+            )
+            buttons.push([{ text: '🔐 Шаг 1 · Подключить Codex', url: login.verificationUrl }])
+            buttons.push([{ text: '✅ Я вошёл · Проверить', callbackData: 'dx:o:check-auth' }])
+          } else {
+            lines.push('1. Codex не авторизован. Используй /login.')
+          }
+        } else {
+          lines.push(`1. Codex: подключён${account.email === null ? '' : ` · ${account.email}`}.`)
+        }
+      } catch {
+        codexReady = false
+        lines.push('1. Codex auth пока не проверен. Используй /auth или /login.')
+      }
+    }
+    if (this.voiceCredentials !== undefined) {
+      if (this.voiceCredentials.isConfigured()) {
+        lines.push('2. Groq voice: подключён.')
+      } else {
+        lines.push(
+          '',
+          '2/2 · Voice transcription · optional',
+          'Создай Groq API key, затем нажми «Вставить key».',
+        )
+        buttons.push([{ text: '🎙 Шаг 2 · Создать Groq key', url: this.voiceCredentials.setupUrl }])
+        buttons.push([{ text: '🔑 Вставить Groq key', callbackData: 'dx:o:add-groq' }])
+        buttons.push([{ text: '⏭ Пропустить voice', callbackData: 'dx:o:skip-voice' }])
+      }
+    }
+    if (codexReady) {
+      lines.push('', '✅ Codex готов. Можно запускать первую задачу.')
+      buttons.push([{ text: '🚀 Начать первую задачу', callbackData: 'dx:o:begin' }])
+    }
+    return {
+      text: lines.join('\n'),
+      ...(buttons.length === 0 ? {} : { buttons }),
+    }
+  }
+
+  async handleOnboardingAction(action: string): Promise<CommandResult> {
+    if (action === 'check-auth') return this.start()
+    if (action === 'add-groq') {
+      return {
+        text: [
+          '🔑 Добавь Groq key',
+          '',
+          'Пришли одним сообщением:',
+          '/groq gsk_…',
+          '',
+          'Bridge проверит key у Groq, сохранит приватно и сразу удалит сообщение с ключом.',
+        ].join('\n'),
+        buttons: [
+          [{ text: '🎙 Открыть Groq API Keys', url: this.voiceCredentials?.setupUrl ?? 'https://console.groq.com/keys' }],
+          [{ text: '↩️ Назад к проверке', callbackData: 'dx:o:check-auth' }],
+        ],
+      }
+    }
+    if (action === 'skip-voice') {
+      return {
+        text: '⏭ Voice transcription пропущен. Аудиофайлы всё равно доходят до Codex.',
+        buttons: [
+          [{ text: '🚀 Перейти к первой задаче', callbackData: 'dx:o:begin' }],
+          [{ text: '⚙️ Сначала выбрать режим', callbackData: 'dx:s:panel' }],
+        ],
+      }
+    }
+    if (action === 'begin') {
+      return {
+        text: [
+          '🚀 Готов к работе',
+          '',
+          'Напиши задачу обычным сообщением — bridge создаст Codex thread и покажет progress.',
+          'Для безопасного плана сначала включи Guided Plan в настройках.',
+        ].join('\n'),
+        buttons: [
+          [{ text: '🛡 Сначала согласовать план', callbackData: 'dx:s:set:plan:on' }],
+          [{ text: '⚙️ Настроить модель и доступ', callbackData: 'dx:s:panel' }],
+        ],
+      }
+    }
+    return { text: 'Onboarding action устарел. Отправь /start ещё раз.' }
+  }
+
+  private async groq(operation: CommandOperation): Promise<CommandResult> {
+    const apiKey = operation.command.args.trim()
+    if (this.voiceCredentials === undefined) {
+      return {
+        text: 'Groq onboarding не настроен для этого deployment.',
+        ...(apiKey.length === 0 ? {} : { sensitiveInput: true, deleteSourceMessage: true }),
+      }
+    }
+    if (apiKey.length === 0) {
+      return {
+        text: this.voiceCredentials.isConfigured()
+          ? 'Groq voice подключён. Новый /groq gsk_… безопасно заменит credential.'
+          : 'Создай Groq API key по кнопке и пришли /groq gsk_…',
+        buttons: [[{ text: 'Открыть Groq API Keys', url: this.voiceCredentials.setupUrl }]],
+      }
+    }
+    try {
+      await this.voiceCredentials.install(apiKey)
+      return {
+        text: 'Groq voice подключён. Следующее voice-сообщение будет расшифровано без restart.',
+        sensitiveInput: true,
+        deleteSourceMessage: true,
+        buttons: [[{ text: '🚀 Начать первую задачу', callbackData: 'dx:o:begin' }]],
+      }
+    } catch (error) {
+      return {
+        text: error instanceof Error
+          ? `Groq key не принят: ${error.message}. Создай новый key и повтори /groq.`
+          : 'Groq key не принят. Создай новый key и повтори /groq.',
+        sensitiveInput: true,
+        deleteSourceMessage: true,
+        buttons: [[{ text: 'Открыть Groq API Keys', url: this.voiceCredentials.setupUrl }]],
+      }
     }
   }
 
@@ -769,6 +896,7 @@ export class PersonalAlphaCommands implements CommandHandler {
         args: '',
       },
     }
+    if (input.action === 'panel') return this.settingsPanel(operation)
     const [verb, category, rawIndex] = input.action.split(':')
     if (verb === 'open') {
       if (category === 'model') {

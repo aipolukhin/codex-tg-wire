@@ -215,6 +215,7 @@ export interface BridgeRuntimeConfig extends ParsedBridgeConfigFile {
 export interface BridgeServiceConfig extends BridgeRuntimeConfig {
   telegramToken: string
   voiceApiKey: string | null
+  voiceCredentialPath: string | null
 }
 
 export interface LoadBridgeServiceConfigOptions {
@@ -232,6 +233,7 @@ export interface BridgeCredentialOptions {
   fileEnvironmentName: string
   systemdCredentialName: string
   label: string
+  allowMissingOrEmpty?: boolean
 }
 
 const MAX_CREDENTIAL_BYTES = 64 * 1024
@@ -255,6 +257,7 @@ export function resolveBridgeCredential(
   )
   if (!path) return null
   if (!existsSync(path)) {
+    if (explicitPath && options.allowMissingOrEmpty === true) return null
     if (explicitPath) throw new Error(`${options.label} credential file does not exist`)
     return null
   }
@@ -264,6 +267,7 @@ export function resolveBridgeCredential(
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error('credential source is not a regular file')
     }
+    if (stat.size === 0 && options.allowMissingOrEmpty === true) return null
     if (stat.size <= 0 || stat.size > MAX_CREDENTIAL_BYTES) {
       throw new Error('credential file has an invalid size')
     }
@@ -289,6 +293,17 @@ export const GROQ_CREDENTIAL_OPTIONS: BridgeCredentialOptions = {
   fileEnvironmentName: 'GROQ_API_KEY_FILE',
   systemdCredentialName: 'groq-api-key',
   label: 'Groq API key',
+  allowMissingOrEmpty: true,
+}
+
+export function bridgeCredentialFilePath(
+  env: NodeJS.ProcessEnv,
+  options: BridgeCredentialOptions,
+): string | null {
+  const explicitPath = env[options.fileEnvironmentName]?.trim()
+  // Only an explicit file path is a rotation target. systemd credentials are
+  // intentionally read-only and remain supported by voiceApiKey as a static source.
+  return explicitPath || null
 }
 
 function absoluteFrom(baseDirectory: string, value: string): string {
@@ -371,9 +386,7 @@ export function loadBridgeServiceConfig(
   }
   const telegramToken = telegramCredential.value
   const voiceApiKey = resolveBridgeCredential(env, GROQ_CREDENTIAL_OPTIONS)?.value ?? null
-  if (config.voice.provider === 'groq' && voiceApiKey === null) {
-    throw new Error('Groq API key is required when voice.provider is groq')
-  }
+  const voiceCredentialPath = bridgeCredentialFilePath(env, GROQ_CREDENTIAL_OPTIONS)
 
-  return { ...config, telegramToken, voiceApiKey }
+  return { ...config, telegramToken, voiceApiKey, voiceCredentialPath }
 }

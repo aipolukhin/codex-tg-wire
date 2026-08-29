@@ -62,6 +62,7 @@ export type PersonalAlphaCommandName =
   | 'settings'
   | 'auth'
   | 'login'
+  | 'groq'
   | 'limits'
   | 'usage'
   | 'version'
@@ -82,6 +83,7 @@ export interface IncomingCommand {
   projectId: string
   name: PersonalAlphaCommandName
   args: string
+  messageId?: number
 }
 
 export type IncomingInteractionResponse =
@@ -143,7 +145,7 @@ export type IncomingInteractionResponse =
     }
   | {
       kind: 'feature_action'
-      feature: 'settings' | 'busy' | 'plan'
+      feature: 'settings' | 'busy' | 'plan' | 'onboarding'
       chatId: string
       token: string
       action: string
@@ -184,6 +186,8 @@ export interface CommandOperation {
 export interface CommandResult {
   text: string
   buttons?: readonly (readonly CommandButton[])[]
+  sensitiveInput?: boolean
+  deleteSourceMessage?: boolean
 }
 
 export type CommandButton =
@@ -507,6 +511,7 @@ export interface TelegramGateway<PreparedDelivery = unknown> {
   buildFinalTextDeliveries(input: FinalTextDelivery): readonly DeliveryJobInput[]
   buildInboundRejectionDelivery?(input: InboundRejectionDelivery): DeliveryJobInput
   buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
+  buildCommandCleanupDelivery?(input: CommandDelivery): DeliveryJobInput
   prepareDelivery(job: DeliveryJob): Promise<PreparedDelivery>
   executeDelivery(prepared: PreparedDelivery): Promise<DeliveryProof>
   recordDelivery?(job: DeliveryJob, proof: DeliveryProof, deliveredAtMs: number): void

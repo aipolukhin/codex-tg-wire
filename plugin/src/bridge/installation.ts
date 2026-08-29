@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { isAbsolute, join, parse, resolve } from 'node:path'
+import { dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
 import { BridgeConfigFileSchema } from './service-config.js'
 
@@ -19,12 +19,15 @@ export interface InitializeBridgeInstallationInput {
   telegramChatId: string
   projectId?: string
   executionProfile?: 'yolo' | 'safe'
+  voiceProvider?: 'none' | 'groq'
+  groqCredentialPath?: string
 }
 
 export interface InitializedBridgeInstallation {
   configPath: string
   environmentPath: string
   telegramCredentialPath: string
+  groqCredentialPath: string | null
   stateDirectory: string
   projectPath: string
 }
@@ -64,6 +67,13 @@ export function initializeBridgeInstallation(
   const projectPath = requireDirectory(input.projectPath, 'projectPath')
   const projectId = input.projectId?.trim() || 'main'
   const executionProfile = input.executionProfile ?? 'yolo'
+  const voiceProvider = input.voiceProvider ?? 'none'
+  const groqCredentialPath = voiceProvider === 'groq'
+    ? safeAbsoluteDirectory(
+        input.groqCredentialPath ?? join(configDirectory, 'groq-api-key'),
+        'groqCredentialPath',
+      )
+    : null
   if (!PROJECT_ID.test(projectId)) throw new Error('projectId has an invalid format')
   if (!USER_ID.test(input.telegramUserId)) throw new Error('telegramUserId is invalid')
   if (!CHAT_ID.test(input.telegramChatId)) throw new Error('telegramChatId is invalid')
@@ -71,7 +81,12 @@ export function initializeBridgeInstallation(
   const configPath = join(configDirectory, 'bridge.config.json')
   const environmentPath = join(configDirectory, 'bridge.env')
   const telegramCredentialPath = join(configDirectory, 'telegram-token')
-  const targets = [configPath, environmentPath, telegramCredentialPath]
+  const targets = [
+    configPath,
+    environmentPath,
+    telegramCredentialPath,
+    ...(groqCredentialPath === null ? [] : [groqCredentialPath]),
+  ]
   const existing = targets.find((path) => existsSync(path))
   if (existing !== undefined) {
     throw new Error('installation target already contains bridge configuration; refusing overwrite')
@@ -117,6 +132,7 @@ export function initializeBridgeInstallation(
       payloadMaxAgeDays: 30,
       intervalMs: 21_600_000,
     },
+    voice: { provider: voiceProvider },
   })
 
   mkdirSync(configDirectory, { recursive: true, mode: 0o700 })
@@ -133,12 +149,20 @@ export function initializeBridgeInstallation(
       [
         '# Optional non-secret overrides for the standalone bridge.',
         `DASHI_CODEX_BRIDGE_CONFIG=${JSON.stringify(configPath)}`,
+        ...(groqCredentialPath === null
+          ? []
+          : [`GROQ_API_KEY_FILE=${JSON.stringify(groqCredentialPath)}`]),
         '',
       ].join('\n'),
     )
     created.push(environmentPath)
     writePrivate(telegramCredentialPath, '')
     created.push(telegramCredentialPath)
+    if (groqCredentialPath !== null) {
+      mkdirSync(dirname(groqCredentialPath), { recursive: true, mode: 0o700 })
+      writePrivate(groqCredentialPath, '')
+      created.push(groqCredentialPath)
+    }
   } catch (error) {
     for (const path of created.reverse()) rmSync(path, { force: true })
     throw error
@@ -148,6 +172,7 @@ export function initializeBridgeInstallation(
     configPath,
     environmentPath,
     telegramCredentialPath,
+    groqCredentialPath,
     stateDirectory,
     projectPath,
   }

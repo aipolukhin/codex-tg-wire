@@ -6,7 +6,11 @@ import { join } from 'node:path'
 import type { Database } from 'bun:sqlite'
 
 import type {
+  CommandDelivery,
+  CommandOperation,
+  CommandResult,
   FinalTextDelivery,
+  IncomingCommand,
   IncomingTextMessage,
   SessionCoordinator,
   TelegramGateway,
@@ -89,6 +93,42 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
     return {
       outcome: 'accepted' as const,
       message: { ...message, attachments: [] },
+    }
+  }
+
+  extractCommand(update: InboxUpdate): IncomingCommand | null {
+    const payload = update.payload as {
+      message?: { chat?: { id?: number }; message_id?: number; text?: string }
+      project_id?: string
+    }
+    const text = payload.message?.text ?? ''
+    if (!text.startsWith('/groq ')) return null
+    return {
+      chatId: String(payload.message?.chat?.id),
+      projectId: payload.project_id ?? 'default',
+      name: 'groq',
+      args: text.slice('/groq '.length),
+      ...(payload.message?.message_id === undefined
+        ? {}
+        : { messageId: payload.message.message_id }),
+    }
+  }
+
+  buildCommandDelivery(input: CommandDelivery): DeliveryJobInput {
+    return {
+      sourceKey: input.sourceKey,
+      kind: 'send_text',
+      payload: { chatId: input.command.chatId, text: input.result.text },
+      createdAtMs: input.nowMs,
+    }
+  }
+
+  buildCommandCleanupDelivery(input: CommandDelivery): DeliveryJobInput {
+    return {
+      sourceKey: `${input.sourceKey}:delete-source`,
+      kind: 'delete',
+      payload: { chatId: input.command.chatId, messageId: input.command.messageId },
+      createdAtMs: input.nowMs,
     }
   }
 
@@ -208,6 +248,51 @@ afterEach(() => {
 })
 
 describe('durable text vertical slice', () => {
+  test('scrubs and schedules deletion of a secret-bearing command before acknowledgement', async () => {
+    const secret = 'gsk_abcdefghijklmnopqrstuvwxyz1234567890'
+    const accepted = inbox.ingest({
+      botId: 'primary-bot',
+      updateId: 500,
+      chatId: '7001',
+      payload: {
+        update_id: 500,
+        project_id: 'workspace',
+        message: { message_id: 91, chat: { id: 7001 }, text: `/groq ${secret}` },
+      },
+      receivedAtMs: START,
+    })
+    const commands = {
+      async handleCommand(operation: CommandOperation): Promise<CommandResult> {
+        expect(operation.command.args).toBe(secret)
+        return {
+          text: 'Groq voice подключён.',
+          sensitiveInput: true,
+          deleteSourceMessage: true,
+        }
+      },
+    }
+    const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-secret',
+      now: () => nowMs,
+      commandHandler: commands,
+    })
+
+    await inbound.runOnce()
+
+    const stored = inbox.get(accepted.update.id)
+    expect(stored?.payload).toEqual({ redacted: 'sensitive-command' })
+    expect(JSON.stringify(stored)).not.toContain(secret)
+    const source = 'telegram:primary-bot:500:turn:command:groq:reply'
+    expect(outbox.getBySourceKey(source)?.payload).toEqual({
+      chatId: '7001',
+      text: 'Groq voice подключён.',
+    })
+    expect(outbox.getBySourceKey(`${source}:delete-source`)?.payload).toEqual({
+      chatId: '7001',
+      messageId: 91,
+    })
+  })
+
   test('moves Telegram text through coordinator and outbox to proven delivery', async () => {
     const accepted = inbox.ingest(textUpdate(501))
     const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {

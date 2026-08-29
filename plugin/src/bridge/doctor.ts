@@ -294,7 +294,11 @@ export async function runBridgeDoctor(
       const credential = resolveBridgeCredential(env, GROQ_CREDENTIAL_OPTIONS)
       checks.push(
         credential === null
-          ? check('credentials.voice', 'fail', 'Groq API key is missing for voice.provider=groq')
+          ? check(
+              'credentials.voice',
+              'warn',
+              'Groq voice is ready for optional Telegram onboarding from /start',
+            )
           : check(
               'credentials.voice',
               'pass',

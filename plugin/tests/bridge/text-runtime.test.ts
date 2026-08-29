@@ -301,12 +301,21 @@ describe('durable text runtime composition', () => {
     }, NOW)
     expect(accepted.update).toMatchObject({ chatId: '7001', routingClass: 'CONTROL' })
 
-    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    const processing = runtime.processInboundOnce()
+    const accountRead = await waitForRequest(transport, 'account/read')
+    transport.emit({
+      id: accountRead.id,
+      result: {
+        account: { type: 'chatgpt', email: 'owner@example.test', planType: 'plus' },
+        requiresOpenaiAuth: true,
+      },
+    })
+    expect((await processing).outcome).toBe('enqueued')
     expect(
       transport.sent.some((message) => 'method' in message && message.method === 'thread/start'),
     ).toBe(false)
     expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
-    expect(telegram.sent[0]?.text).toContain('/new')
+    expect(telegram.sent[0]?.text).toContain('Codex готов')
   })
 
   test('routes /failed through the durable problem center without exposing payloads', async () => {

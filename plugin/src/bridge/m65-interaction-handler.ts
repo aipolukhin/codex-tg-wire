@@ -76,6 +76,7 @@ export class M65InteractionHandler implements InteractionHandler {
       return this.revisePlan(operation, response)
     }
     if (response.kind !== 'feature_action') return this.legacy.handleInteraction(operation)
+    if (response.feature === 'onboarding') return this.onboardingAction(operation, response)
     if (response.feature === 'settings') return this.settingsAction(operation, response)
     if (response.feature === 'busy') return this.busyAction(operation, response)
     return this.planAction(operation, response)
@@ -104,6 +105,26 @@ export class M65InteractionHandler implements InteractionHandler {
       createdAtMs: this.now(),
     })
     this.enqueueAck(operation, response, 'Сохранено')
+    return { deliveryJobId: edit.job.id }
+  }
+
+  private async onboardingAction(
+    operation: InteractionOperation,
+    response: FeatureAction,
+  ): Promise<InteractionResult> {
+    const result = await this.commands.handleOnboardingAction(response.action)
+    const edit = this.outbox.enqueue({
+      sourceKey: `${operation.operationKey}:onboarding-edit`,
+      kind: 'edit',
+      payload: {
+        chatId: response.chatId,
+        messageId: response.callbackMessageId,
+        text: result.text,
+        ...(result.buttons === undefined ? {} : { options: keyboard(result) }),
+      },
+      createdAtMs: this.now(),
+    })
+    this.enqueueAck(operation, response, 'Готово')
     return { deliveryJobId: edit.job.id }
   }
 

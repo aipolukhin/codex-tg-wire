@@ -376,6 +376,17 @@ export class SqliteInboxRepository implements InboxRepository {
     }).immediate()
   }
 
+  scrubPayload(id: number, workerId: string): InboxUpdate {
+    const result = this.database.run(
+      `UPDATE telegram_updates
+       SET payload_json = '{"redacted":"sensitive-command"}'
+       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
+      [id, workerId],
+    )
+    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+    return this.require(id)
+  }
+
   retry(id: number, workerId: string, error: string, availableAtMs: number): InboxUpdate {
     return this.releaseLease(id, workerId, error, availableAtMs, 'RETRY_WAIT')
   }

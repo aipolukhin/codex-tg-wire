@@ -83,6 +83,25 @@ describe('initializeBridgeInstallation', () => {
     expect(config.codex.allowedSandboxModes).toContain('danger-full-access')
   })
 
+  test('enables Groq voice with a separate empty credential file', async () => {
+    const paths = fixture()
+    const result = initializeBridgeInstallation({
+      ...paths,
+      projectPath: paths.project,
+      telegramUserId: '123456789',
+      telegramChatId: '123456789',
+      voiceProvider: 'groq',
+    })
+
+    expect(result.groqCredentialPath).not.toBeNull()
+    expect(statSync(result.groqCredentialPath!).mode & 0o777).toBe(0o600)
+    expect(await Bun.file(result.groqCredentialPath!).text()).toBe('')
+    expect(await Bun.file(result.environmentPath).text()).toContain('GROQ_API_KEY_FILE=')
+    const serialized = await Bun.file(result.configPath).text()
+    expect(serialized).toContain('"provider": "groq"')
+    expect(serialized).not.toMatch(/apiKey/i)
+  })
+
   test('refuses overwrites and leaves the previous config intact', async () => {
     const paths = fixture()
     const input = {

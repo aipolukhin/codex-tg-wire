@@ -31,10 +31,13 @@ describe('one-command user installer', () => {
     const fakeBin = join(root, 'fake-bin')
     const systemctlLog = join(root, 'systemctl.log')
     const tokenSource = join(root, 'telegram-token-source')
+    const groqSource = join(root, 'groq-key-source')
     const codex = join(fakeBin, 'codex')
     const token = '123456789:test-secret-token'
+    const groqKey = 'gsk_test-private-voice-key'
     for (const directory of [home, project, fakeBin]) mkdirSync(directory, { recursive: true })
     writeFileSync(tokenSource, `${token}\n`, { mode: 0o600 })
+    writeFileSync(groqSource, `${groqKey}\n`, { mode: 0o600 })
     executable(codex, `#!/bin/sh
 if [ "\${1:-}" = "--version" ]; then
   printf 'codex-cli 0.149.1\\n'
@@ -67,6 +70,7 @@ exit 0
       '--telegram-user', '123456789',
       '--telegram-chat', '-1001234567890',
       '--token-file', tokenSource,
+      '--groq-key-file', groqSource,
       '--state-dir', stateDirectory,
       '--config-dir', configDirectory,
       '--skip-deps',
@@ -80,12 +84,14 @@ exit 0
 
     const configPath = join(configDirectory, 'bridge.config.json')
     const credentialPath = join(configDirectory, 'telegram-token')
+    const groqCredentialPath = join(configDirectory, 'groq-api-key')
     const unitPath = join(configRoot, 'systemd/user/codex-tg-wire.service')
     const config = JSON.parse(await Bun.file(configPath).text()) as {
       stateDatabase: string
       projects: Array<{ cwd: string; sandboxMode: string }>
       telegram: { allowedUserIds: string[]; allowedChatIds: string[] }
       codex: { approvalPolicy: string; sandboxMode: string }
+      voice: { provider: string }
     }
     expect(config.stateDatabase).toBe(join(stateDirectory, 'bridge.sqlite3'))
     expect(config.projects[0]?.cwd).toBe(project)
@@ -94,19 +100,24 @@ exit 0
       approvalPolicy: 'never',
       sandboxMode: 'danger-full-access',
     })
+    expect(config.voice.provider).toBe('groq')
     expect(config.telegram.allowedUserIds).toEqual(['123456789'])
     expect(config.telegram.allowedChatIds).toEqual(['-1001234567890'])
     expect(statSync(configPath).mode & 0o777).toBe(0o600)
     expect(statSync(credentialPath).mode & 0o777).toBe(0o600)
+    expect(statSync(groqCredentialPath).mode & 0o777).toBe(0o600)
     expect(statSync(unitPath).mode & 0o777).toBe(0o600)
     expect((await Bun.file(credentialPath).text()).trim()).toBe(token)
+    expect((await Bun.file(groqCredentialPath).text()).trim()).toBe(groqKey)
 
     const unit = await Bun.file(unitPath).text()
     expect(unit).toContain(`WorkingDirectory="${join(REPOSITORY_ROOT, 'plugin')}"`)
     expect(unit).toContain(`Environment="CODEX_BINARY_PATH=${codex}"`)
     expect(unit).toContain(`Environment="DASHI_CODEX_BRIDGE_CONFIG=${configPath}"`)
+    expect(unit).toContain(`Environment="GROQ_API_KEY_FILE=${groqCredentialPath}"`)
     expect(unit).toContain('WantedBy=default.target')
     expect(unit).not.toContain(token)
+    expect(unit).not.toContain(groqKey)
     expect(unit).not.toContain('User=dashi')
     expect(unit).not.toContain('ProtectHome=true')
     expect(unit).not.toContain('/srv/')
@@ -114,7 +125,9 @@ exit 0
     expect(stdout).toContain('Шаг 4 из 4')
     expect(stdout).toContain('YOLO: approvalPolicy=never · sandbox=danger-full-access')
     expect(stdout).not.toContain(token)
+    expect(stdout).not.toContain(groqKey)
     expect(stderr).not.toContain(token)
+    expect(stderr).not.toContain(groqKey)
 
     const systemctlCalls = await Bun.file(systemctlLog).text()
     expect(systemctlCalls).toContain('--user show-environment')
@@ -135,6 +148,7 @@ exit 0
     expect(second.exitCode, `${second.stdout.toString()}\n${second.stderr.toString()}`).toBe(0)
     expect(second.stdout.toString()).toContain('Keeping the existing bridge configuration')
     expect((await Bun.file(credentialPath).text()).trim()).toBe(token)
+    expect((await Bun.file(groqCredentialPath).text()).trim()).toBe(groqKey)
 
     const uninstall = Bun.spawnSync({
       cmd: [

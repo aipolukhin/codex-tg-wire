@@ -12,6 +12,8 @@ function usage(): never {
     '  --telegram-chat <id>',
     '  [--project-id <id>]',
     '  [--profile <yolo|safe>] (default: yolo)',
+    '  [--voice <none|groq>] (default: none)',
+    '  [--groq-credential-path <absolute-path>]',
     '',
   ].join(' '))
   process.exit(2)
@@ -35,6 +37,8 @@ const allowed = new Set([
   '--telegram-chat',
   '--project-id',
   '--profile',
+  '--voice',
+  '--groq-credential-path',
 ])
 if ([...values.keys()].some((name) => !allowed.has(name))) usage()
 
@@ -44,6 +48,8 @@ function required(name: string): string {
 
 const executionProfile = values.get('--profile') ?? 'yolo'
 if (executionProfile !== 'yolo' && executionProfile !== 'safe') usage()
+const voiceProvider = values.get('--voice') ?? 'none'
+if (voiceProvider !== 'none' && voiceProvider !== 'groq') usage()
 
 try {
   const result = initializeBridgeInstallation({
@@ -54,12 +60,19 @@ try {
     telegramChatId: required('--telegram-chat'),
     ...(values.has('--project-id') ? { projectId: required('--project-id') } : {}),
     executionProfile,
+    voiceProvider,
+    ...(values.has('--groq-credential-path')
+      ? { groqCredentialPath: required('--groq-credential-path') }
+      : {}),
   })
   process.stdout.write([
     'codex-tg-wire configuration initialized.',
     `Config: ${result.configPath}`,
     `Environment: ${result.environmentPath}`,
     `Telegram credential: ${result.telegramCredentialPath} (empty; fill privately)`,
+    ...(result.groqCredentialPath === null
+      ? []
+      : [`Groq credential: ${result.groqCredentialPath} (empty; fill privately)`]),
     `State: ${result.stateDirectory}`,
     'Next: fill telegram-token, run doctor:codex, then start the service.',
     '',

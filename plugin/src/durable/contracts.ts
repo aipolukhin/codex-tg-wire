@@ -44,6 +44,7 @@ export interface InboxRepository {
   claimNext(options: LeaseOptions): InboxUpdate | null
   renewLease(id: number, options: LeaseOptions): InboxUpdate
   markProcessed(id: number, workerId: string, nowMs: number): InboxUpdate
+  scrubPayload?(id: number, workerId: string): InboxUpdate
   retry(id: number, workerId: string, error: string, availableAtMs: number): InboxUpdate
   deferQueued(id: number, workerId: string, availableAtMs: number): InboxUpdate
   fail(id: number, workerId: string, error: string, nowMs: number): InboxUpdate

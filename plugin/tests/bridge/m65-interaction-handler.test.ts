@@ -97,6 +97,25 @@ afterEach(() => {
 })
 
 describe('M6.5 feature callbacks', () => {
+  test('turns an onboarding CTA into one durable card edit and callback acknowledgement', async () => {
+    const result = await handler.handleInteraction({
+      operationKey: 'telegram:primary:1:turn:interaction', botId: 'primary',
+      inboxUpdateId: 1, updateId: 1,
+      response: {
+        kind: 'feature_action', feature: 'onboarding', chatId: '7001', token: 'onboarding',
+        action: 'begin', callbackQueryId: 'cb-onboarding', callbackMessageId: 89,
+      },
+    })
+
+    expect(result.deliveryJobId).not.toBeNull()
+    expect(outbox.getBySourceKey('telegram:primary:1:turn:interaction:onboarding-edit')).toMatchObject({
+      kind: 'edit', payload: { chatId: '7001', messageId: 89 },
+    })
+    expect(outbox.getBySourceKey('telegram:primary:1:turn:interaction:callback-ack')).toMatchObject({
+      kind: 'reaction',
+    })
+  })
+
   test('executes a persisted busy prompt exactly through the selected thread', async () => {
     const prompt = controls.createBusy({
       operation: sourceOperation(1), blockingThreadId: 'thread-active',

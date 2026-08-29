@@ -29,7 +29,7 @@ describe('standalone bridge compatibility manifest', () => {
     expect(release).toContain('dashi-codex-bridge-${compatibility.bridgeVersion}')
     expect(service).toContain('version: compatibility.bridgeVersion')
     expect(smoke).toContain('version: compatibility.bridgeVersion')
-    expect(compose).toContain(`dashi-codex-bridge:${compatibility.bridgeVersion}`)
+    expect(compose).toContain(`codex-tg-wire:${compatibility.bridgeVersion}`)
   })
 
   test('keeps the human matrix synchronized with the manifest', async () => {

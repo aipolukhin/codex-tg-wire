@@ -15,9 +15,12 @@ PROJECT_INPUT=""
 TELEGRAM_USER=""
 TELEGRAM_CHAT=""
 TOKEN_SOURCE=""
+GROQ_SOURCE=""
 EXECUTION_PROFILE="yolo"
 PROFILE_WAS_SET=0
+ENABLE_GROQ=1
 REPLACE_TOKEN=0
+REPLACE_GROQ_KEY=0
 START_SERVICE=1
 ONLINE_DOCTOR=1
 INSTALL_DEPENDENCIES=1
@@ -107,10 +110,12 @@ First-install options:
   --telegram-user ID      Allowed Telegram user id
   --telegram-chat ID      Allowed chat id (defaults to the user id)
   --token-file PATH       Read the Telegram bot token from a private file
+  --groq-key-file PATH    Enable voice transcription with a private Groq key file
   --profile yolo|safe     Execution profile (default: yolo)
 
 Maintenance options:
   --replace-token         Allow --token-file to replace an existing token
+  --replace-groq-key      Allow --groq-key-file to replace an existing key
   --config-dir PATH       Override the configuration directory
   --state-dir PATH        Override the SQLite/media state directory
   --no-start              Install and enable the unit without starting it
@@ -150,6 +155,12 @@ while [[ $# -gt 0 ]]; do
       TOKEN_SOURCE="$2"
       shift 2
       ;;
+    --groq-key-file)
+      need_value "$@"
+      GROQ_SOURCE="$2"
+      ENABLE_GROQ=1
+      shift 2
+      ;;
     --profile)
       need_value "$@"
       EXECUTION_PROFILE="$2"
@@ -168,6 +179,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --replace-token)
       REPLACE_TOKEN=1
+      shift
+      ;;
+    --replace-groq-key)
+      REPLACE_GROQ_KEY=1
       shift
       ;;
     --no-start)
@@ -284,24 +299,19 @@ CODEX_VERSION="${CODEX_VERSION_OUTPUT#codex-cli }"
 [[ "$CODEX_VERSION" == "$PINNED_CODEX_VERSION" ]] || \
   fail "Codex CLI $PINNED_CODEX_VERSION is required; found $CODEX_VERSION"
 
-if ! HOME="$HOME" CODEX_HOME="$CODEX_HOME_VALUE" \
-  "$CODEX_BINARY" login status >/dev/null 2>&1; then
-  if [[ -t 0 && -t 1 ]]; then
-    say "Codex is not authenticated for this user; starting the official login flow"
-    HOME="$HOME" CODEX_HOME="$CODEX_HOME_VALUE" "$CODEX_BINARY" login
-    HOME="$HOME" CODEX_HOME="$CODEX_HOME_VALUE" \
-      "$CODEX_BINARY" login status >/dev/null 2>&1 || fail "Codex login did not complete"
-  else
-    fail "Codex is not authenticated; run 'codex login' (or 'codex login --device-auth') first"
-  fi
-fi
 ui_ok "Bun $BUN_VERSION"
-ui_ok "Codex CLI $CODEX_VERSION · текущий login переиспользован"
+if HOME="$HOME" CODEX_HOME="$CODEX_HOME_VALUE" \
+  "$CODEX_BINARY" login status >/dev/null 2>&1; then
+  ui_ok "Codex CLI $CODEX_VERSION · текущий login переиспользован"
+else
+  ui_warn "Codex CLI $CODEX_VERSION · login завершим кнопкой в Telegram"
+fi
 ui_ok "systemd --user доступен"
 
 CONFIG_PATH="$CONFIG_DIRECTORY/bridge.config.json"
 ENVIRONMENT_PATH="$CONFIG_DIRECTORY/bridge.env"
 TOKEN_PATH="$CONFIG_DIRECTORY/telegram-token"
+GROQ_PATH="$CONFIG_DIRECTORY/groq-api-key"
 NEW_INSTALL=0
 
 if [[ -e "$CONFIG_PATH" || -e "$ENVIRONMENT_PATH" || -e "$TOKEN_PATH" ]]; then
@@ -311,6 +321,16 @@ if [[ -e "$CONFIG_PATH" || -e "$ENVIRONMENT_PATH" || -e "$TOKEN_PATH" ]]; then
     fail "existing installation has no safe regular environment file: $ENVIRONMENT_PATH"
   [[ -f "$TOKEN_PATH" && ! -L "$TOKEN_PATH" ]] || \
     fail "existing installation has no safe regular Telegram credential: $TOKEN_PATH"
+  if grep -q '"provider": "groq"' "$CONFIG_PATH"; then
+    ENABLE_GROQ=1
+    [[ -f "$GROQ_PATH" && ! -L "$GROQ_PATH" ]] || \
+      fail "existing Groq voice config has no safe credential: $GROQ_PATH"
+  else
+    ENABLE_GROQ=0
+    if [[ -n "$GROQ_SOURCE" ]]; then
+      fail "existing config has Groq voice disabled; enable it explicitly in bridge.config.json first"
+    fi
+  fi
   if [[ $PROFILE_WAS_SET -eq 1 ]]; then
     fail "--profile only applies to a first install; edit the existing config explicitly"
   fi
@@ -361,6 +381,8 @@ else
   fi
   [[ -n "$TELEGRAM_CHAT" ]] || TELEGRAM_CHAT="$TELEGRAM_USER"
 
+  VOICE_PROVIDER="groq"
+
   say "Creating private configuration and SQLite state directories"
   "$BUN_BINARY" "$PLUGIN_DIRECTORY/scripts/codex-bridge-init.ts" \
     --config-dir "$CONFIG_DIRECTORY" \
@@ -368,7 +390,8 @@ else
     --project "$PROJECT_DIRECTORY" \
     --telegram-user "$TELEGRAM_USER" \
     --telegram-chat "$TELEGRAM_CHAT" \
-    --profile "$EXECUTION_PROFILE" >/dev/null
+    --profile "$EXECUTION_PROFILE" \
+    --voice "$VOICE_PROVIDER" >/dev/null
 fi
 
 if [[ $NEW_INSTALL -eq 0 ]]; then
@@ -384,6 +407,18 @@ write_token_file() {
   TEMPORARY_PATH="$(mktemp "$CONFIG_DIRECTORY/.telegram-token.XXXXXX")"
   install -m 0600 -- "$source" "$TEMPORARY_PATH"
   mv -f -- "$TEMPORARY_PATH" "$TOKEN_PATH"
+  TEMPORARY_PATH=""
+}
+
+write_groq_file() {
+  local source="$1"
+  local size
+  [[ -f "$source" && ! -L "$source" ]] || fail "--groq-key-file must be a regular, non-symlink file"
+  size="$(stat -c '%s' -- "$source")"
+  [[ "$size" -gt 0 && "$size" -le 65536 ]] || fail "--groq-key-file is empty or too large"
+  TEMPORARY_PATH="$(mktemp "$CONFIG_DIRECTORY/.groq-api-key.XXXXXX")"
+  install -m 0600 -- "$source" "$TEMPORARY_PATH"
+  mv -f -- "$TEMPORARY_PATH" "$GROQ_PATH"
   TEMPORARY_PATH=""
 }
 
@@ -405,7 +440,22 @@ elif [[ ! -s "$TOKEN_PATH" ]]; then
   mv -f -- "$TEMPORARY_PATH" "$TOKEN_PATH"
   TEMPORARY_PATH=""
 fi
+if [[ -n "$GROQ_SOURCE" ]]; then
+  if [[ $NEW_INSTALL -eq 0 && $REPLACE_GROQ_KEY -ne 1 ]]; then
+    fail "refusing to replace the existing Groq key without --replace-groq-key"
+  fi
+  write_groq_file "$GROQ_SOURCE"
+fi
 ui_ok "Telegram token сохранён отдельно · mode 0600"
+if [[ $ENABLE_GROQ -eq 1 ]]; then
+  if [[ -s "$GROQ_PATH" ]]; then
+    ui_ok "Groq voice подключён · key хранится отдельно с mode 0600"
+  else
+    ui_note "Groq voice optional · подключается кнопкой после /start в Telegram."
+  fi
+else
+  ui_note "Groq voice пропущен; Telegram voice всё равно передаётся Codex как audio."
+fi
 ui_ok "Allowlist и конфигурация готовы"
 
 chmod 0700 "$CONFIG_DIRECTORY"
@@ -413,6 +463,7 @@ if [[ -d "$STATE_DIRECTORY" ]]; then
   chmod 0700 "$STATE_DIRECTORY"
 fi
 chmod 0600 "$CONFIG_PATH" "$ENVIRONMENT_PATH" "$TOKEN_PATH"
+[[ ! -e "$GROQ_PATH" ]] || chmod 0600 "$GROQ_PATH"
 
 systemd_quote() {
   local value="$1"
@@ -445,7 +496,11 @@ chmod 0600 "$TEMPORARY_PATH"
     "Environment=$(systemd_quote "CODEX_BINARY_PATH=$CODEX_BINARY")" \
     "Environment=$(systemd_quote "DASHI_CODEX_BRIDGE_CONFIG=$CONFIG_PATH")" \
     "Environment=$(systemd_quote "DASHI_TELEGRAM_BOT_TOKEN_FILE=$TOKEN_PATH")" \
-    "Environment=$(systemd_quote "PATH=$PATH")" \
+    "Environment=$(systemd_quote "PATH=$PATH")"
+  if [[ $ENABLE_GROQ -eq 1 ]]; then
+    printf 'Environment=%s\n' "$(systemd_quote "GROQ_API_KEY_FILE=$GROQ_PATH")"
+  fi
+  printf '%s\n' \
     "ExecStart=$(systemd_quote "$BUN_BINARY") run start:codex" \
     'Restart=on-failure' \
     'RestartSec=5s' \
@@ -469,11 +524,17 @@ if [[ $ONLINE_DOCTOR -eq 1 ]]; then
 fi
 (
   cd -- "$PLUGIN_DIRECTORY"
-  HOME="$HOME" \
-  CODEX_HOME="$CODEX_HOME_VALUE" \
-  CODEX_BINARY_PATH="$CODEX_BINARY" \
-  DASHI_CODEX_BRIDGE_CONFIG="$CONFIG_PATH" \
-  DASHI_TELEGRAM_BOT_TOKEN_FILE="$TOKEN_PATH" \
+  DOCTOR_ENVIRONMENT=(
+    "HOME=$HOME"
+    "CODEX_HOME=$CODEX_HOME_VALUE"
+    "CODEX_BINARY_PATH=$CODEX_BINARY"
+    "DASHI_CODEX_BRIDGE_CONFIG=$CONFIG_PATH"
+    "DASHI_TELEGRAM_BOT_TOKEN_FILE=$TOKEN_PATH"
+  )
+  if [[ $ENABLE_GROQ -eq 1 ]]; then
+    DOCTOR_ENVIRONMENT+=("GROQ_API_KEY_FILE=$GROQ_PATH")
+  fi
+  env "${DOCTOR_ENVIRONMENT[@]}" \
     "$BUN_BINARY" run doctor:codex "${DOCTOR_ARGUMENTS[@]}"
 )
 
@@ -494,6 +555,7 @@ printf '  Status: systemctl --user status %s\n' "$SERVICE_NAME"
 printf '  Logs:   journalctl --user -u %s -f\n' "$SERVICE_NAME"
 printf '  Config: %s\n' "$CONFIG_PATH"
 printf '  State:  %s\n' "$STATE_DIRECTORY"
+printf '  Next:   open the bot, send /start and follow the action buttons\n'
 if [[ $START_SERVICE -eq 0 ]]; then
   printf '  Start:  systemctl --user start %s\n' "$SERVICE_NAME"
 fi

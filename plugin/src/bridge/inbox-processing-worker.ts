@@ -148,9 +148,28 @@ export class InboxProcessingWorker {
         command,
       })
       const completedAtMs = this.now()
+      if (result.sensitiveInput === true) {
+        if (this.inbox.scrubPayload === undefined) {
+          throw new Error('Inbox repository cannot scrub a sensitive command')
+        }
+        this.inbox.scrubPayload(update.id, this.workerId)
+      }
       const buildDelivery = this.telegram.buildCommandDelivery
       if (buildDelivery === undefined) {
         throw new Error('Telegram gateway cannot build command replies')
+      }
+      if (result.deleteSourceMessage === true) {
+        const buildCleanup = this.telegram.buildCommandCleanupDelivery
+        if (buildCleanup === undefined) {
+          throw new Error('Telegram gateway cannot delete a sensitive command')
+        }
+        this.outbox.enqueue(buildCleanup.call(this.telegram, {
+          update,
+          command,
+          result,
+          sourceKey: `${commandKey}:reply`,
+          nowMs: completedAtMs,
+        }))
       }
       const enqueue = this.outbox.enqueue({
         ...buildDelivery.call(this.telegram, {

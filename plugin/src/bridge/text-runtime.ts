@@ -69,6 +69,7 @@ import {
   StartupTurnRecovery,
   type TurnRecoverySweep,
 } from './startup-recovery.js'
+import type { VoiceCredentialControl } from './voice-credentials.js'
 
 export interface DurableTextRuntimeOptions {
   database: Database
@@ -91,6 +92,7 @@ export interface DurableTextRuntimeOptions {
   }
   albumFlushMs?: number
   voiceTranscriber?: VoiceTranscriber
+  voiceCredentials?: VoiceCredentialControl
   bridgeVersion?: string
   codexVersion?: string
   retention?: {
@@ -320,6 +322,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(options.bridgeVersion === undefined ? {} : { bridgeVersion: options.bridgeVersion }),
     ...(options.codexVersion === undefined ? {} : { codexVersion: options.codexVersion }),
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
+    ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
   })
   const featureInteractions = new M65InteractionHandler(
     interactions,

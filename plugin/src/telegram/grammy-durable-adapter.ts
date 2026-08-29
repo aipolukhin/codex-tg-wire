@@ -112,6 +112,10 @@ export class GrammyDurableAdapter implements TelegramTextApi, TelegramUpdateSour
     return this.runSend(chatId, 'sendMessage', () => this.api.sendMessage(chatId, text, options))
   }
 
+  deleteMessage(chatId: string, messageId: number): Promise<true> {
+    return this.run('deleteMessage', () => this.api.deleteMessage(chatId, messageId))
+  }
+
   async editMessageText(
     chatId: string,
     messageId: number,

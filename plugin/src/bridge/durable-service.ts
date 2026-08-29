@@ -21,6 +21,10 @@ import { createDurableTextRuntime, type DurableTextRuntime } from './text-runtim
 import { GroqVoiceTranscriber } from '../telegram/durable-voice-transcriber.js'
 import { DurableTelegramRateLimiter } from '../telegram/durable-rate-limiter.js'
 import type { BridgeServiceConfig } from './service-config.js'
+import {
+  GroqCredentialManager,
+  ManagedGroqVoiceTranscriber,
+} from './voice-credentials.js'
 
 export interface DurableBridgeServiceLogger {
   info(message: string, context?: Record<string, unknown>): void
@@ -171,16 +175,26 @@ export async function bootstrapDurableBridgeService(
       config.telegram.apiRoot,
       telegramLimiter,
     )
-    const voiceTranscriber = config.voice.provider === 'groq' && config.voiceApiKey !== null
-      ? new GroqVoiceTranscriber({
-          apiKey: config.voiceApiKey,
-          model: config.voice.model,
-          language: config.voice.language,
+    const voiceCredentials = config.voice.provider === 'groq' && config.voiceCredentialPath !== null
+      ? new GroqCredentialManager(config.voiceCredentialPath, {
           apiRoot: config.voice.apiRoot,
-          maxBytes: config.voice.maxBytes,
-          requestTimeoutMs: config.voice.requestTimeoutMs,
+          requestTimeoutMs: Math.min(config.voice.requestTimeoutMs, 30_000),
         })
       : undefined
+    const voiceOptions = {
+      model: config.voice.model,
+      language: config.voice.language,
+      apiRoot: config.voice.apiRoot,
+      maxBytes: config.voice.maxBytes,
+      requestTimeoutMs: config.voice.requestTimeoutMs,
+    }
+    const voiceTranscriber = config.voice.provider !== 'groq'
+      ? undefined
+      : voiceCredentials !== undefined
+        ? new ManagedGroqVoiceTranscriber(voiceCredentials, voiceOptions)
+        : config.voiceApiKey !== null
+          ? new GroqVoiceTranscriber({ ...voiceOptions, apiKey: config.voiceApiKey })
+          : undefined
     runtime = createDurableTextRuntime({
       database,
       codexClient,
@@ -227,6 +241,7 @@ export async function bootstrapDurableBridgeService(
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       albumFlushMs: config.albums.flushMs,
       ...(voiceTranscriber === undefined ? {} : { voiceTranscriber }),
+      ...(voiceCredentials === undefined ? {} : { voiceCredentials }),
       ux: {
         enabled: config.ux.enabled,
         heartbeatAfterMs: config.ux.heartbeatAfterMs,

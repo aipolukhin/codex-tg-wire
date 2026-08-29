@@ -24,6 +24,7 @@ class FakeTelegramApi {
   readonly sendOptions: TelegramMessageOptions[] = []
   readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly callbacks: Array<{ id: string; text?: string }> = []
+  readonly deletes: Array<{ chatId: string; messageId: number }> = []
   messageId = 77
   nextSendError: Error | undefined
 
@@ -49,6 +50,11 @@ class FakeTelegramApi {
 
   async answerCallbackQuery(id: string, options: { text?: string }): Promise<true> {
     this.callbacks.push({ id, ...options })
+    return true
+  }
+
+  async deleteMessage(chatId: string, messageId: number): Promise<true> {
+    this.deletes.push({ chatId, messageId })
     return true
   }
 }
@@ -356,6 +362,33 @@ describe('DurableTelegramTextGateway inbound', () => {
     expect(gateway.extractCommand(make('/unknown'))).toBeNull()
   })
 
+  test('parses Groq onboarding and deletes its source only through a durable job', async () => {
+    const update = acceptedUpdate({
+      message: {
+        message_id: 321,
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/groq gsk_private',
+      },
+    })
+    const command = gateway.extractCommand(update)
+    expect(command).toEqual({
+      chatId: '7001', projectId: 'workspace', name: 'groq', args: 'gsk_private', messageId: 321,
+    })
+    const job = outbox.enqueue(gateway.buildCommandCleanupDelivery({
+      update,
+      command: command!,
+      result: { text: 'saved', sensitiveInput: true, deleteSourceMessage: true },
+      sourceKey: 'groq-command',
+      nowMs: NOW,
+    })).job
+    expect(job.kind).toBe('delete')
+    const prepared = await gateway.prepareDelivery(job)
+    expect(prepared).toMatchObject({ kind: 'delete', chatId: '7001', messageId: 321 })
+    await gateway.executeDelivery(prepared)
+    expect(api.deletes).toEqual([{ chatId: '7001', messageId: 321 }])
+  })
+
   test('authenticates and parses durable interaction callbacks and /answer', () => {
     const approval = acceptedUpdate({
       callback_query: {
@@ -476,6 +509,15 @@ describe('DurableTelegramTextGateway inbound', () => {
     })
     expect(gateway.extractInteractionResponse(settings)).toMatchObject({
       kind: 'feature_action', feature: 'settings', action: 'set:sandbox:workspace-write',
+    })
+    const onboarding = acceptedUpdate({
+      callback_query: {
+        id: 'cb-onboarding', data: 'dx:o:begin', from: { id: 7001 },
+        message: { message_id: 62, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(onboarding)).toMatchObject({
+      kind: 'feature_action', feature: 'onboarding', action: 'begin', token: 'onboarding',
     })
     const revision = acceptedUpdate({
       message: {

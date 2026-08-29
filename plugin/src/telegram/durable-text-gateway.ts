@@ -38,10 +38,9 @@ export interface TelegramTextApi {
   ): Promise<{ message_id: number }>
 }
 
-export interface TelegramInlineButton {
-  text: string
-  callback_data: string
-}
+export type TelegramInlineButton =
+  | { text: string; callback_data: string; url?: never }
+  | { text: string; url: string; callback_data?: never }
 
 export interface TelegramMessageOptions {
   reply_markup?: { inline_keyboard: TelegramInlineButton[][] }
@@ -139,7 +138,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseMessageOptions(value: unknown): TelegramMessageOptions {
+function parseMessageOptions(
+  value: unknown,
+  extraSecrets: readonly string[] = [],
+): TelegramMessageOptions {
   if (value === undefined) return {}
   if (!isRecord(value) || !isRecord(value.reply_markup)) {
     throw new TelegramDeliveryPayloadError('message options contain an invalid reply_markup')
@@ -153,16 +155,38 @@ function parseMessageOptions(value: unknown): TelegramMessageOptions {
       throw new TelegramDeliveryPayloadError('inline keyboard row has an invalid size')
     }
     return row.map((button) => {
-      if (!isRecord(button) || typeof button.text !== 'string' || typeof button.callback_data !== 'string') {
+      if (!isRecord(button) || typeof button.text !== 'string') {
         throw new TelegramDeliveryPayloadError('inline keyboard button is invalid')
       }
       if (button.text.length < 1 || button.text.length > 64) {
         throw new TelegramDeliveryPayloadError('inline keyboard button text is invalid')
       }
-      if (Buffer.byteLength(button.callback_data, 'utf8') > 64) {
-        throw new TelegramDeliveryPayloadError('inline keyboard callback_data exceeds 64 bytes')
+      const callbackData = button.callback_data
+      const url = button.url
+      const text = redactSecrets(button.text, extraSecrets)
+      if (typeof callbackData === 'string' && url === undefined) {
+        if (Buffer.byteLength(callbackData, 'utf8') > 64) {
+          throw new TelegramDeliveryPayloadError('inline keyboard callback_data exceeds 64 bytes')
+        }
+        return { text, callback_data: callbackData }
       }
-      return { text: button.text, callback_data: button.callback_data }
+      if (typeof url === 'string' && callbackData === undefined) {
+        try {
+          const parsed = new URL(url)
+          if (
+            url.length > 4_096 ||
+            parsed.protocol !== 'https:' ||
+            parsed.username.length > 0 ||
+            parsed.password.length > 0
+          ) {
+            throw new Error('unsafe URL')
+          }
+        } catch {
+          throw new TelegramDeliveryPayloadError('inline keyboard URL is invalid')
+        }
+        return { text, url }
+      }
+      throw new TelegramDeliveryPayloadError('inline keyboard button must have exactly one action')
     })
   })
   return { reply_markup: { inline_keyboard } }
@@ -326,6 +350,62 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
           callbackMessageId: messageId as number,
         }
       }
+      const elicitationAction = callback.data.match(
+        /^dx:e:([a-f0-9]{12}):a:(accept|deny|cancel)$/,
+      )
+      if (
+        elicitationAction !== null &&
+        elicitationAction[1] !== undefined &&
+        elicitationAction[2] !== undefined
+      ) {
+        return {
+          kind: 'mcp_elicitation_action',
+          chatId: normalizedChatId,
+          token: elicitationAction[1],
+          action: elicitationAction[2] === 'deny' ? 'decline' : elicitationAction[2] as 'accept' | 'cancel',
+          callbackQueryId: callback.id,
+          callbackMessageId: messageId as number,
+        }
+      }
+      const elicitationOption = callback.data.match(
+        /^dx:e:([a-f0-9]{12}):o:(0|[1-9]\d?):(0|[1-9]\d?)$/,
+      )
+      if (
+        elicitationOption !== null &&
+        elicitationOption[1] !== undefined &&
+        elicitationOption[2] !== undefined &&
+        elicitationOption[3] !== undefined
+      ) {
+        return {
+          kind: 'mcp_elicitation_option',
+          chatId: normalizedChatId,
+          token: elicitationOption[1],
+          fieldIndex: Number.parseInt(elicitationOption[2], 10),
+          optionIndex: Number.parseInt(elicitationOption[3], 10),
+          callbackQueryId: callback.id,
+          callbackMessageId: messageId as number,
+        }
+      }
+      const elicitationFieldAction = callback.data.match(
+        /^dx:e:([a-f0-9]{12}):(d|s):(0|[1-9]\d?)$/,
+      )
+      if (
+        elicitationFieldAction !== null &&
+        elicitationFieldAction[1] !== undefined &&
+        elicitationFieldAction[2] !== undefined &&
+        elicitationFieldAction[3] !== undefined
+      ) {
+        return {
+          kind: elicitationFieldAction[2] === 'd'
+            ? 'mcp_elicitation_done'
+            : 'mcp_elicitation_skip',
+          chatId: normalizedChatId,
+          token: elicitationFieldAction[1],
+          fieldIndex: Number.parseInt(elicitationFieldAction[3], 10),
+          callbackQueryId: callback.id,
+          callbackMessageId: messageId as number,
+        }
+      }
       return null
     }
 
@@ -333,7 +413,25 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     if (message === null) return null
     const escapedUsername = this.botUsername?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const usernamePart = escapedUsername === null ? '' : `(?:@${escapedUsername})?`
-    const answer = message.text.trim().match(
+    const normalizedText = message.text.trim()
+    const elicitation = normalizedText.match(
+      new RegExp(`^/elicit${usernamePart}\\s+([a-f0-9]{12})\\s+([1-9]\\d?)\\s+([\\s\\S]+)$`, 'i'),
+    )
+    if (
+      elicitation !== null &&
+      elicitation[1] !== undefined &&
+      elicitation[2] !== undefined &&
+      elicitation[3] !== undefined
+    ) {
+      return {
+        kind: 'mcp_elicitation_text',
+        chatId: message.chatId,
+        token: elicitation[1].toLowerCase(),
+        fieldIndex: Number.parseInt(elicitation[2], 10) - 1,
+        text: elicitation[3].trim(),
+      }
+    }
+    const answer = normalizedText.match(
       new RegExp(`^/answer${usernamePart}\\s+([a-f0-9]{12})\\s+([1-9]\\d?)\\s+([\\s\\S]+)$`, 'i'),
     )
     if (answer === null || answer[1] === undefined || answer[2] === undefined || answer[3] === undefined) {
@@ -389,7 +487,9 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         kind: 'answer_callback',
         jobId: job.id,
         callbackQueryId: payload.callbackQueryId,
-        text: typeof payload.text === 'string' ? payload.text.slice(0, 200) : '',
+        text: typeof payload.text === 'string'
+          ? redactSecrets(payload.text, this.extraSecrets).slice(0, 200)
+          : '',
       }
     }
     if (job.kind !== 'send_text' && job.kind !== 'edit') {
@@ -410,7 +510,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         `send_text exceeds Telegram limit (${text.length} > ${this.maxTextLength})`,
       )
     }
-    const options = parseMessageOptions(payload.options)
+    const options = parseMessageOptions(payload.options, this.extraSecrets)
     if (job.kind === 'edit') {
       if (!Number.isSafeInteger(payload.messageId) || (payload.messageId as number) <= 0) {
         throw new TelegramDeliveryPayloadError('edit messageId must be a positive safe integer')

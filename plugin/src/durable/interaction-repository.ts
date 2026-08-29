@@ -6,6 +6,7 @@ export type CodexInteractionKind =
   | 'COMMAND_APPROVAL'
   | 'FILE_APPROVAL'
   | 'PERMISSIONS_APPROVAL'
+  | 'MCP_ELICITATION'
   | 'USER_INPUT'
 
 export type CodexInteractionState =
@@ -60,6 +61,10 @@ export interface RecordInteractionAnswerResult {
   applied: boolean
   interaction: CodexInteractionRecord
 }
+
+export type ToggleInteractionAnswerResult =
+  | { outcome: 'updated'; selected: boolean; interaction: CodexInteractionRecord }
+  | { outcome: 'closed' | 'limit'; interaction: CodexInteractionRecord }
 
 interface InteractionRow {
   id: string
@@ -196,14 +201,23 @@ export class SqliteCodexInteractionRepository {
     questionId: string,
     answers: readonly string[],
     nowMs: number,
+    exclusiveWith: readonly string[] = [],
   ): RecordInteractionAnswerResult {
-    if (questionId.trim().length === 0 || answers.length === 0) {
+    if (
+      questionId.trim().length === 0 ||
+      answers.length === 0 ||
+      exclusiveWith.some((key) => key.trim().length === 0)
+    ) {
       throw new TypeError('questionId and at least one answer are required')
     }
     return this.database.transaction(() => {
       const interaction = this.requireByToken(token)
       if (interaction.sessionId !== chatSessionId) throw new Error('interaction belongs to another session')
-      if (interaction.state !== 'PENDING' || interaction.answers[questionId] !== undefined) {
+      if (
+        interaction.state !== 'PENDING' ||
+        interaction.answers[questionId] !== undefined ||
+        exclusiveWith.some((key) => interaction.answers[key] !== undefined)
+      ) {
         return { applied: false, interaction }
       }
       const nextAnswers = { ...interaction.answers, [questionId]: [...answers] }
@@ -213,6 +227,52 @@ export class SqliteCodexInteractionRepository {
         [encodeJson(nextAnswers, 'answers'), nowMs, interaction.id],
       )
       return { applied: true, interaction: this.require(interaction.id) }
+    }).immediate()
+  }
+
+  toggleAnswer(
+    token: string,
+    chatSessionId: string,
+    questionId: string,
+    answer: string,
+    finalizedQuestionId: string,
+    skippedQuestionId: string,
+    maxAnswers: number,
+    nowMs: number,
+  ): ToggleInteractionAnswerResult {
+    if (
+      questionId.trim().length === 0 ||
+      answer.length === 0 ||
+      finalizedQuestionId.trim().length === 0 ||
+      skippedQuestionId.trim().length === 0 ||
+      !Number.isSafeInteger(maxAnswers) ||
+      maxAnswers < 1
+    ) {
+      throw new TypeError('toggle answer parameters are invalid')
+    }
+    return this.database.transaction((): ToggleInteractionAnswerResult => {
+      const interaction = this.requireByToken(token)
+      if (interaction.sessionId !== chatSessionId) throw new Error('interaction belongs to another session')
+      if (
+        interaction.state !== 'PENDING' ||
+        interaction.answers[finalizedQuestionId] !== undefined ||
+        interaction.answers[skippedQuestionId] !== undefined
+      ) {
+        return { outcome: 'closed', interaction }
+      }
+      const current = interaction.answers[questionId] ?? []
+      const selected = !current.includes(answer)
+      if (selected && current.length >= maxAnswers) return { outcome: 'limit', interaction }
+      const nextValues = selected
+        ? [...current, answer]
+        : current.filter((value) => value !== answer)
+      const nextAnswers = { ...interaction.answers, [questionId]: nextValues }
+      this.database.run(
+        `UPDATE codex_interactions SET answers_json = ?, updated_at_ms = ?
+         WHERE id = ? AND state = 'PENDING'`,
+        [encodeJson(nextAnswers, 'answers'), nowMs, interaction.id],
+      )
+      return { outcome: 'updated', selected, interaction: this.require(interaction.id) }
     }).immediate()
   }
 

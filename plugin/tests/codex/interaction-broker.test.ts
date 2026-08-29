@@ -728,4 +728,332 @@ describe('CodexInteractionBroker', () => {
       'SELECT count(*) AS count FROM codex_interactions',
     ).get()?.count).toBe(0)
   })
+
+  test('collects a typed MCP form durably and returns structured content', async () => {
+    await client.emitRequest({
+      id: 'mcp-form-1',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        serverName: 'deployments',
+        mode: 'form',
+        _meta: null,
+        message: 'Configure deployment',
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', title: 'Name', minLength: 2 },
+            retries: { type: 'integer', title: 'Retries', minimum: 1, maximum: 5 },
+            enabled: { type: 'boolean', title: 'Enabled' },
+            region: {
+              type: 'string',
+              title: 'Region',
+              oneOf: [
+                { const: 'eu', title: 'Europe' },
+                { const: 'us', title: 'United States' },
+              ],
+            },
+            features: {
+              type: 'array',
+              title: 'Features',
+              minItems: 1,
+              maxItems: 2,
+              items: { type: 'string', enum: ['logs', 'metrics', 'traces'] },
+            },
+            note: { type: 'string', title: 'Note' },
+          },
+          required: ['name', 'retries', 'enabled', 'region', 'features'],
+        },
+      },
+    })
+
+    const interaction = onlyInteraction()
+    expect(interaction.kind).toBe('MCP_ELICITATION')
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-prompt`)?.payload).toMatchObject({
+      chatId: '7001',
+      text: expect.stringContaining('deployments'),
+    })
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-field:4`)?.payload).toMatchObject({
+      text: expect.stringContaining('Features'),
+      options: {
+        reply_markup: {
+          inline_keyboard: expect.arrayContaining([
+            [{ callback_data: `dx:e:${interaction.token}:o:4:0`, text: expect.any(String) }],
+            [{ callback_data: `dx:e:${interaction.token}:d:4`, text: expect.any(String) }],
+          ]),
+        },
+      },
+    })
+
+    const textResponse = async (fieldIndex: number, text: string, updateId: number) => broker.handleInteraction({
+      operationKey: `telegram:primary:${updateId}:turn:interaction`,
+      botId: 'primary',
+      inboxUpdateId: updateId,
+      updateId,
+      response: {
+        kind: 'mcp_elicitation_text' as const,
+        chatId: '7001',
+        token: interaction.token,
+        fieldIndex,
+        text,
+      },
+    })
+    const optionResponse = async (fieldIndex: number, optionIndex: number, updateId: number) => broker.handleInteraction({
+      operationKey: `telegram:primary:${updateId}:turn:interaction`,
+      botId: 'primary',
+      inboxUpdateId: updateId,
+      updateId,
+      response: {
+        kind: 'mcp_elicitation_option' as const,
+        chatId: '7001',
+        token: interaction.token,
+        fieldIndex,
+        optionIndex,
+        callbackQueryId: `callback-mcp-${updateId}`,
+        callbackMessageId: 100 + updateId,
+      },
+    })
+
+    await textResponse(0, 'service', 2)
+    await textResponse(1, '9', 3)
+    expect(interactions.get(interaction.id)?.answers['mcp:1:value']).toBeUndefined()
+    await textResponse(1, '3', 4)
+    await optionResponse(2, 0, 5)
+    await optionResponse(3, 1, 6)
+    await optionResponse(4, 0, 7)
+    await optionResponse(4, 1, 8)
+    expect(interactions.get(interaction.id)?.answers['mcp:4:value']).toEqual(['logs', 'metrics'])
+    await broker.handleInteraction({
+      operationKey: 'telegram:primary:9:turn:interaction',
+      botId: 'primary',
+      inboxUpdateId: 9,
+      updateId: 9,
+      response: {
+        kind: 'mcp_elicitation_done',
+        chatId: '7001',
+        token: interaction.token,
+        fieldIndex: 4,
+        callbackQueryId: 'callback-mcp-done',
+        callbackMessageId: 109,
+      },
+    })
+    await broker.handleInteraction({
+      operationKey: 'telegram:primary:10:turn:interaction',
+      botId: 'primary',
+      inboxUpdateId: 10,
+      updateId: 10,
+      response: {
+        kind: 'mcp_elicitation_skip',
+        chatId: '7001',
+        token: interaction.token,
+        fieldIndex: 5,
+        callbackQueryId: 'callback-mcp-skip',
+        callbackMessageId: 110,
+      },
+    })
+
+    expect(client.responses).toEqual([{
+      id: 'mcp-form-1',
+      result: {
+        action: 'accept',
+        content: {
+          name: 'service',
+          retries: 3,
+          enabled: true,
+          region: 'us',
+          features: ['logs', 'metrics'],
+        },
+        _meta: null,
+      },
+    }])
+    expect(interactions.get(interaction.id)?.state).toBe('RESOLVED')
+  })
+
+  test('renders an HTTPS MCP URL flow without exposing the full URL in text', async () => {
+    const url = 'https://accounts.example.com/authorize?state=opaque-value'
+    await client.emitRequest({
+      id: 'mcp-url-1',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: null,
+        serverName: 'oauth-server',
+        mode: 'url',
+        _meta: null,
+        message: 'Authorize access',
+        url,
+        elicitationId: 'elicitation-1',
+      },
+    })
+    const interaction = onlyInteraction()
+    const prompt = outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-prompt`)
+    const promptText = (prompt?.payload as { text?: unknown } | undefined)?.text
+    expect(typeof promptText).toBe('string')
+    if (typeof promptText !== 'string') throw new Error('MCP URL prompt text missing')
+    expect(promptText).not.toContain('opaque-value')
+    expect(prompt?.payload).toMatchObject({
+      text: expect.stringContaining('accounts.example.com'),
+      options: {
+        reply_markup: {
+          inline_keyboard: expect.arrayContaining([
+            [{ text: expect.any(String), url }],
+            [{ callback_data: `dx:e:${interaction.token}:a:accept`, text: expect.any(String) }],
+          ]),
+        },
+      },
+    })
+
+    await broker.handleInteraction({
+      operationKey: 'telegram:primary:2:turn:interaction',
+      botId: 'primary',
+      inboxUpdateId: 2,
+      updateId: 2,
+      response: {
+        kind: 'mcp_elicitation_action',
+        chatId: '7001',
+        token: interaction.token,
+        action: 'accept',
+        callbackQueryId: 'callback-mcp-url',
+        callbackMessageId: 120,
+      },
+    })
+    expect(client.responses).toEqual([{
+      id: 'mcp-url-1',
+      result: { action: 'accept', content: null, _meta: null },
+    }])
+  })
+
+  test('retires every pending MCP card durably when the App Server disconnects', async () => {
+    await client.emitRequest({
+      id: 'mcp-restart',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        serverName: 'deployments',
+        mode: 'form',
+        _meta: null,
+        message: 'Choose environment',
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            environment: { type: 'string', enum: ['staging', 'production'] },
+          },
+          required: ['environment'],
+        },
+      },
+    })
+    const interaction = onlyInteraction()
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-prompt`)?.state).toBe(
+      'PENDING',
+    )
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-field:0`)?.state).toBe(
+      'PENDING',
+    )
+
+    client.emitClose()
+
+    expect(interactions.get(interaction.id)).toMatchObject({
+      state: 'STALE',
+      recoveryHandledAtMs: NOW,
+    })
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-prompt`)?.state).toBe(
+      'ARCHIVED',
+    )
+    expect(outbox.getBySourceKey(`codex-interaction:${interaction.id}:mcp-field:0`)?.state).toBe(
+      'ARCHIVED',
+    )
+  })
+
+  test('cancels unnegotiated extended forms and fails timeout or missing routes closed', async () => {
+    await client.emitRequest({
+      id: 'mcp-extended',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        serverName: 'extended',
+        mode: 'openai/form',
+        _meta: null,
+        message: 'Collect secret',
+        requestedSchema: { type: 'object', properties: {} },
+      },
+    })
+    expect(client.responses).toContainEqual({
+      id: 'mcp-extended',
+      result: { action: 'cancel', content: null, _meta: null },
+    })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM codex_interactions',
+    ).get()?.count).toBe(0)
+    const unsupportedNotice = database.query<{ payload_json: string }, []>(
+      "SELECT payload_json FROM delivery_jobs WHERE source_key LIKE 'codex-mcp-unsupported:%'",
+    ).get()
+    expect(JSON.parse(unsupportedNotice?.payload_json ?? '{}')).toMatchObject({
+      text: expect.stringContaining('безопасно отменён'),
+    })
+
+    const emptyForm = {
+      turnId: 'turn-1',
+      serverName: 'confirmations',
+      mode: 'form',
+      _meta: null,
+      message: 'Confirm action',
+      requestedSchema: { type: 'object', properties: {} },
+    }
+    await client.emitRequest({
+      id: 'mcp-unroutable',
+      method: 'mcpServer/elicitation/request',
+      params: { ...emptyForm, threadId: 'thread-missing' },
+    })
+    expect(client.responses).toContainEqual({
+      id: 'mcp-unroutable',
+      result: { action: 'cancel', content: null, _meta: null },
+    })
+
+    broker.close()
+    broker = new CodexInteractionBroker(client, interactions, sessions, outbox, {
+      connectionId: 'connection-mcp-timeout',
+      interactionTimeoutMs: 5,
+      now: () => NOW,
+    })
+    await client.emitRequest({
+      id: 'mcp-timeout',
+      method: 'mcpServer/elicitation/request',
+      params: { ...emptyForm, threadId: 'thread-1' },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    expect(client.responses).toContainEqual({
+      id: 'mcp-timeout',
+      result: { action: 'cancel', content: null, _meta: null },
+    })
+  })
+
+  test('rejects malformed or secret-like MCP forms without creating a card', async () => {
+    await client.emitRequest({
+      id: 'mcp-malformed',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        serverName: 'unsafe',
+        mode: 'form',
+        _meta: null,
+        message: 'Password',
+        requestedSchema: {
+          type: 'object',
+          properties: { password: { type: 'string', format: 'password' } },
+          required: ['password'],
+        },
+      },
+    })
+    expect(client.errors).toContainEqual({
+      id: 'mcp-malformed',
+      error: { code: -32602, message: 'Malformed Codex interaction request' },
+    })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM codex_interactions',
+    ).get()?.count).toBe(0)
+  })
 })

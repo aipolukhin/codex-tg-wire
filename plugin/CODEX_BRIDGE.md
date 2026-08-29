@@ -29,6 +29,8 @@ export DASHI_CODEX_BRIDGE_CONFIG=/absolute/path/bridge.config.json
 
 Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`, `/steer <уточнение>`. `/steer` дополняет именно активный turn; обычное сообщение становится отдельным следующим turn. Если session занята, следующие сообщения сохраняются в SQLite и выполняются FIFO, в том числе после restart. Команды, approval-кнопки и ответы на вопросы идут как control updates и не ждут за очередью сообщений — поэтому активный turn можно сразу остановить или скорректировать. Command/file approvals и запросы дополнительных network/filesystem permissions приходят inline-карточками. Permission-карточка позволяет выдать ровно запрошенное подмножество на текущий turn или явно на session; отказ и timeout возвращают пустой grant. На обычные вопросы Codex можно ответить кнопкой; свободный ответ отправляется командой, указанной на карточке: `/answer <id> <номер-вопроса> <текст>`.
 
+MCP elicitation поддерживает стандартные `form` и `url` modes. Boolean/enum/multiselect поля управляются кнопками, строки и числа вводятся через `/elicit <id> <номер-поля> <значение>`, необязательное поле можно пропустить. URL открывается только по credential-free HTTPS-кнопке; полный URL не дублируется в тексте карточки. Ответы и completion markers сохраняются durable, а deny/cancel/timeout/restart закрываются fail-closed. Capability `openai/form` мост не объявляет: несогласованная расширенная форма отменяется до сохранения её произвольной schema. Password-like standard schema также отклоняется.
+
 Семантика permission grant следует [официальной документации Codex App Server](https://developers.openai.com/codex/app-server); точная wire-форма проверяется локальным schema gate против закреплённой версии Codex CLI.
 
 Настройки Codex применяются к выбранному проекту и переживают restart:
@@ -62,7 +64,7 @@ Switch/archive current thread запрещены при `ACTIVE` или `UNKNOWN
 - `/new force` явно помечает `UNKNOWN` как оставленный оператором и отвязывает thread. Обычный `/new` этого не делает.
 
 Server request живёт только в том App Server connection, который его создал.
-Поэтому approval/user-input от прошлого процесса становится `STALE`: ещё не
+Поэтому approval/user-input/MCP elicitation от прошлого процесса становится `STALE`: ещё не
 отправленная карточка архивируется, уже доставленная редактируется и лишается
 кнопок, а prompt, для которого отправка началась без remote proof, остаётся
 `AMBIGUOUS` в problem center. Ответ на старую кнопку никогда не уходит в новый
@@ -99,7 +101,7 @@ Problem center показывает только безопасные метад
 
 - allowlist пользователей и чатов обязательны и работают deny-by-default;
 - bot token не хранится в конфиге или SQLite;
-- исходящий текст проходит secret redaction;
+- исходящий текст и подписи inline-кнопок проходят secret redaction;
 - update сохраняется до продвижения Telegram offset;
 - очередь turns и её порядок хранятся в SQLite; ожидание занятой session не расходует retry budget;
 - выбор проекта и Codex overrides хранятся в SQLite; Telegram не может подставить произвольный `cwd` или обойти sandbox allowlist;
@@ -109,5 +111,6 @@ Problem center показывает только безопасные метад
 - первый валидный ответ выигрывает, повторный или callback от старого App Server соединения ничего не разрешает;
 - callback permission-карточки выбирает только срок grant; сами права берутся из сохранённого server request, нормализуются по pinned App Server schema и не могут быть расширены Telegram payload;
 - вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
+- MCP URL разрешён только по HTTPS без embedded credentials; `openai/form` не согласовывается, а secret-like form schema не превращается в Telegram-карточку.
 
-Это personal alpha: MCP elicitation approvals, albums, audio/video/voice и outbound media ещё идут следующими срезами roadmap. Durable recovery text/Codex interaction kernel закрыт; media/upload recovery и retention относятся к M4/M5.
+Это personal alpha: albums, audio/video/voice и outbound media ещё идут следующими срезами roadmap. Durable recovery text/Codex interaction kernel, включая MCP elicitation, закрыт; media/upload recovery и retention относятся к M4/M5.

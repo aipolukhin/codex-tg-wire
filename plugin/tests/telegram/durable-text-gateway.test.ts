@@ -301,6 +301,62 @@ describe('DurableTelegramTextGateway inbound', () => {
       text: 'ship it',
     })
 
+    const mcpOption = acceptedUpdate({
+      callback_query: {
+        id: 'cb-mcp-option',
+        data: 'dx:e:012345abcdef:o:3:4',
+        from: { id: 7001 },
+        message: { message_id: 58, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(mcpOption)).toMatchObject({
+      kind: 'mcp_elicitation_option',
+      token: '012345abcdef',
+      fieldIndex: 3,
+      optionIndex: 4,
+    })
+
+    const mcpDone = acceptedUpdate({
+      callback_query: {
+        id: 'cb-mcp-done',
+        data: 'dx:e:012345abcdef:d:3',
+        from: { id: 7001 },
+        message: { message_id: 58, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(mcpDone)).toMatchObject({
+      kind: 'mcp_elicitation_done',
+      fieldIndex: 3,
+    })
+
+    const mcpDecline = acceptedUpdate({
+      callback_query: {
+        id: 'cb-mcp-decline',
+        data: 'dx:e:012345abcdef:a:deny',
+        from: { id: 7001 },
+        message: { message_id: 59, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(mcpDecline)).toMatchObject({
+      kind: 'mcp_elicitation_action',
+      action: 'decline',
+    })
+
+    const mcpText = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/elicit@my_bot 012345abcdef 2 42',
+      },
+    })
+    expect(gateway.extractInteractionResponse(mcpText)).toEqual({
+      kind: 'mcp_elicitation_text',
+      chatId: '7001',
+      token: '012345abcdef',
+      fieldIndex: 1,
+      text: '42',
+    })
+
     expect(gateway.extractInteractionResponse(acceptedUpdate({
       callback_query: {
         id: 'cb-bad',
@@ -351,6 +407,62 @@ describe('DurableTelegramTextGateway outbound', () => {
     expect(api.sends).toHaveLength(0)
   })
 
+  test('accepts only credential-free HTTPS inline URL buttons', async () => {
+    outbox.enqueue({
+      sourceKey: 'test:url-button',
+      kind: 'send_text',
+      payload: {
+        chatId: '7001',
+        text: 'Authorize',
+        options: {
+          reply_markup: {
+            inline_keyboard: [
+              [{
+                text: 'Open private-marker',
+                url: 'https://accounts.example.com/authorize?state=opaque',
+              }],
+              [{
+                text: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi',
+                callback_data: 'safe-callback',
+              }],
+            ],
+          },
+        },
+      },
+      createdAtMs: NOW,
+    })
+    const valid = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const prepared = await gateway.prepareDelivery(valid)
+    if (prepared.kind === 'answer_callback') throw new Error('expected text delivery')
+    expect(prepared.options).toEqual({
+      reply_markup: {
+        inline_keyboard: [
+          [{
+            text: 'Open [REDACTED]',
+            url: 'https://accounts.example.com/authorize?state=opaque',
+          }],
+          [{ text: '[REDACTED]', callback_data: 'safe-callback' }],
+        ],
+      },
+    })
+
+    outbox.failLease(valid.id, 'sender', 'test release', NOW)
+    outbox.enqueue({
+      sourceKey: 'test:unsafe-url-button',
+      kind: 'send_text',
+      payload: {
+        chatId: '7001',
+        text: 'Unsafe',
+        options: {
+          reply_markup: { inline_keyboard: [[{ text: 'Open', url: 'http://example.com' }]] },
+        },
+      },
+      createdAtMs: NOW,
+    })
+    const unsafe = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    await expect(gateway.prepareDelivery(unsafe)).rejects.toThrow('inline keyboard URL is invalid')
+  })
+
   test('requires a valid Telegram message_id as delivery proof', async () => {
     api.messageId = 0
     const prepared = await gateway.prepareDelivery(claimedJob('hello'))
@@ -378,7 +490,11 @@ describe('DurableTelegramTextGateway outbound', () => {
     outbox.enqueue({
       sourceKey: 'test:callback',
       kind: 'reaction',
-      payload: { action: 'answer_callback', callbackQueryId: 'cb-9', text: 'Принято' },
+      payload: {
+        action: 'answer_callback',
+        callbackQueryId: 'cb-9',
+        text: 'Принято private-marker',
+      },
       createdAtMs: NOW,
     })
     const callback = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
@@ -386,6 +502,6 @@ describe('DurableTelegramTextGateway outbound', () => {
     expect(await gateway.executeDelivery(preparedCallback)).toEqual({
       remoteId: 'telegram:callback:cb-9',
     })
-    expect(api.callbacks).toEqual([{ id: 'cb-9', text: 'Принято' }])
+    expect(api.callbacks).toEqual([{ id: 'cb-9', text: 'Принято [REDACTED]' }])
   })
 })

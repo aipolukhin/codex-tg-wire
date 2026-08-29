@@ -69,7 +69,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(11)
+    expect(migrations?.count).toBe(12)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -155,7 +155,7 @@ describe('durable database migrations', () => {
     upgraded.close()
   })
 
-  test('preserves existing interactions while adding permission approvals in v11', () => {
+  test('preserves existing interactions through permission and MCP interaction migrations', () => {
     const legacyFilename = join(root, 'legacy-v10.sqlite3')
     const legacy = new Database(legacyFilename, { create: true })
     legacy.run(`CREATE TABLE schema_migrations (
@@ -238,6 +238,7 @@ describe('durable database migrations', () => {
       `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'codex_interactions'`,
     ).get()?.sql
     expect(tableSql).toContain("'PERMISSIONS_APPROVAL'")
+    expect(tableSql).toContain("'MCP_ELICITATION'")
     upgraded.close()
   })
 })

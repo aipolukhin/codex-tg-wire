@@ -87,6 +87,38 @@ export type IncomingInteractionResponse =
       questionIndex: number
       text: string
     }
+  | {
+      kind: 'mcp_elicitation_action'
+      chatId: string
+      token: string
+      action: 'accept' | 'decline' | 'cancel'
+      callbackQueryId: string
+      callbackMessageId: number
+    }
+  | {
+      kind: 'mcp_elicitation_option'
+      chatId: string
+      token: string
+      fieldIndex: number
+      optionIndex: number
+      callbackQueryId: string
+      callbackMessageId: number
+    }
+  | {
+      kind: 'mcp_elicitation_done' | 'mcp_elicitation_skip'
+      chatId: string
+      token: string
+      fieldIndex: number
+      callbackQueryId: string
+      callbackMessageId: number
+    }
+  | {
+      kind: 'mcp_elicitation_text'
+      chatId: string
+      token: string
+      fieldIndex: number
+      text: string
+    }
 
 export interface InteractionOperation {
   operationKey: string

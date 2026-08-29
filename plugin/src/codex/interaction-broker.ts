@@ -13,6 +13,17 @@ import type {
   InteractionResult,
 } from '../bridge/contracts.js'
 import type { CodexAppServerClient } from './app-server-client.js'
+import {
+  buildMcpContent,
+  mcpDoneKey,
+  mcpElicitationStorageValue,
+  mcpSkipKey,
+  mcpValueKey,
+  parseMcpElicitation,
+  validateMcpTextValue,
+  type McpElicitationField,
+  type McpElicitationParams,
+} from './mcp-elicitation.js'
 import type {
   RequestId,
   RpcErrorBody,
@@ -105,7 +116,25 @@ type ParsedServerInteraction =
   | { kind: 'COMMAND_APPROVAL'; params: ApprovalParams }
   | { kind: 'FILE_APPROVAL'; params: ApprovalParams }
   | { kind: 'PERMISSIONS_APPROVAL'; params: PermissionsApprovalParams }
+  | { kind: 'MCP_ELICITATION'; params: McpElicitationParams }
   | { kind: 'USER_INPUT'; params: UserInputParams }
+
+type IncomingUserInputResponse = Extract<
+  IncomingInteractionResponse,
+  { kind: 'user_input_option' | 'user_input_text' }
+>
+
+type IncomingMcpElicitationResponse = Extract<
+  IncomingInteractionResponse,
+  {
+    kind:
+      | 'mcp_elicitation_action'
+      | 'mcp_elicitation_option'
+      | 'mcp_elicitation_done'
+      | 'mcp_elicitation_skip'
+      | 'mcp_elicitation_text'
+  }
+>
 
 export interface CodexInteractionBrokerOptions {
   backendName?: string
@@ -349,6 +378,10 @@ function parseServerInteraction(request: ServerRequest): ParsedServerInteraction
     const params = parsePermissionsApproval(request.params)
     return params === null ? null : { kind: 'PERMISSIONS_APPROVAL', params }
   }
+  if (request.method === 'mcpServer/elicitation/request') {
+    const params = parseMcpElicitation(request.params)
+    return params === null ? null : { kind: 'MCP_ELICITATION', params }
+  }
   return null
 }
 
@@ -356,7 +389,8 @@ function isKnownInteractiveMethod(method: string): boolean {
   return method === 'item/commandExecution/requestApproval' ||
     method === 'item/fileChange/requestApproval' ||
     method === 'item/tool/requestUserInput' ||
-    method === 'item/permissions/requestApproval'
+    method === 'item/permissions/requestApproval' ||
+    method === 'mcpServer/elicitation/request'
 }
 
 function clip(text: string, max = MAX_PREVIEW): string {
@@ -469,6 +503,119 @@ function grantedPermissionProfile(permissions: RequestPermissionProfile): Record
     ...(permissions.network === null ? {} : { network: permissions.network }),
     ...(permissions.fileSystem === null ? {} : { fileSystem: permissions.fileSystem }),
   }
+}
+
+function mcpActionButtons(
+  token: string,
+  includeAccept: boolean,
+): Array<Array<{ text: string; callback_data: string }>> {
+  return [
+    ...(includeAccept
+      ? [[{ text: '✅ Подтвердить', callback_data: `dx:e:${token}:a:accept` }]]
+      : []),
+    [{ text: '❌ Отклонить', callback_data: `dx:e:${token}:a:deny` }],
+    [{ text: '⏹ Отменить', callback_data: `dx:e:${token}:a:cancel` }],
+  ]
+}
+
+function mcpFieldOptions(field: McpElicitationField): readonly { value: string; label: string }[] {
+  if (field.kind === 'boolean') {
+    return [
+      { value: 'true', label: 'Да' },
+      { value: 'false', label: 'Нет' },
+    ]
+  }
+  return field.kind === 'single' || field.kind === 'multi' ? field.options : []
+}
+
+function mcpFieldButtons(
+  token: string,
+  field: McpElicitationField,
+  fieldIndex: number,
+  selected: readonly string[] = [],
+): Array<Array<{ text: string; callback_data: string }>> {
+  const options = field.kind === 'multi' && field.maxItems === 0 ? [] : mcpFieldOptions(field)
+  const rows = options.map((option, optionIndex) => [{
+    text: redactSecrets(clip(`${selected.includes(option.value) ? '☑ ' : ''}${option.label}`, 48)),
+    callback_data: `dx:e:${token}:o:${fieldIndex}:${optionIndex}`,
+  }])
+  if (field.kind === 'multi') {
+    rows.push([{ text: '✅ Готово', callback_data: `dx:e:${token}:d:${fieldIndex}` }])
+  }
+  if (!field.required) {
+    rows.push([{ text: '⏭ Пропустить', callback_data: `dx:e:${token}:s:${fieldIndex}` }])
+  }
+  rows.push(...mcpActionButtons(token, false))
+  return rows
+}
+
+function mcpFieldConstraint(field: McpElicitationField): string | null {
+  if (field.kind === 'string') {
+    const parts = [
+      field.format === null ? null : `формат ${field.format}`,
+      field.minLength === null ? null : `мин. ${field.minLength}`,
+      field.maxLength === null ? null : `макс. ${field.maxLength}`,
+    ].filter((part): part is string => part !== null)
+    return parts.length === 0 ? null : parts.join(', ')
+  }
+  if (field.kind === 'number' || field.kind === 'integer') {
+    const parts = [
+      field.kind === 'integer' ? 'целое' : 'число',
+      field.minimum === null ? null : `от ${field.minimum}`,
+      field.maximum === null ? null : `до ${field.maximum}`,
+    ].filter((part): part is string => part !== null)
+    return parts.join(', ')
+  }
+  if (field.kind === 'multi') return `выбрать ${field.minItems}–${field.maxItems}`
+  return null
+}
+
+function mcpDefaultValue(field: McpElicitationField): string | null {
+  if (field.defaultValue === null) return null
+  return Array.isArray(field.defaultValue)
+    ? field.defaultValue.join(', ')
+    : String(field.defaultValue)
+}
+
+function renderMcpIntro(token: string, params: McpElicitationParams): string {
+  const lines = [
+    '🔌 MCP-сервер запрашивает действие',
+    `Сервер: ${clip(params.serverName, 300)}`,
+    clip(params.message, 1_500),
+  ]
+  if (params.mode === 'url') lines.push(`Сайт: ${clip(params.urlHost, 300)}`)
+  if (params.mode === 'form') lines.push(`Полей: ${params.fields.length}`)
+  const footer = `ID: ${token}`
+  return redactSecrets(`${clip(lines.join('\n\n'), 3_500 - footer.length)}\n\n${footer}`)
+}
+
+function renderMcpField(
+  token: string,
+  field: McpElicitationField,
+  fieldIndex: number,
+  total: number,
+  selected: readonly string[] = [],
+): string {
+  const lines = [
+    `🔌 MCP form — ${fieldIndex + 1}/${total}`,
+    `${field.title}${field.required ? ' · обязательно' : ' · необязательно'}`,
+  ]
+  if (field.description !== null && field.description.trim().length > 0) {
+    lines.push(clip(field.description, 700))
+  }
+  const constraint = mcpFieldConstraint(field)
+  if (constraint !== null) lines.push(`Ограничения: ${constraint}`)
+  const defaultValue = mcpDefaultValue(field)
+  if (defaultValue !== null) lines.push(`По умолчанию: ${clip(defaultValue, 300)}`)
+  if (field.kind === 'string' || field.kind === 'number' || field.kind === 'integer') {
+    lines.push(`Ответ: /elicit ${token} ${fieldIndex + 1} <значение>`)
+  }
+  if (field.kind === 'multi') {
+    lines.push(selected.length === 0
+      ? 'Выбрано: —'
+      : `Выбрано: ${selected.map((value) => clip(value, 100)).join(', ')}`)
+  }
+  return redactSecrets(clip(lines.join('\n\n'), 3_500))
 }
 
 function renderQuestion(token: string, question: UserInputQuestion, index: number, total: number): string {
@@ -603,7 +750,13 @@ export class CodexInteractionBroker implements InteractionHandler {
     if (operation.response.kind === 'approval') {
       return this.handleApproval(operation, interaction, operation.response)
     }
-    return this.handleUserInput(operation, interaction, operation.response)
+    if (
+      operation.response.kind === 'user_input_option' ||
+      operation.response.kind === 'user_input_text'
+    ) {
+      return this.handleUserInput(operation, interaction, operation.response)
+    }
+    return this.handleMcpElicitation(operation, interaction, operation.response)
   }
 
   recoverStartup(): CodexInteractionRecoverySweep {
@@ -617,7 +770,9 @@ export class CodexInteractionBroker implements InteractionHandler {
     for (const interaction of stale) {
       const prefix = interaction.kind === 'USER_INPUT'
         ? `codex-interaction:${interaction.id}:question:`
-        : `codex-interaction:${interaction.id}:prompt`
+        : interaction.kind === 'MCP_ELICITATION'
+          ? `codex-interaction:${interaction.id}:mcp-`
+          : `codex-interaction:${interaction.id}:prompt`
       const jobs = this.outbox.retireBySourcePrefix(
         prefix,
         'interaction became stale after App Server restart',
@@ -700,6 +855,14 @@ export class CodexInteractionBroker implements InteractionHandler {
       await this.failClosedUnroutable(request, parsed.kind)
       return
     }
+    if (parsed.kind === 'MCP_ELICITATION' && parsed.params.mode === 'unsupported') {
+      await this.rejectUnsupportedMcpElicitation(
+        request,
+        context.session.id,
+        context.session.chatId,
+      )
+      return
+    }
     const nowMs = this.now()
     const created = this.interactions.create({
       connectionId: this.connectionId,
@@ -709,7 +872,9 @@ export class CodexInteractionBroker implements InteractionHandler {
       turnId: parsed.params.turnId,
       itemId: parsed.params.itemId,
       kind: parsed.kind,
-      request: request.params,
+      request: parsed.kind === 'MCP_ELICITATION'
+        ? mcpElicitationStorageValue(parsed.params)
+        : request.params,
       createdAtMs: nowMs,
       expiresAtMs: nowMs + this.interactionTimeoutMs,
     })
@@ -765,6 +930,56 @@ export class CodexInteractionBroker implements InteractionHandler {
         createdAtMs: interaction.createdAtMs,
         expiresAtMs: interaction.expiresAtMs,
       })
+      return
+    }
+    if (parsed.kind === 'MCP_ELICITATION') {
+      const introKeyboard = parsed.params.mode === 'url'
+        ? [
+            [{ text: '🌐 Открыть сайт', url: parsed.params.url }],
+            ...mcpActionButtons(interaction.token, true),
+          ]
+        : parsed.params.mode === 'form' && parsed.params.fields.length === 0
+          ? mcpActionButtons(interaction.token, true)
+          : []
+      this.outbox.enqueue({
+        sourceKey: `codex-interaction:${interaction.id}:mcp-prompt`,
+        sessionId: interaction.sessionId,
+        kind: 'send_text',
+        payload: {
+          chatId,
+          text: renderMcpIntro(interaction.token, parsed.params),
+          ...(introKeyboard.length === 0
+            ? {}
+            : { options: { reply_markup: { inline_keyboard: introKeyboard } } }),
+        },
+        createdAtMs: interaction.createdAtMs,
+        expiresAtMs: interaction.expiresAtMs,
+      })
+      if (parsed.params.mode === 'form') {
+        for (const [index, field] of parsed.params.fields.entries()) {
+          this.outbox.enqueue({
+            sourceKey: `codex-interaction:${interaction.id}:mcp-field:${index}`,
+            sessionId: interaction.sessionId,
+            kind: 'send_text',
+            payload: {
+              chatId,
+              text: renderMcpField(
+                interaction.token,
+                field,
+                index,
+                parsed.params.fields.length,
+              ),
+              options: {
+                reply_markup: {
+                  inline_keyboard: mcpFieldButtons(interaction.token, field, index),
+                },
+              },
+            },
+            createdAtMs: interaction.createdAtMs,
+            expiresAtMs: interaction.expiresAtMs,
+          })
+        }
+      }
       return
     }
     for (const [index, question] of parsed.params.questions.entries()) {
@@ -852,7 +1067,7 @@ export class CodexInteractionBroker implements InteractionHandler {
   private async handleUserInput(
     operation: InteractionOperation,
     interaction: CodexInteractionRecord,
-    response: Exclude<IncomingInteractionResponse, { kind: 'approval' }>,
+    response: IncomingUserInputResponse,
   ): Promise<InteractionResult> {
     if (interaction.kind !== 'USER_INPUT') {
       return this.enqueueClosedResponse(operation, 'Это не запрос дополнительного ввода')
@@ -903,6 +1118,204 @@ export class CodexInteractionBroker implements InteractionHandler {
     if (began.outcome !== 'started') return this.enqueueClosedResponse(operation, closeText(began.interaction.state))
     const resolved = await this.sendResolution(began.interaction, responsePayload)
     return this.enqueueAnswerAccepted(operation, answer, resolved)
+  }
+
+  private async handleMcpElicitation(
+    operation: InteractionOperation,
+    interaction: CodexInteractionRecord,
+    response: IncomingMcpElicitationResponse,
+  ): Promise<InteractionResult> {
+    if (interaction.kind !== 'MCP_ELICITATION') {
+      return this.enqueueClosedResponse(operation, 'Это не запрос MCP')
+    }
+    const params = parseMcpElicitation(interaction.request)
+    if (params === null || params.mode === 'unsupported') {
+      return this.enqueueClosedResponse(operation, 'MCP-запрос недоступен')
+    }
+
+    if (response.kind === 'mcp_elicitation_action') {
+      if (response.action === 'accept') {
+        const content = params.mode === 'url'
+          ? null
+          : buildMcpContent(params.fields, interaction.answers)
+        if (content !== null && content.outcome !== 'complete') {
+          return this.enqueueClosedResponse(
+            operation,
+            content.outcome === 'invalid' ? content.error : 'Сначала заполни все поля',
+          )
+        }
+        return this.resolveMcpElicitation(
+          operation,
+          interaction,
+          'accept',
+          content === null ? null : content.content,
+        )
+      }
+      return this.resolveMcpElicitation(operation, interaction, response.action, null)
+    }
+
+    if (params.mode !== 'form') {
+      return this.enqueueClosedResponse(operation, 'Для URL-запроса используй кнопки')
+    }
+    const field = params.fields[response.fieldIndex]
+    if (field === undefined) return this.enqueueClosedResponse(operation, 'Поле недоступно')
+
+    if (response.kind === 'mcp_elicitation_text') {
+      if (response.text.length === 0) return this.enqueueClosedResponse(operation, 'Пустой ответ не принят')
+      const parsed = validateMcpTextValue(field, response.text)
+      if (!parsed.ok) return this.enqueueClosedResponse(operation, parsed.error)
+      const recorded = this.interactions.recordAnswer(
+        interaction.token,
+        interaction.sessionId,
+        mcpValueKey(response.fieldIndex),
+        [response.text],
+        this.now(),
+        [mcpSkipKey(response.fieldIndex)],
+      )
+      if (!recorded.applied) return this.enqueueClosedResponse(operation, 'На это поле уже ответили')
+      return this.finishMcpFormField(
+        operation,
+        recorded.interaction,
+        params,
+        `✅ ${redactSecrets(field.title)}`,
+      )
+    }
+
+    if (response.kind === 'mcp_elicitation_option') {
+      const option = mcpFieldOptions(field)[response.optionIndex]
+      if (option === undefined) return this.enqueueClosedResponse(operation, 'Вариант недоступен')
+      if (field.kind === 'multi') {
+        if (field.maxItems === 0) return this.enqueueClosedResponse(operation, 'Для этого поля выбор не нужен')
+        const toggled = this.interactions.toggleAnswer(
+          interaction.token,
+          interaction.sessionId,
+          mcpValueKey(response.fieldIndex),
+          option.value,
+          mcpDoneKey(response.fieldIndex),
+          mcpSkipKey(response.fieldIndex),
+          field.maxItems,
+          this.now(),
+        )
+        if (toggled.outcome === 'limit') {
+          return this.enqueueClosedResponse(operation, `Можно выбрать не больше ${field.maxItems}`)
+        }
+        if (toggled.outcome !== 'updated') {
+          return this.enqueueClosedResponse(operation, 'Поле уже закрыто')
+        }
+        const selected = toggled.interaction.answers[mcpValueKey(response.fieldIndex)] ?? []
+        return this.enqueueMcpToggleOutcome(
+          operation,
+          interaction,
+          params,
+          field,
+          response.fieldIndex,
+          selected,
+          toggled.selected ? 'Добавлено' : 'Убрано',
+        )
+      }
+      const recorded = this.interactions.recordAnswer(
+        interaction.token,
+        interaction.sessionId,
+        mcpValueKey(response.fieldIndex),
+        [option.value],
+        this.now(),
+        [mcpSkipKey(response.fieldIndex)],
+      )
+      if (!recorded.applied) return this.enqueueClosedResponse(operation, 'На это поле уже ответили')
+      return this.finishMcpFormField(
+        operation,
+        recorded.interaction,
+        params,
+        `✅ ${redactSecrets(option.label)}`,
+      )
+    }
+
+    if (response.kind === 'mcp_elicitation_skip') {
+      if (field.required) return this.enqueueClosedResponse(operation, 'Обязательное поле нельзя пропустить')
+      const recorded = this.interactions.recordAnswer(
+        interaction.token,
+        interaction.sessionId,
+        mcpSkipKey(response.fieldIndex),
+        ['skip'],
+        this.now(),
+        [mcpValueKey(response.fieldIndex), mcpDoneKey(response.fieldIndex)],
+      )
+      if (!recorded.applied) return this.enqueueClosedResponse(operation, 'Поле уже закрыто')
+      return this.finishMcpFormField(operation, recorded.interaction, params, '⏭ Пропущено')
+    }
+
+    if (field.kind !== 'multi') return this.enqueueClosedResponse(operation, 'Кнопка недоступна')
+    const selected = interaction.answers[mcpValueKey(response.fieldIndex)] ?? []
+    if (selected.length < field.minItems || selected.length > field.maxItems) {
+      return this.enqueueClosedResponse(
+        operation,
+        `Нужно выбрать от ${field.minItems} до ${field.maxItems}`,
+      )
+    }
+    const recorded = this.interactions.recordAnswer(
+      interaction.token,
+      interaction.sessionId,
+      mcpDoneKey(response.fieldIndex),
+      ['done'],
+      this.now(),
+      [mcpSkipKey(response.fieldIndex)],
+    )
+    if (!recorded.applied) return this.enqueueClosedResponse(operation, 'Поле уже закрыто')
+    return this.finishMcpFormField(operation, recorded.interaction, params, '✅ Выбор принят')
+  }
+
+  private async finishMcpFormField(
+    operation: InteractionOperation,
+    interaction: CodexInteractionRecord,
+    params: Extract<McpElicitationParams, { mode: 'form' }>,
+    label: string,
+  ): Promise<InteractionResult> {
+    const content = buildMcpContent(params.fields, interaction.answers)
+    if (content.outcome === 'invalid') return this.enqueueClosedResponse(operation, content.error)
+    if (content.outcome === 'incomplete') return this.enqueueMcpFieldAccepted(operation, label, false)
+    const payload = { action: 'accept', content: content.content, _meta: null }
+    const began = this.interactions.beginResolution(
+      interaction.token,
+      interaction.sessionId,
+      payload,
+      this.now(),
+    )
+    if (began.outcome !== 'started') {
+      return this.enqueueClosedResponse(operation, closeText(began.interaction.state))
+    }
+    const resolved = await this.sendResolution(began.interaction, payload)
+    return this.enqueueMcpFieldAccepted(
+      operation,
+      resolved ? '✅ Форма отправлена в Codex' : '⚠️ Ответ не доставлен в Codex',
+      resolved,
+    )
+  }
+
+  private async resolveMcpElicitation(
+    operation: InteractionOperation,
+    interaction: CodexInteractionRecord,
+    action: 'accept' | 'decline' | 'cancel',
+    content: Record<string, string | number | boolean | string[]> | null,
+  ): Promise<InteractionResult> {
+    const payload = { action, content: action === 'accept' ? content : null, _meta: null }
+    const began = this.interactions.beginResolution(
+      interaction.token,
+      interaction.sessionId,
+      payload,
+      this.now(),
+    )
+    if (began.outcome !== 'started') {
+      return this.enqueueClosedResponse(operation, closeText(began.interaction.state))
+    }
+    const resolved = await this.sendResolution(began.interaction, payload)
+    const verdict = action === 'accept'
+      ? '✅ MCP-запрос подтверждён'
+      : action === 'decline' ? '❌ MCP-запрос отклонён' : '⏹ MCP-запрос отменён'
+    return this.enqueueCallbackOutcome(
+      operation,
+      resolved ? verdict : '⚠️ Ответ не доставлен в Codex',
+      verdict,
+    )
   }
 
   private approvalDecisionAllowed(
@@ -961,13 +1374,80 @@ export class CodexInteractionBroker implements InteractionHandler {
     return { deliveryJobId: enqueued.job.id }
   }
 
+  private enqueueMcpFieldAccepted(
+    operation: InteractionOperation,
+    text: string,
+    completed: boolean,
+  ): InteractionResult {
+    if (operation.response.kind !== 'mcp_elicitation_text') {
+      return this.enqueueCallbackOutcome(operation, text, text)
+    }
+    const enqueued = this.outbox.enqueue({
+      sourceKey: `${operation.operationKey}:confirmation`,
+      kind: 'send_text',
+      payload: {
+        chatId: operation.response.chatId,
+        text: completed ? text : `${text}. Заполни остальные поля.`,
+      },
+      createdAtMs: this.now(),
+    })
+    return { deliveryJobId: enqueued.job.id }
+  }
+
+  private enqueueMcpToggleOutcome(
+    operation: InteractionOperation,
+    interaction: CodexInteractionRecord,
+    params: Extract<McpElicitationParams, { mode: 'form' }>,
+    field: Extract<McpElicitationField, { kind: 'multi' }>,
+    fieldIndex: number,
+    selected: readonly string[],
+    toast: string,
+  ): InteractionResult {
+    const response = operation.response
+    if (response.kind !== 'mcp_elicitation_option') {
+      return this.enqueueClosedResponse(operation, 'Некорректный callback')
+    }
+    const nowMs = this.now()
+    const edit = this.outbox.enqueue({
+      sourceKey: `${operation.operationKey}:edit`,
+      kind: 'edit',
+      payload: {
+        chatId: response.chatId,
+        messageId: response.callbackMessageId,
+        text: renderMcpField(
+          interaction.token,
+          field,
+          fieldIndex,
+          params.fields.length,
+          selected,
+        ),
+        options: {
+          reply_markup: {
+            inline_keyboard: mcpFieldButtons(interaction.token, field, fieldIndex, selected),
+          },
+        },
+      },
+      createdAtMs: nowMs,
+    })
+    this.outbox.enqueue({
+      sourceKey: `${operation.operationKey}:callback-ack`,
+      kind: 'reaction',
+      payload: { action: 'answer_callback', callbackQueryId: response.callbackQueryId, text: toast },
+      createdAtMs: nowMs,
+      expiresAtMs: nowMs + 30_000,
+    })
+    return { deliveryJobId: edit.job.id }
+  }
+
   private enqueueCallbackOutcome(
     operation: InteractionOperation,
     toast: string,
     cardText: string,
   ): InteractionResult {
     const response = operation.response
-    if (response.kind === 'user_input_text') return this.enqueueClosedResponse(operation, toast)
+    if (response.kind === 'user_input_text' || response.kind === 'mcp_elicitation_text') {
+      return this.enqueueClosedResponse(operation, toast)
+    }
     const nowMs = this.now()
     const edit = this.outbox.enqueue({
       sourceKey: `${operation.operationKey}:edit`,
@@ -993,7 +1473,7 @@ export class CodexInteractionBroker implements InteractionHandler {
   private enqueueClosedResponse(operation: InteractionOperation, text: string): InteractionResult {
     const response = operation.response
     const nowMs = this.now()
-    if (response.kind !== 'user_input_text') {
+    if (response.kind !== 'user_input_text' && response.kind !== 'mcp_elicitation_text') {
       const ack = this.outbox.enqueue({
         sourceKey: `${operation.operationKey}:callback-ack`,
         kind: 'reaction',
@@ -1025,6 +1505,10 @@ export class CodexInteractionBroker implements InteractionHandler {
     }
     if (kind === 'PERMISSIONS_APPROVAL') {
       await this.client.respond(request.id, { permissions: {}, scope: 'turn' })
+      return
+    }
+    if (kind === 'MCP_ELICITATION') {
+      await this.client.respond(request.id, { action: 'cancel', content: null, _meta: null })
       return
     }
     await this.client.respond(request.id, { decision: 'decline' })
@@ -1075,6 +1559,25 @@ export class CodexInteractionBroker implements InteractionHandler {
     })
   }
 
+  private async rejectUnsupportedMcpElicitation(
+    request: ServerRequest,
+    sessionId: string,
+    chatId: string,
+  ): Promise<void> {
+    const response = { action: 'cancel', content: null, _meta: null }
+    await this.client.respond(request.id, response)
+    this.outbox.enqueue({
+      sourceKey: `codex-mcp-unsupported:${this.connectionId}:${crypto.randomUUID()}`,
+      sessionId,
+      kind: 'send_text',
+      payload: {
+        chatId,
+        text: '⏹ MCP-сервер запросил расширенную форму, которую мост не согласовывал. Запрос безопасно отменён.',
+      },
+      createdAtMs: this.now(),
+    })
+  }
+
   private armTimeout(interaction: CodexInteractionRecord): void {
     const delayMs = Math.max(1, interaction.expiresAtMs - this.now())
     const timer = setTimeout(() => {
@@ -1092,7 +1595,9 @@ export class CodexInteractionBroker implements InteractionHandler {
       ? null
       : interaction.kind === 'PERMISSIONS_APPROVAL'
         ? { permissions: {}, scope: 'turn' }
-        : { decision: 'decline' }
+        : interaction.kind === 'MCP_ELICITATION'
+          ? { action: 'cancel', content: null, _meta: null }
+          : { decision: 'decline' }
     if (response === null) {
       const began = this.interactions.beginTimeoutResolution(
         interaction.id,

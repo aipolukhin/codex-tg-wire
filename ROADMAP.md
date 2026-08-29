@@ -27,6 +27,7 @@
 - [x] Добавлен standalone personal-alpha service: строгий конфиг без токена, grammY/Codex wiring и signal shutdown.
 - [x] Добавлен первый M3 interaction slice: durable command/file approvals, user-input questions, inline callbacks, `/answer`, expiry и stale-on-disconnect.
 - [x] Добавлены durable `item/permissions/requestApproval`: строгая нормализация network/filesystem profile, least-privilege grant на turn/session и пустой grant при deny/timeout/unroutable request.
+- [x] Закрыт durable MCP elicitation slice: стандартные typed forms и HTTPS URL flows, `/elicit`, multiselect, skip/decline/cancel, timeout и restart recovery; несогласованный `openai/form` и secret-like schema отменяются fail-closed.
 - [x] Добавлен явный `/steer <текст>` с `expectedTurnId`; late/mismatched команды не попадают в другой turn.
 - [x] Добавлена restart-safe FIFO-очередь turns: один активный turn на session, control updates обходят очередь, ожидание не расходует retry budget.
 - [x] Добавлен первый problem center: `/failed`, `/ambiguous`, audited `/retry`, `/resolved`, `/archive`; unsafe retry для `AMBIGUOUS` запрещён.
@@ -194,7 +195,8 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 - Явный `/steer` для `turn/steer`; обычное сообщение при занятом thread по умолчанию становится следующим queued turn.
 - `/stop` вызывает `turn/interrupt` и корректно закрывает UI state.
 - Server-initiated approvals отображаются inline buttons с проверкой owner и одноразовым решением. **Готово для command/file и permission-profile requests:** grant дополнительных network/filesystem permissions строится только из сохранённого запроса; Telegram callback выбирает turn/session, но не несёт и не расширяет права. Deny, timeout и отсутствующий thread route возвращают пустой grant.
-- User-input requests получают durable correlation id и срок жизни.
+- User-input requests получают durable correlation id и срок жизни. **Готово:** обычные вопросы поддерживают кнопки и `/answer`; secret prompts отклоняются до Telegram.
+- MCP elicitation. **Готово для стабильных `form` и `url` modes:** поля стандартной schema нормализуются в typed Telegram controls, текст/числа принимаются через `/elicit`, URL-кнопка разрешает только HTTPS без embedded credentials. Ответы, multiselect и completion markers durable; deny/cancel/timeout/unroutable request закрываются безопасно. Расширенный `openai/form` capability намеренно не объявляется и такой запрос отменяется до сохранения произвольной schema.
 - `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server. **Готово:** выбор проекта и overrides хранятся в SQLite по bot/chat/project; `/cwd` принимает только id из `projects[]`, а `danger-full-access` доступен только при явном включении в `allowedSandboxModes`.
 - Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn. **Готов первый срез:** одиночные photo и image documents идут нативным `localImage`, разрешённые text/PDF/JSON/XML/CSV documents — через приватный durable file и bridge-generated path metadata. Albums, audio/video и outbound media остаются M4.
 - Неизвестные App Server events сохраняются диагностически и безопасно игнорируются, не валят процесс. **Готово:** каталог известных методов проверяется вместе с generated schema, а unknown method агрегируется в bounded SQLite-журнал без params/body.
@@ -203,7 +205,7 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
   возвращается в исходную inbox operation, `FAILED/INTERRUPTED` закрываются без
   повтора, а `inProgress`, отсутствующий turn или completed без доказанного final
   переходят в `UNKNOWN`. Потерянный ответ `turn/start` коррелируется по
-  `clientUserMessageId = operationKey`. Старые approval/user-input requests получают
+  `clientUserMessageId = operationKey`. Старые approval/user-input/MCP requests получают
   `STALE`; недоставленные карточки архивируются, доставленные редактируются без
   кнопок, post-send uncertainty остаётся `AMBIGUOUS`. `/new force` — явный
   операторский выход из `UNKNOWN`, обычный `/new` по-прежнему fail-closed.

@@ -10,7 +10,13 @@ import type {
   TelegramGateway,
 } from '../bridge/contracts.js'
 import type { DeliveryJob, DeliveryJobInput, InboxUpdate } from '../durable/contracts.js'
+import { splitMessage } from '../format/chunk.js'
+import {
+  isTelegramHtmlParseError,
+  markdownToTelegramHtml,
+} from '../format/html.js'
 import { redactSecrets } from '../safety/redact.js'
+import { validateTelegramHtml } from '../safety/html-validator.js'
 import type {
   InboundAttachmentStore,
   TelegramAttachmentDownload,
@@ -43,6 +49,7 @@ export type TelegramInlineButton =
   | { text: string; url: string; callback_data?: never }
 
 export interface TelegramMessageOptions {
+  parse_mode?: 'HTML'
   reply_markup?: { inline_keyboard: TelegramInlineButton[][] }
 }
 
@@ -143,7 +150,18 @@ function parseMessageOptions(
   extraSecrets: readonly string[] = [],
 ): TelegramMessageOptions {
   if (value === undefined) return {}
-  if (!isRecord(value) || !isRecord(value.reply_markup)) {
+  if (!isRecord(value)) {
+    throw new TelegramDeliveryPayloadError('message options must be an object')
+  }
+  const options: TelegramMessageOptions = {}
+  if (value.parse_mode !== undefined) {
+    if (value.parse_mode !== 'HTML') {
+      throw new TelegramDeliveryPayloadError('message options contain an invalid parse_mode')
+    }
+    options.parse_mode = 'HTML'
+  }
+  if (value.reply_markup === undefined) return options
+  if (!isRecord(value.reply_markup)) {
     throw new TelegramDeliveryPayloadError('message options contain an invalid reply_markup')
   }
   const keyboard = value.reply_markup.inline_keyboard
@@ -189,7 +207,12 @@ function parseMessageOptions(
       throw new TelegramDeliveryPayloadError('inline keyboard button must have exactly one action')
     })
   })
-  return { reply_markup: { inline_keyboard } }
+  return { ...options, reply_markup: { inline_keyboard } }
+}
+
+function withoutParseMode(options: TelegramMessageOptions): TelegramMessageOptions {
+  const { parse_mode: _parseMode, ...fallback } = options
+  return fallback
 }
 
 export class TelegramDeliveryPayloadError extends Error {
@@ -446,13 +469,35 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     }
   }
 
-  buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput {
-    return {
-      sourceKey: input.sourceKey,
+  buildFinalTextDeliveries(input: FinalTextDelivery): readonly DeliveryJobInput[] {
+    const rendered = markdownToTelegramHtml(input.result.finalText)
+    const validated = validateTelegramHtml(rendered)
+    const chunkLimit = Math.min(4_000, this.maxTextLength)
+    const rawChunks = splitMessage(validated.text, chunkLimit)
+    if (rawChunks.length === 0) throw new TelegramDeliveryPayloadError('final response is empty')
+    const chunks = rawChunks.flatMap((chunk) => {
+      if (validated.downgraded) return [{ text: chunk, html: false }]
+      const checked = validateTelegramHtml(chunk)
+      if (!checked.downgraded) return [{ text: checked.text, html: true }]
+      // A pathological opening tag can itself cross a chunk boundary. Its
+      // escaped plain-text downgrade may be longer than the original chunk,
+      // so split it again before it becomes a durable delivery job.
+      return splitMessage(checked.text, chunkLimit).map((text) => ({ text, html: false }))
+    })
+    const sourceKeys = chunks.map((_, index) => index === 0
+      ? input.sourceKey
+      : `${input.sourceKey}:chunk:${index + 1}`)
+    return chunks.map((chunk, index) => ({
+      sourceKey: sourceKeys[index] as string,
+      ...(index === 0 ? {} : { dependsOnSourceKey: sourceKeys[index - 1] as string }),
       kind: 'send_text',
-      payload: { chatId: input.message.chatId, text: input.result.finalText },
-      createdAtMs: input.nowMs,
-    }
+      payload: {
+        chatId: input.message.chatId,
+        text: chunk.text,
+        ...(chunk.html ? { options: { parse_mode: 'HTML' } } : {}),
+      },
+      createdAtMs: input.nowMs + index,
+    }))
   }
 
   buildCommandDelivery(input: CommandDelivery): DeliveryJobInput {
@@ -503,14 +548,21 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     if (typeof payload.text !== 'string') {
       throw new TelegramDeliveryPayloadError('send_text text must be a string')
     }
-    const text = redactSecrets(payload.text, this.extraSecrets)
+    let text = redactSecrets(payload.text, this.extraSecrets)
     if (text.trim().length === 0) throw new TelegramDeliveryPayloadError('send_text text is empty')
+    let options = parseMessageOptions(payload.options, this.extraSecrets)
+    if (options.parse_mode === 'HTML') {
+      const validated = validateTelegramHtml(text)
+      if (validated.downgraded) {
+        text = validated.text
+        options = withoutParseMode(options)
+      }
+    }
     if (text.length > this.maxTextLength) {
       throw new TelegramDeliveryPayloadError(
         `send_text exceeds Telegram limit (${text.length} > ${this.maxTextLength})`,
       )
     }
-    const options = parseMessageOptions(payload.options, this.extraSecrets)
     if (job.kind === 'edit') {
       if (!Number.isSafeInteger(payload.messageId) || (payload.messageId as number) <= 0) {
         throw new TelegramDeliveryPayloadError('edit messageId must be a positive safe integer')
@@ -542,15 +594,35 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       if (this.api.editMessageText === undefined) {
         throw new TelegramDeliveryPayloadError('Telegram API cannot edit messages')
       }
-      await this.api.editMessageText(
-        prepared.chatId,
-        prepared.messageId,
-        prepared.text,
-        prepared.options,
-      )
+      try {
+        await this.api.editMessageText(
+          prepared.chatId,
+          prepared.messageId,
+          prepared.text,
+          prepared.options,
+        )
+      } catch (error) {
+        if (prepared.options.parse_mode !== 'HTML' || !isTelegramHtmlParseError(error)) throw error
+        await this.api.editMessageText(
+          prepared.chatId,
+          prepared.messageId,
+          prepared.text,
+          withoutParseMode(prepared.options),
+        )
+      }
       return { remoteId: `telegram:${prepared.messageId}` }
     }
-    const sent = await this.api.sendMessage(prepared.chatId, prepared.text, prepared.options)
+    let sent: { message_id: number }
+    try {
+      sent = await this.api.sendMessage(prepared.chatId, prepared.text, prepared.options)
+    } catch (error) {
+      if (prepared.options.parse_mode !== 'HTML' || !isTelegramHtmlParseError(error)) throw error
+      sent = await this.api.sendMessage(
+        prepared.chatId,
+        prepared.text,
+        withoutParseMode(prepared.options),
+      )
+    }
     if (!Number.isSafeInteger(sent.message_id) || sent.message_id <= 0) {
       throw new TelegramDeliveryPayloadError('Telegram returned an invalid message_id')
     }

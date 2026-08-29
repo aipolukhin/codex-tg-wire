@@ -66,6 +66,7 @@ export type DeliveryProblemAction = 'RETRY' | 'RESOLVE' | 'ARCHIVE'
 export interface DeliveryJobInput {
   id?: string
   sourceKey: string
+  dependsOnSourceKey?: string | null
   sessionId?: string | null
   kind: DeliveryKind
   payload: unknown
@@ -77,6 +78,7 @@ export interface DeliveryJobInput {
 export interface DeliveryJob {
   id: string
   sourceKey: string
+  dependsOnSourceKey: string | null
   sessionId: string | null
   kind: DeliveryKind
   payload: unknown

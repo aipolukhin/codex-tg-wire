@@ -1,6 +1,6 @@
 # Dashi Codex Telegram Bridge — personal alpha
 
-Это отдельный durable bridge-сервис, а не Claude Code channel runtime. Он принимает Telegram update в SQLite, запускает turn через Codex App Server и отправляет финальный ответ только через durable outbox.
+Это отдельный durable bridge-сервис, а не Claude Code channel runtime. Он принимает Telegram update в SQLite, запускает turn через Codex App Server и отправляет финальный ответ только через durable outbox. Markdown финального ответа преобразуется в проверенный Telegram HTML; длинный ответ становится упорядоченной цепочкой сообщений до 4000 символов каждое.
 
 ## Запуск
 
@@ -78,6 +78,8 @@ Problem center показывает только безопасные метад
 
 Принятые действия идемпотентны и сохраняются в `delivery_problem_actions` вместе с actor, исходным и целевым состоянием.
 
+Длинный финальный ответ сначала целиком раскладывается в SQLite и лишь затем входящий update помечается обработанным. Каждый chunk ждёт `DELIVERED` predecessor. Поэтому неизвестный результат отправки останавливает хвост в очереди: `/resolved` с проверенным Telegram message id продолжает цепочку, а `/archive` закрывает оставшиеся зависимые chunks без скрытого повтора.
+
 ## Входящие изображения и файлы
 
 Первый media slice принимает одиночные Telegram photo и documents. Стабильный Codex App Server input поддерживает `text`, `image` и `localImage`, поэтому photo и разрешённый image document передаются нативным `localImage`. Обычный разрешённый документ сохраняется локально, а Codex получает bridge-generated metadata с абсолютным path и читает файл своими sandboxed tools. `mention` для этого не используется: в App Server он предназначен для apps. Протокольный источник: [официальная документация Codex App Server](https://developers.openai.com/codex/app-server).
@@ -102,6 +104,7 @@ Problem center показывает только безопасные метад
 - allowlist пользователей и чатов обязательны и работают deny-by-default;
 - bot token не хранится в конфиге или SQLite;
 - исходящий текст и подписи inline-кнопок проходят secret redaction;
+- Markdown финального ответа проходит Telegram HTML allowlist и повторную проверку после redaction; каждый chunk ограничен 4000 символами, а подтверждение доставки хранится отдельно;
 - update сохраняется до продвижения Telegram offset;
 - очередь turns и её порядок хранятся в SQLite; ожидание занятой session не расходует retry budget;
 - выбор проекта и Codex overrides хранятся в SQLite; Telegram не может подставить произвольный `cwd` или обойти sandbox allowlist;
@@ -113,4 +116,4 @@ Problem center показывает только безопасные метад
 - вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
 - MCP URL разрешён только по HTTPS без embedded credentials; `openai/form` не согласовывается, а secret-like form schema не превращается в Telegram-карточку.
 
-Это personal alpha: albums, audio/video/voice и outbound media ещё идут следующими срезами roadmap. Durable recovery text/Codex interaction kernel, включая MCP elicitation, закрыт; media/upload recovery и retention относятся к M4/M5.
+Это personal alpha: controls/status UX, HUD, heartbeat, albums, audio/video/voice и outbound media ещё идут следующими срезами roadmap. Durable recovery text/Codex interaction kernel, включая MCP elicitation и ordered long replies, закрыт; media/upload recovery и retention относятся к M4/M5.

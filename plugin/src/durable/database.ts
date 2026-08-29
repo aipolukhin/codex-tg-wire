@@ -387,6 +387,16 @@ const MIGRATIONS: readonly Migration[] = [
         ON codex_interactions (state, recovery_handled_at_ms, updated_at_ms)`,
     ],
   },
+  {
+    version: 13,
+    name: 'ordered_delivery_chains',
+    statements: [
+      `ALTER TABLE delivery_jobs ADD COLUMN depends_on_source_key TEXT
+        REFERENCES delivery_jobs(source_key) ON DELETE SET NULL`,
+      `CREATE INDEX delivery_jobs_dependency_idx
+        ON delivery_jobs (depends_on_source_key, state, created_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

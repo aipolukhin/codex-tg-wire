@@ -294,7 +294,7 @@ export interface TelegramGateway<PreparedDelivery = unknown> {
   ): Promise<InboundMessagePreparation>
   extractCommand?(update: InboxUpdate): IncomingCommand | null
   extractInteractionResponse?(update: InboxUpdate): IncomingInteractionResponse | null
-  buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput
+  buildFinalTextDeliveries(input: FinalTextDelivery): readonly DeliveryJobInput[]
   buildInboundRejectionDelivery?(input: InboundRejectionDelivery): DeliveryJobInput
   buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
   prepareDelivery(job: DeliveryJob): Promise<PreparedDelivery>

@@ -35,6 +35,7 @@
 - [x] Добавлены durable per-project настройки: `/model`, `/effort`, `/sandbox`, `/approval` и безопасный `/cwd`; model capabilities читаются из live `model/list`, а произвольный путь из Telegram принять нельзя.
 - [x] Добавлен безопасный inbound attachment slice: Telegram photo/image и allowlisted documents сохраняются атомарно, переживают restart и доходят до Codex как `localImage` или sandbox-readable local file metadata.
 - [x] Неизвестные App Server notifications больше не теряются молча: bounded SQLite-журнал хранит только method/correlation/count/timestamps, без event payload.
+- [x] Начат M4: финальный Markdown Codex превращается в проверенный Telegram HTML и режется на ordered durable jobs до 4000 символов; `AMBIGUOUS` predecessor блокирует хвост, а ручной resolve продолжает цепочку без дублей.
 
 ## 1. Что именно мы строим
 
@@ -215,7 +216,7 @@ Gate M3: все поддержанные flows покрыты record/replay fixt
 ### M4 — лучший UX Dashi
 
 - Перенести Dashi controls и статусную модель, отвязав их от Claude events.
-- HTML/Markdown sanitation, chunking, secret redaction и safe previews.
+- HTML/Markdown sanitation, chunking, secret redaction и safe previews. **Готов text slice:** Dashi Markdown renderer и allowlist-validator формируют independently valid chunks до 4000 символов. Каждый chunk — отдельная ordered outbox job; хвост ждёт remote proof predecessor, parse rejection один раз безопасно падает в plain text.
 - HUD: active project/thread/turn, model, effort, sandbox, context/usage если это даёт протокол.
 - Heartbeat и уведомление о зависшем/упавшем backend без содержимого запроса.
 - Durable media references: свежий Telegram URL/file retrieval на каждой попытке.

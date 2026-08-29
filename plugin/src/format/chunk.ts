@@ -9,52 +9,65 @@
 //   2. Line (\n) — split at the last line break that fits
 //   3. Hard cut at `max` chars — only when neither boundary exists
 //
-// Pre/code preservation: if a split lands inside a <pre>…</pre> or
-// <code>…</code> block, we close the open tag on the chunk we emit and
-// reopen it on the next chunk so each chunk on its own is valid HTML and
-// Telegram accepts each with parse_mode=HTML.
+// HTML preservation: if a split lands inside a supported Telegram HTML
+// span, we close every open tag on the emitted chunk and reopen the exact
+// opening tags (including safe attributes such as href) on the next one.
 
 export const TELEGRAM_MAX_MESSAGE = 4096
 const DEFAULT_MAX = 4000
 
-// Tags we treat as "must stay balanced across chunk boundaries". <pre> is
-// the common one (code blocks) — <code> is wrapped inside <pre> by our
-// markdownToTelegramHtml fenced-block output but might appear alone for
-// inline code. We balance both defensively.
-type BalancedTag = 'pre' | 'code'
-const BALANCED_TAGS: BalancedTag[] = ['pre', 'code']
+const BALANCED_TAGS = new Set([
+  'a',
+  'b',
+  'blockquote',
+  'code',
+  'del',
+  'em',
+  'i',
+  'ins',
+  'pre',
+  's',
+  'strike',
+  'strong',
+  'tg-spoiler',
+  'u',
+])
+
+interface OpenTag {
+  name: string
+  raw: string
+}
 
 interface OpenTagState {
   // Tags currently open at the cut point. Outermost first, innermost last —
   // we close innermost→outermost and reopen outermost→innermost.
-  open: BalancedTag[]
+  open: OpenTag[]
 }
 
 /**
- * Scan `text` and report which balanced tags (pre, code) are still open
- * at the end of the substring. We treat opening tags with optional
- * attributes (e.g. `<code class="language-py">`) as opening — closers are
- * the literal `</pre>` / `</code>`.
+ * Scan `text` and report which supported tags are still open at the end of
+ * the substring. Exact opening text is retained so `<a href="…">` and
+ * `<blockquote expandable>` remain valid when reopened in the next chunk.
  */
 function openTagsAt(text: string): OpenTagState {
-  const stack: BalancedTag[] = []
-  // Match opens and closes for either tag, in document order.
-  const re = /<\s*(\/?)\s*(pre|code)\b[^>]*>/gi
+  const stack: OpenTag[] = []
+  const re = /<\s*(\/?)\s*([a-z][a-z0-9-]*)\b[^>]*>/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(text)) !== null) {
     const isClose = m[1] === '/'
-    const tag = (m[2] as string).toLowerCase() as BalancedTag
+    const tag = (m[2] as string).toLowerCase()
+    if (!BALANCED_TAGS.has(tag)) continue
     if (isClose) {
       // Pop the most recent matching open. If none, ignore — input was
       // already malformed and we can't fix it here.
       for (let i = stack.length - 1; i >= 0; i--) {
-        if (stack[i] === tag) {
+        if (stack[i]?.name === tag) {
           stack.splice(i, 1)
           break
         }
       }
-    } else {
-      stack.push(tag)
+    } else if (!m[0].trimEnd().endsWith('/>')) {
+      stack.push({ name: tag, raw: m[0] })
     }
   }
   return { open: stack }
@@ -62,14 +75,11 @@ function openTagsAt(text: string): OpenTagState {
 
 function closingTagsFor(state: OpenTagState): string {
   // Close innermost first.
-  return [...state.open].reverse().map(t => `</${t}>`).join('')
+  return [...state.open].reverse().map((tag) => `</${tag.name}>`).join('')
 }
 
 function openingTagsFor(state: OpenTagState): string {
-  // Reopen outermost first. We deliberately use bare opening tags (no
-  // class attribute) on subsequent chunks — the "language-…" hint only
-  // needs to live on the first chunk for Telegram's syntax styling.
-  return state.open.map(t => `<${t}>`).join('')
+  return state.open.map((tag) => tag.raw).join('')
 }
 
 /**
@@ -143,10 +153,9 @@ function avoidOrphanHeading(text: string, cut: number): number | undefined {
  * Each chunk is <= `max` (default 4000). Leading newlines are trimmed from
  * each chunk after the first.
  *
- * If a balanced tag (<pre>, <code>) is open at a cut point, we close it on
- * the emitted chunk and reopen it on the next. This is a behavior addition
- * over gateway.py — the Python gateway hard-cuts and relies on the
- * parse-error fallback to retry as plain text.
+ * If a supported Telegram HTML tag is open at a cut point, we close it on
+ * the emitted chunk and reopen it on the next. Every chunk is independently
+ * parseable, including long links, bold spans, quotes and code blocks.
  */
 export function splitMessage(text: string, max: number = DEFAULT_MAX): string[] {
   if (max <= 0) throw new Error(`splitMessage: max must be positive, got ${max}`)
@@ -163,12 +172,8 @@ export function splitMessage(text: string, max: number = DEFAULT_MAX): string[] 
   const hardCap = Math.ceil(text.length / Math.max(1, Math.floor(max / 4))) + 16
   let iterations = 0
 
-  // Per-balanced-tag worst-case suffix length: `</pre>` = 6, `</code>` = 7.
-  // We use the max over BALANCED_TAGS so the per-tag reservation upper-bounds
-  // every closing tag we might emit; max across the set protects against
-  // future tag additions (M6 hardening).
-  const perTagSuffix = BALANCED_TAGS.reduce(
-    (mx, t) => Math.max(mx, (`</${t}>`).length),
+  const perTagSuffix = [...BALANCED_TAGS].reduce(
+    (max, tag) => Math.max(max, (`</${tag}>`).length),
     0,
   )
 
@@ -193,21 +198,21 @@ export function splitMessage(text: string, max: number = DEFAULT_MAX): string[] 
     const suffix = closingTagsFor(afterState)
     let chunk = prefix + body + suffix
 
-    // Overflow recovery. Triggers when the body itself opens new tags
-    // we didn't budget for. Shrink the cut by the overflow PLUS a full
-    // worst-case suffix budget (all balanced tags open) so the retry can
-    // never overshoot again — this is the M6 hardening: previously we
-    // used a hand-tuned `+8` fudge that could in theory be undersized.
+    // Overflow recovery. The body may open tags that were not part of the
+    // inherited suffix reserve. Shrink iteratively: removing text can also
+    // remove a closing tag and temporarily grow the required suffix, so a
+    // single arithmetic adjustment is not sufficient for nested markup.
     if (chunk.length > max) {
-      const fullSuffixBudget = BALANCED_TAGS.length * perTagSuffix
-      const overflow = chunk.length - max
-      const newCut = Math.max(1, cut - overflow - fullSuffixBudget)
-      const body2 = remaining.slice(0, newCut)
-      const afterState2 = openTagsAt(prefix + body2)
-      const suffix2 = closingTagsFor(afterState2)
-      chunk = prefix + body2 + suffix2
-      remaining = remaining.slice(newCut)
-      inherited = afterState2
+      let adjustedCut = cut
+      let adjustedState = afterState
+      for (let attempt = 0; attempt < BALANCED_TAGS.size + 4 && chunk.length > max; attempt += 1) {
+        adjustedCut = Math.max(1, adjustedCut - Math.max(1, chunk.length - max))
+        const candidateBody = remaining.slice(0, adjustedCut)
+        adjustedState = openTagsAt(prefix + candidateBody)
+        chunk = prefix + candidateBody + closingTagsFor(adjustedState)
+      }
+      remaining = remaining.slice(adjustedCut)
+      inherited = adjustedState
     } else {
       remaining = remaining.slice(cut)
       inherited = afterState

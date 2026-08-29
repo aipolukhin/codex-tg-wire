@@ -13,18 +13,31 @@ import {
 import {
   DurableTelegramTextGateway,
   TelegramDeliveryPayloadError,
+  type TelegramMessageOptions,
 } from '../../src/telegram/durable-text-gateway.js'
 
 const NOW = 1_800_000_000_000
 
 class FakeTelegramApi {
   readonly sends: Array<{ chatId: string; text: string }> = []
+  readonly sendOptions: TelegramMessageOptions[] = []
   readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly callbacks: Array<{ id: string; text?: string }> = []
   messageId = 77
+  nextSendError: Error | undefined
 
-  async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
+  async sendMessage(
+    chatId: string,
+    text: string,
+    options: TelegramMessageOptions,
+  ): Promise<{ message_id: number }> {
+    if (this.nextSendError !== undefined) {
+      const error = this.nextSendError
+      this.nextSendError = undefined
+      throw error
+    }
     this.sends.push({ chatId, text })
+    this.sendOptions.push(options)
     return { message_id: this.messageId }
   }
 
@@ -380,6 +393,67 @@ describe('DurableTelegramTextGateway outbound', () => {
     return outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
   }
 
+  test('renders Markdown and emits long final replies as an ordered durable chain', () => {
+    const update = acceptedUpdate({ update_id: 900 })
+    const longBody = 'важный текст '.repeat(800)
+    const deliveries = gateway.buildFinalTextDeliveries({
+      update,
+      message: { chatId: '7001', projectId: 'workspace', text: 'question' },
+      result: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        finalText: `# Результат\n\n**Готово**\n\n${longBody}\n\n<script>unsafe</script>`,
+      },
+      sourceKey: 'telegram:primary:900:turn:final',
+      nowMs: NOW,
+    })
+
+    expect(deliveries.length).toBeGreaterThan(2)
+    for (const [index, delivery] of deliveries.entries()) {
+      const payload = delivery.payload as {
+        text: string
+        options?: TelegramMessageOptions
+      }
+      expect(payload.text.length).toBeLessThanOrEqual(4_000)
+      expect(payload.options).toEqual({ parse_mode: 'HTML' })
+      expect(payload.text).not.toContain('<script>')
+      expect(delivery.dependsOnSourceKey ?? null).toBe(
+        index === 0 ? null : deliveries[index - 1]?.sourceKey ?? null,
+      )
+    }
+    expect((deliveries[0]?.payload as { text: string }).text).toContain('<b>Результат</b>')
+    expect(deliveries.some((delivery) =>
+      (delivery.payload as { text: string }).text.includes('<b>Готово</b>'))).toBe(true)
+  })
+
+  test('re-chunks a plain-text downgrade that expands beyond the Telegram limit', () => {
+    const update = acceptedUpdate({ update_id: 901 })
+    const deliveries = gateway.buildFinalTextDeliveries({
+      update,
+      message: { chatId: '7001', projectId: 'workspace', text: 'question' },
+      result: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        finalText: `[label](https://example.com/${'a'.repeat(4_500)})`,
+      },
+      sourceKey: 'telegram:primary:901:turn:final',
+      nowMs: NOW,
+    })
+
+    expect(deliveries.length).toBeGreaterThan(1)
+    for (const [index, delivery] of deliveries.entries()) {
+      const payload = delivery.payload as {
+        text: string
+        options?: TelegramMessageOptions
+      }
+      expect(payload.text.length).toBeLessThanOrEqual(4_000)
+      expect(payload.options).toBeUndefined()
+      expect(delivery.dependsOnSourceKey ?? null).toBe(
+        index === 0 ? null : deliveries[index - 1]?.sourceKey ?? null,
+      )
+    }
+  })
+
   test('redacts secrets before the Telegram mutation and returns remote proof', async () => {
     const job = claimedJob('token 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi private-marker')
     const prepared = await gateway.prepareDelivery(job)
@@ -388,6 +462,29 @@ describe('DurableTelegramTextGateway outbound', () => {
 
     expect(await gateway.executeDelivery(prepared)).toEqual({ remoteId: 'telegram:77' })
     expect(api.sends).toEqual([{ chatId: '7001', text: prepared.text }])
+  })
+
+  test('retries a definite Telegram HTML parse rejection once as plain text', async () => {
+    outbox.enqueue({
+      id: 'job-html-fallback',
+      sourceKey: 'test:html-fallback',
+      kind: 'send_text',
+      payload: {
+        chatId: '7001',
+        text: '<b>formatted</b>',
+        options: { parse_mode: 'HTML' },
+      },
+      createdAtMs: NOW,
+    })
+    const job = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const prepared = await gateway.prepareDelivery(job)
+    if (prepared.kind !== 'send_text') throw new Error('expected send_text')
+    expect(prepared.options).toEqual({ parse_mode: 'HTML' })
+    api.nextSendError = new Error("Bad Request: can't parse entities")
+
+    expect(await gateway.executeDelivery(prepared)).toEqual({ remoteId: 'telegram:77' })
+    expect(api.sends).toEqual([{ chatId: '7001', text: '<b>formatted</b>' }])
+    expect(api.sendOptions).toEqual([{}])
   })
 
   test('rejects non-allowlisted destinations and oversized text before send_started', async () => {

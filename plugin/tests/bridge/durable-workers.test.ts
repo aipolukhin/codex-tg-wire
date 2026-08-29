@@ -67,6 +67,7 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
   onExecute: (() => void) | undefined
   executeGate: Promise<void> | undefined
   inboundRejection: string | undefined
+  finalDeliveryCount = 1
 
   extractText(update: InboxUpdate): IncomingTextMessage | null {
     const payload = update.payload as {
@@ -89,14 +90,20 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
     }
   }
 
-  buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput {
-    return {
-      id: `reply-${input.update.id}`,
-      sourceKey: input.sourceKey,
-      kind: 'send_text',
-      payload: { chatId: input.message.chatId, text: input.result.finalText },
-      createdAtMs: input.nowMs,
-    }
+  buildFinalTextDeliveries(input: FinalTextDelivery): readonly DeliveryJobInput[] {
+    return Array.from({ length: this.finalDeliveryCount }, (_, index) => {
+      const sourceKey = index === 0 ? input.sourceKey : `${input.sourceKey}:chunk:${index + 1}`
+      return {
+        id: index === 0 ? `reply-${input.update.id}` : `reply-${input.update.id}-${index + 1}`,
+        sourceKey,
+        ...(index === 0
+          ? {}
+          : { dependsOnSourceKey: index === 1 ? input.sourceKey : `${input.sourceKey}:chunk:${index}` }),
+        kind: 'send_text',
+        payload: { chatId: input.message.chatId, text: `${input.result.finalText}:${index + 1}` },
+        createdAtMs: input.nowMs + index,
+      }
+    })
   }
 
   buildInboundRejectionDelivery(input: {
@@ -235,6 +242,25 @@ describe('durable text vertical slice', () => {
       remoteId: 'telegram:message:101',
     })
     expect(outbox.get(`reply-${accepted.update.id}`)?.state).toBe('DELIVERED')
+  })
+
+  test('enqueues every final chunk before acknowledging the inbox update', async () => {
+    telegram.finalDeliveryCount = 3
+    const accepted = inbox.ingest(textUpdate(502))
+    const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-chunks',
+      now: () => nowMs,
+    })
+
+    expect(await inbound.runOnce()).toMatchObject({
+      outcome: 'enqueued',
+      deliveryJobId: `reply-${accepted.update.id}`,
+    })
+    const base = 'telegram:primary-bot:502:turn:final'
+    expect(outbox.getBySourceKey(base)?.dependsOnSourceKey).toBeNull()
+    expect(outbox.getBySourceKey(`${base}:chunk:2`)?.dependsOnSourceKey).toBe(base)
+    expect(outbox.getBySourceKey(`${base}:chunk:3`)?.dependsOnSourceKey).toBe(`${base}:chunk:2`)
+    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
   })
 
   test('replay after crash reuses the logical turn and deduplicates the final delivery', async () => {

@@ -42,6 +42,7 @@ interface InboxRow {
 interface DeliveryRow {
   id: string
   source_key: string
+  depends_on_source_key: string | null
   session_id: string | null
   kind: DeliveryKind
   payload_json: string
@@ -105,6 +106,7 @@ function deliveryFromRow(row: DeliveryRow): DeliveryJob {
   return {
     id: row.id,
     sourceKey: row.source_key,
+    dependsOnSourceKey: row.depends_on_source_key,
     sessionId: row.session_id,
     kind: row.kind,
     payload: JSON.parse(row.payload_json) as unknown,
@@ -312,15 +314,20 @@ export class SqliteOutboxRepository implements OutboxRepository {
   enqueue(input: DeliveryJobInput): EnqueueResult {
     const createdAtMs = input.createdAtMs ?? Date.now()
     const id = input.id ?? crypto.randomUUID()
+    const dependsOnSourceKey = input.dependsOnSourceKey ?? null
+    if (dependsOnSourceKey !== null && dependsOnSourceKey === input.sourceKey) {
+      throw new TypeError('delivery job cannot depend on itself')
+    }
     const result = this.database.run(
       `INSERT INTO delivery_jobs
-        (id, source_key, session_id, kind, payload_json, state, available_at_ms,
+        (id, source_key, depends_on_source_key, session_id, kind, payload_json, state, available_at_ms,
          expires_at_ms, created_at_ms, updated_at_ms)
-       VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
        ON CONFLICT (source_key) DO NOTHING`,
       [
         id,
         input.sourceKey,
+        dependsOnSourceKey,
         input.sessionId ?? null,
         input.kind,
         encodePayload(input.payload),
@@ -355,9 +362,14 @@ export class SqliteOutboxRepository implements OutboxRepository {
       this.expireReady(options.nowMs)
       const candidate = this.database
         .query<{ id: string }, [number]>(
-          `SELECT id FROM delivery_jobs
-           WHERE state IN ('PENDING', 'RETRY_WAIT') AND available_at_ms <= ?
-           ORDER BY created_at_ms, id
+          `SELECT job.id FROM delivery_jobs AS job
+           WHERE job.state IN ('PENDING', 'RETRY_WAIT') AND job.available_at_ms <= ?
+             AND (job.depends_on_source_key IS NULL OR EXISTS (
+               SELECT 1 FROM delivery_jobs AS predecessor
+               WHERE predecessor.source_key = job.depends_on_source_key
+                 AND predecessor.state = 'DELIVERED'
+             ))
+           ORDER BY job.created_at_ms, job.id
            LIMIT 1`,
         )
         .get(options.nowMs)
@@ -612,6 +624,7 @@ export class SqliteOutboxRepository implements OutboxRepository {
            WHERE id = ? AND state = ?`,
           [input.nowMs, job.id, job.state],
         ).changes
+        this.archiveDependents(job.sourceKey, input.nowMs)
       }
       if (changes !== 1) throw new Error(`delivery job ${job.id} did not transition to ${targetState}`)
 
@@ -644,6 +657,24 @@ export class SqliteOutboxRepository implements OutboxRepository {
        WHERE state IN ('PENDING', 'RETRY_WAIT') AND expires_at_ms IS NOT NULL AND expires_at_ms <= ?`,
       [nowMs, nowMs],
     ).changes
+  }
+
+  private archiveDependents(sourceKey: string, nowMs: number): void {
+    this.database.run(
+      `WITH RECURSIVE dependents(source_key) AS (
+         SELECT source_key FROM delivery_jobs WHERE depends_on_source_key = ?
+         UNION ALL
+         SELECT child.source_key
+         FROM delivery_jobs AS child
+         JOIN dependents AS parent ON child.depends_on_source_key = parent.source_key
+       )
+       UPDATE delivery_jobs
+       SET state = 'ARCHIVED', lease_owner = NULL, lease_expires_at_ms = NULL,
+           last_error = 'delivery predecessor was archived', updated_at_ms = ?
+       WHERE source_key IN (SELECT source_key FROM dependents)
+         AND state IN ('PENDING', 'RETRY_WAIT', 'FAILED', 'EXPIRED')`,
+      [sourceKey, nowMs],
+    )
   }
 
   private require(id: string): DeliveryJob {

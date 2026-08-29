@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { splitMessage, TELEGRAM_MAX_MESSAGE } from '../../src/format/chunk.js'
+import { validateTelegramHtml } from '../../src/safety/html-validator.js'
 
 describe('splitMessage', () => {
   test('returns one chunk below the limit', () => {
@@ -72,6 +73,19 @@ describe('splitMessage', () => {
       expect(opens).toBe(closes)
       expect(c.length).toBeLessThanOrEqual(120)
     }
+  })
+
+  test('keeps every supported nested HTML span valid across chunk boundaries', () => {
+    const body = 'linked bold text '.repeat(40)
+    const text = `<a href="https://example.com/docs"><b>${body}</b></a>`
+    const out = splitMessage(text, 140)
+    expect(out.length).toBeGreaterThan(1)
+    for (const chunk of out) {
+      expect(chunk.length).toBeLessThanOrEqual(140)
+      expect(validateTelegramHtml(chunk).downgraded).toBe(false)
+      expect(chunk).toContain('<a href="https://example.com/docs">')
+    }
+    expect(out.map((chunk) => chunk.replace(/<[^>]+>/g, '')).join('')).toBe(body)
   })
 
   test('does not emit empty chunks after trimming leading newlines', () => {

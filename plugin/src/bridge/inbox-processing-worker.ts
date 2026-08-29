@@ -221,19 +221,29 @@ export class InboxProcessingWorker {
         : { attachments: preparedMessage.attachments }),
     })
     const completedAtMs = this.now()
-    const enqueue = this.outbox.enqueue({
-      ...this.telegram.buildFinalTextDelivery({
-        update,
-        message,
-        result,
-        sourceKey: `${turnKey}:final`,
-        nowMs: completedAtMs,
-      }),
+    const deliveries = this.telegram.buildFinalTextDeliveries({
+      update,
+      message,
+      result,
       sourceKey: `${turnKey}:final`,
-      createdAtMs: completedAtMs,
+      nowMs: completedAtMs,
     })
+    if (deliveries.length === 0) throw new Error('Telegram gateway produced no final deliveries')
+    let firstDeliveryJobId: string | null = null
+    for (const delivery of deliveries) {
+      const enqueue = this.outbox.enqueue({
+        ...delivery,
+        createdAtMs: delivery.createdAtMs ?? completedAtMs,
+      })
+      firstDeliveryJobId ??= enqueue.job.id
+    }
+    if (firstDeliveryJobId === null) throw new Error('Telegram gateway produced no final deliveries')
     this.inbox.markProcessed(update.id, this.workerId, completedAtMs)
-    return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
+    return {
+      outcome: 'enqueued',
+      updateId: update.id,
+      deliveryJobId: firstDeliveryJobId,
+    }
   }
 
   private handleFailure(update: InboxUpdate, error: unknown): InboxRunResult {

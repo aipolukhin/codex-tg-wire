@@ -69,7 +69,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(12)
+    expect(migrations?.count).toBe(13)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -103,6 +103,12 @@ describe('durable database migrations', () => {
       state TEXT NOT NULL,
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL
+    )`)
+    legacy.run(`CREATE TABLE delivery_jobs (
+      id TEXT PRIMARY KEY,
+      source_key TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL
     )`)
     legacy.run(`CREATE TABLE codex_interactions (
       id TEXT PRIMARY KEY,
@@ -178,6 +184,12 @@ describe('durable database migrations', () => {
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL
     )`)
+    legacy.run(`CREATE TABLE delivery_jobs (
+      id TEXT PRIMARY KEY,
+      source_key TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL
+    )`)
     legacy.run(`CREATE TABLE codex_interactions (
       id TEXT PRIMARY KEY,
       token TEXT NOT NULL UNIQUE,
@@ -239,6 +251,48 @@ describe('durable database migrations', () => {
     ).get()?.sql
     expect(tableSql).toContain("'PERMISSIONS_APPROVAL'")
     expect(tableSql).toContain("'MCP_ELICITATION'")
+    upgraded.close()
+  })
+
+  test('adds ordered delivery dependencies without rewriting existing v12 jobs', () => {
+    const legacyFilename = join(root, 'legacy-v12.sqlite3')
+    const legacy = new Database(legacyFilename, { create: true })
+    legacy.run(`CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at_ms INTEGER NOT NULL
+    )`)
+    for (let version = 1; version <= 12; version += 1) {
+      legacy.run(
+        'INSERT INTO schema_migrations (version, name, applied_at_ms) VALUES (?, ?, ?)',
+        [version, `legacy-${version}`, NOW],
+      )
+    }
+    legacy.run(`CREATE TABLE delivery_jobs (
+      id TEXT PRIMARY KEY,
+      source_key TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL
+    )`)
+    legacy.run(
+      `INSERT INTO delivery_jobs (id, source_key, state, created_at_ms)
+       VALUES ('existing-job', 'existing:source', 'DELIVERED', ?)`,
+      [NOW],
+    )
+    legacy.close()
+
+    const upgraded = openDurableDatabase(legacyFilename)
+    expect(upgraded.query<{
+      id: string
+      source_key: string
+      depends_on_source_key: string | null
+    }, []>(
+      'SELECT id, source_key, depends_on_source_key FROM delivery_jobs',
+    ).get()).toEqual({
+      id: 'existing-job',
+      source_key: 'existing:source',
+      depends_on_source_key: null,
+    })
     upgraded.close()
   })
 })
@@ -511,6 +565,84 @@ describe('SqliteOutboxRepository', () => {
     expect(duplicate.created).toBe(false)
     expect(duplicate.job.id).toBe('job-1')
     expect(duplicate.job.payload).toEqual({ chatId: '1001', text: 'first' })
+  })
+
+  test('leases a delivery chain strictly in order and waits on ambiguity', () => {
+    const outbox = new SqliteOutboxRepository(database)
+    expect(() => outbox.enqueue({
+      sourceKey: 'turn:long:orphan',
+      dependsOnSourceKey: 'turn:long:missing',
+      kind: 'send_text',
+      payload: { text: 'orphan' },
+      createdAtMs: NOW,
+    })).toThrow()
+    const head = outbox.enqueue({
+      id: 'chain-head',
+      sourceKey: 'turn:long:final',
+      kind: 'send_text',
+      payload: { text: 'part 1' },
+      createdAtMs: NOW,
+    }).job
+    const tail = outbox.enqueue({
+      id: 'chain-tail',
+      sourceKey: 'turn:long:final:chunk:2',
+      dependsOnSourceKey: head.sourceKey,
+      kind: 'send_text',
+      payload: { text: 'part 2' },
+      createdAtMs: NOW + 1,
+    }).job
+    expect(tail.dependsOnSourceKey).toBe(head.sourceKey)
+
+    expect(outbox.claimNext({
+      workerId: 'sender-head', nowMs: NOW, leaseDurationMs: LEASE_MS,
+    })?.id).toBe(head.id)
+    outbox.markSendStarted(head.id, 'sender-head', NOW)
+    expect(outbox.failLease(head.id, 'sender-head', 'unknown result', NOW).becameAmbiguous).toBe(true)
+    expect(outbox.claimNext({
+      workerId: 'sender-tail', nowMs: NOW + 1, leaseDurationMs: LEASE_MS,
+    })).toBeNull()
+
+    expect(outbox.actOnProblem({
+      operationKey: 'resolve-chain-head',
+      jobId: head.id,
+      action: 'RESOLVE',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      remoteId: 'telegram:501',
+      nowMs: NOW + 2,
+    }).outcome).toBe('applied')
+    expect(outbox.claimNext({
+      workerId: 'sender-tail', nowMs: NOW + 2, leaseDurationMs: LEASE_MS,
+    })?.id).toBe(tail.id)
+  })
+
+  test('archives every blocked descendant when a chain predecessor is abandoned', () => {
+    const outbox = new SqliteOutboxRepository(database)
+    const inputs = [
+      { id: 'archive-head', sourceKey: 'archive:head', dependsOnSourceKey: null },
+      { id: 'archive-middle', sourceKey: 'archive:middle', dependsOnSourceKey: 'archive:head' },
+      { id: 'archive-tail', sourceKey: 'archive:tail', dependsOnSourceKey: 'archive:middle' },
+    ]
+    for (const input of inputs) {
+      outbox.enqueue({
+        ...input,
+        kind: 'send_text',
+        payload: { text: input.id },
+        createdAtMs: NOW,
+      })
+    }
+    outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: LEASE_MS })
+    outbox.failLease('archive-head', 'sender', 'terminal failure', NOW)
+    expect(outbox.actOnProblem({
+      operationKey: 'archive-chain-head',
+      jobId: 'archive-head',
+      action: 'ARCHIVE',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      nowMs: NOW + 1,
+    }).outcome).toBe('applied')
+    expect(outbox.get('archive-middle')?.state).toBe('ARCHIVED')
+    expect(outbox.get('archive-tail')?.state).toBe('ARCHIVED')
   })
 
   test('lists and audits idempotent manual problem actions', () => {

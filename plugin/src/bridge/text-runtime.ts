@@ -10,6 +10,7 @@ import {
   type CodexInteractionRecoverySweep,
 } from '../codex/interaction-broker.js'
 import type {
+  EnqueueResult,
   TelegramUpdateInput,
   IngestResult,
   UpdateRoutingClass,
@@ -33,6 +34,12 @@ import {
   DurableAttachmentStore,
   type DurableAttachmentStoreOptions,
 } from '../telegram/durable-attachment-store.js'
+import {
+  DurableOutboundMediaStore,
+  type DurableOutboundMediaOptions,
+  type TelegramAlbumMediaKind,
+  type TelegramMediaKind,
+} from '../telegram/durable-outbound-media.js'
 import {
   DurableSessionCoordinator,
   StaticProjectResolver,
@@ -72,6 +79,33 @@ export interface DurableTextRuntimeOptions {
   inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId' | 'commandHandler'> & { workerId?: string }
   outboxWorker?: Omit<OutboxDeliveryWorkerOptions, 'workerId'> & { workerId?: string }
   ux?: DurableTurnUxOptions
+  outboundMedia?: Omit<DurableOutboundMediaOptions, 'allowedRoots'> & {
+    allowedRoots?: readonly string[]
+  }
+}
+
+export interface EnqueueOutboundMediaInput {
+  sourceKey: string
+  chatId: string
+  path: string
+  fileName?: string
+  mimeType: string
+  kind: TelegramMediaKind
+  caption?: string
+  createdAtMs?: number
+}
+
+export interface EnqueueOutboundAlbumInput {
+  sourceKey: string
+  chatId: string
+  items: readonly {
+    path: string
+    fileName?: string
+    mimeType: string
+    kind: TelegramAlbumMediaKind
+    caption?: string
+  }[]
+  createdAtMs?: number
 }
 
 export interface DurableTextRuntime {
@@ -80,6 +114,8 @@ export interface DurableTextRuntime {
   deliverOutboundOnce(): Promise<DeliveryRunResult>
   recoverExpiredLeases(): LeaseRecoverySweep
   runUxHeartbeat(): number
+  enqueueOutboundMedia(input: EnqueueOutboundMediaInput): Promise<EnqueueResult>
+  enqueueOutboundAlbum(input: EnqueueOutboundAlbumInput): Promise<EnqueueResult>
   recoverStartup(): Promise<{
     turns: TurnRecoverySweep
     interactions: CodexInteractionRecoverySweep
@@ -171,6 +207,12 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
               : { allowedMimeTypes: options.telegram.allowedMimeTypes }),
           },
         )
+  const outboundMediaStore = options.outboundMedia === undefined
+    ? undefined
+    : new DurableOutboundMediaStore({
+        ...options.outboundMedia,
+        allowedRoots: options.outboundMedia.allowedRoots ?? options.projects.map((project) => project.cwd),
+      })
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
   const backendOptions: CodexAppServerBackendOptions = {
     eventDiagnostics: new SqliteCodexEventRepository(options.database),
@@ -203,6 +245,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     },
     deliveryProofForSourceKey: (sourceKey) =>
       outbox.getBySourceKey(sourceKey)?.remoteId ?? null,
+    ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
   })
   const coordinator = new DurableSessionCoordinator(
     sessions,
@@ -254,6 +297,38 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     deliverOutboundOnce: () => outbound.runOnce(),
     recoverExpiredLeases: () => reaper.runOnce(),
     runUxHeartbeat: () => ux.runHeartbeat(),
+    async enqueueOutboundMedia(input) {
+      if (outboundMediaStore === undefined) throw new Error('outbound media is not configured')
+      const reference = await outboundMediaStore.register(input)
+      return outbox.enqueue({
+        sourceKey: input.sourceKey,
+        kind: 'send_media',
+        payload: {
+          chatId: input.chatId,
+          mediaKind: input.kind,
+          reference,
+          ...(input.caption === undefined ? {} : { caption: input.caption }),
+        },
+        ...(input.createdAtMs === undefined ? {} : { createdAtMs: input.createdAtMs }),
+      })
+    },
+    async enqueueOutboundAlbum(input) {
+      if (outboundMediaStore === undefined) throw new Error('outbound media is not configured')
+      if (input.items.length < 2 || input.items.length > 10) {
+        throw new TypeError('outbound album must contain 2 to 10 items')
+      }
+      const items = await Promise.all(input.items.map(async (item) => ({
+        mediaKind: item.kind,
+        reference: await outboundMediaStore.register(item),
+        ...(item.caption === undefined ? {} : { caption: item.caption }),
+      })))
+      return outbox.enqueue({
+        sourceKey: input.sourceKey,
+        kind: 'send_album',
+        payload: { chatId: input.chatId, items },
+        ...(input.createdAtMs === undefined ? {} : { createdAtMs: input.createdAtMs }),
+      })
+    },
     async recoverStartup() {
       const interactionSweep = interactions.recoverStartup()
       const turnSweep = await startupRecovery.run()

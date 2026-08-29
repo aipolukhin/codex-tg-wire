@@ -457,6 +457,7 @@ describe('DurableTelegramTextGateway outbound', () => {
   test('redacts secrets before the Telegram mutation and returns remote proof', async () => {
     const job = claimedJob('token 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi private-marker')
     const prepared = await gateway.prepareDelivery(job)
+    if (prepared.kind !== 'send_text') throw new Error('expected send_text')
     expect(prepared.text).not.toContain('123456789:')
     expect(prepared.text).not.toContain('private-marker')
 
@@ -561,7 +562,7 @@ describe('DurableTelegramTextGateway outbound', () => {
     })
     const valid = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
     const prepared = await gateway.prepareDelivery(valid)
-    if (prepared.kind === 'answer_callback') throw new Error('expected text delivery')
+    if (prepared.kind !== 'send_text') throw new Error('expected text delivery')
     expect(prepared.options).toEqual({
       reply_markup: {
         inline_keyboard: [

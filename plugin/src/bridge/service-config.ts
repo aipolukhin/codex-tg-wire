@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve } from 'node:path'
 import { z } from 'zod'
 
 import { DEFAULT_ATTACHMENT_MIME_TYPES } from '../telegram/durable-attachment-store.js'
+import { DEFAULT_OUTBOUND_MIME_TYPES } from '../telegram/durable-outbound-media.js'
 
 const TelegramUserIdSchema = z
   .union([z.string(), z.number().int().safe()])
@@ -43,6 +44,17 @@ export const BridgeConfigFileSchema = z
         allowedMimeTypes: z.array(
           z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/),
         ).min(1).default([...DEFAULT_ATTACHMENT_MIME_TYPES]),
+      })
+      .strict()
+      .default({}),
+    outboundMedia: z
+      .object({
+        enabled: z.boolean().default(true),
+        directory: z.string().trim().min(1).default('./state/outbound-media'),
+        maxBytes: z.number().int().min(1).max(20 * 1024 * 1024).default(20 * 1024 * 1024),
+        allowedMimeTypes: z.array(
+          z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/),
+        ).min(1).default([...DEFAULT_OUTBOUND_MIME_TYPES]),
       })
       .strict()
       .default({}),
@@ -189,6 +201,10 @@ export function loadBridgeServiceConfig(
     attachments: {
       ...parsed.attachments,
       directory: absoluteFrom(baseDirectory, parsed.attachments.directory),
+    },
+    outboundMedia: {
+      ...parsed.outboundMedia,
+      directory: absoluteFrom(baseDirectory, parsed.outboundMedia.directory),
     },
     projects: parsed.projects.map((project) => ({
       ...project,

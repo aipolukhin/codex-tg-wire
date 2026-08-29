@@ -169,6 +169,16 @@ export async function bootstrapDurableBridgeService(
         heartbeatAfterMs: config.ux.heartbeatAfterMs,
         heartbeatIntervalMs: config.ux.heartbeatIntervalMs,
       },
+      ...(config.outboundMedia.enabled
+        ? {
+            outboundMedia: {
+              directory: config.outboundMedia.directory,
+              allowedRoots: config.projects.map((project) => project.cwd),
+              maxBytes: config.outboundMedia.maxBytes,
+              allowedMimeTypes: config.outboundMedia.allowedMimeTypes,
+            },
+          }
+        : {}),
     })
     const recovery = await runtime.recoverStartup()
     options.logger?.info('durable startup recovery completed', recovery)

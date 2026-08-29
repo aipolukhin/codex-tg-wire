@@ -1,7 +1,19 @@
-import type { Api } from 'grammy'
-import type { Update } from 'grammy/types'
+import { InputFile, type Api } from 'grammy'
+import type {
+  InputMediaAudio,
+  InputMediaDocument,
+  InputMediaPhoto,
+  InputMediaVideo,
+  Update,
+} from 'grammy/types'
 
-import type { TelegramMessageOptions, TelegramTextApi } from './durable-text-gateway.js'
+import type {
+  TelegramAlbumUploadItem,
+  TelegramMediaOptions,
+  TelegramMessageOptions,
+  TelegramTextApi,
+} from './durable-text-gateway.js'
+import type { PreparedLocalMedia, TelegramMediaKind } from './durable-outbound-media.js'
 import type {
   TelegramGetUpdatesOptions,
   TelegramUpdateSource,
@@ -94,6 +106,35 @@ export class GrammyDurableAdapter implements TelegramTextApi, TelegramUpdateSour
 
   answerCallbackQuery(callbackQueryId: string, options: { text?: string }): Promise<true> {
     return this.api.answerCallbackQuery(callbackQueryId, options)
+  }
+
+  sendMedia(
+    chatId: string,
+    kind: TelegramMediaKind,
+    media: PreparedLocalMedia,
+    options: TelegramMediaOptions,
+  ): Promise<{ message_id: number }> {
+    const input = new InputFile(media.path, media.fileName)
+    switch (kind) {
+      case 'photo': return this.api.sendPhoto(chatId, input, options)
+      case 'document': return this.api.sendDocument(chatId, input, options)
+      case 'audio': return this.api.sendAudio(chatId, input, options)
+      case 'video': return this.api.sendVideo(chatId, input, options)
+      case 'voice': return this.api.sendVoice(chatId, input, options)
+    }
+  }
+
+  sendMediaGroup(
+    chatId: string,
+    items: readonly TelegramAlbumUploadItem[],
+  ): Promise<readonly { message_id: number }[]> {
+    const media: Array<InputMediaAudio | InputMediaDocument | InputMediaPhoto | InputMediaVideo> =
+      items.map((item) => ({
+        type: item.kind,
+        media: new InputFile(item.media.path, item.media.fileName),
+        ...item.options,
+      }) as InputMediaAudio | InputMediaDocument | InputMediaPhoto | InputMediaVideo)
+    return this.api.sendMediaGroup(chatId, media)
   }
 
   getUpdates(options: TelegramGetUpdatesOptions, signal?: AbortSignal): Promise<unknown[]> {

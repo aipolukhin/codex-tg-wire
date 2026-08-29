@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,6 +19,11 @@ import {
 } from '../../src/durable/sqlite-repositories.js'
 import { SqliteSessionRepository } from '../../src/durable/session-repository.js'
 import type { TelegramAttachmentDownload } from '../../src/telegram/durable-attachment-store.js'
+import type {
+  PreparedLocalMedia,
+  TelegramMediaKind,
+} from '../../src/telegram/durable-outbound-media.js'
+import type { TelegramMediaOptions } from '../../src/telegram/durable-text-gateway.js'
 
 const NOW = 1_800_000_000_000
 
@@ -58,6 +63,7 @@ class FakeTelegramApi {
   readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly downloads = new Map<string, TelegramAttachmentDownload>()
   readonly downloadCalls: string[] = []
+  readonly media: Array<{ chatId: string; kind: TelegramMediaKind; fileName: string }> = []
 
   async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
     this.sent.push({ chatId, text })
@@ -74,6 +80,16 @@ class FakeTelegramApi {
     const download = this.downloads.get(fileId)
     if (download === undefined) throw new Error('fake Telegram file is unavailable')
     return download
+  }
+
+  async sendMedia(
+    chatId: string,
+    kind: TelegramMediaKind,
+    media: PreparedLocalMedia,
+    _options: TelegramMediaOptions,
+  ): Promise<{ message_id: number }> {
+    this.media.push({ chatId, kind, fileName: media.fileName })
+    return { message_id: 990 }
   }
 }
 
@@ -133,6 +149,10 @@ beforeEach(async () => {
     },
     inboxWorker: { now: () => NOW },
     outboxWorker: { now: () => NOW },
+    outboundMedia: {
+      directory: join(root, 'outbound-media'),
+      allowedRoots: [root],
+    },
   })
 })
 
@@ -144,6 +164,25 @@ afterEach(async () => {
 })
 
 describe('durable text runtime composition', () => {
+  test('registers and delivers a local file only through the durable outbox', async () => {
+    const path = join(root, 'generated-report.pdf')
+    writeFileSync(path, '%PDF-generated')
+    const enqueued = await runtime.enqueueOutboundMedia({
+      sourceKey: 'manual:report:1',
+      chatId: '7001',
+      path,
+      fileName: 'report.pdf',
+      mimeType: 'application/pdf',
+      kind: 'document',
+      createdAtMs: NOW,
+    })
+    expect(enqueued.created).toBe(true)
+    expect(await runtime.deliverOutboundOnce()).toEqual({
+      outcome: 'delivered', jobId: enqueued.job.id, remoteId: 'telegram:990',
+    })
+    expect(telegram.media).toEqual([{ chatId: '7001', kind: 'document', fileName: 'report.pdf' }])
+  })
+
   test('runs Telegram → SQLite → Codex App Server → SQLite → Telegram', async () => {
     const update = {
       update_id: 801,

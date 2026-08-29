@@ -21,6 +21,24 @@ import type {
   InboundAttachmentStore,
   TelegramAttachmentDownload,
 } from './durable-attachment-store.js'
+import type {
+  DurableMediaReference,
+  DurableOutboundMediaStore,
+  PreparedLocalMedia,
+  TelegramAlbumMediaKind,
+  TelegramMediaKind,
+} from './durable-outbound-media.js'
+
+export interface TelegramMediaOptions {
+  caption?: string
+  parse_mode?: 'HTML'
+}
+
+export interface TelegramAlbumUploadItem {
+  kind: TelegramAlbumMediaKind
+  media: PreparedLocalMedia
+  options: TelegramMediaOptions
+}
 
 export interface TelegramTextApi {
   downloadAttachment?(
@@ -37,6 +55,16 @@ export interface TelegramTextApi {
     text: string,
     options: TelegramMessageOptions,
   ): Promise<unknown>
+  sendMedia?(
+    chatId: string,
+    kind: TelegramMediaKind,
+    media: PreparedLocalMedia,
+    options: TelegramMediaOptions,
+  ): Promise<{ message_id: number }>
+  sendMediaGroup?(
+    chatId: string,
+    items: readonly TelegramAlbumUploadItem[],
+  ): Promise<readonly { message_id: number }[]>
   sendMessage(
     chatId: string,
     text: string,
@@ -63,6 +91,7 @@ export interface DurableTelegramTextGatewayOptions {
   projectIdForChat?: (chatId: string) => string
   attachmentStore?: InboundAttachmentStore
   deliveryProofForSourceKey?: (sourceKey: string) => string | null
+  outboundMediaStore?: DurableOutboundMediaStore
 }
 
 export type PreparedTextDelivery = {
@@ -71,6 +100,17 @@ export type PreparedTextDelivery = {
   chatId: string
   text: string
   options: TelegramMessageOptions
+} | {
+  kind: 'send_media'
+  jobId: string
+  chatId: string
+  media: PreparedLocalMedia
+  options: TelegramMediaOptions
+} | {
+  kind: 'send_album'
+  jobId: string
+  chatId: string
+  items: readonly TelegramAlbumUploadItem[]
 } | {
   kind: 'edit'
   jobId: string
@@ -137,6 +177,18 @@ interface AnswerCallbackPayload {
   text?: unknown
 }
 
+interface SendMediaPayload {
+  chatId?: unknown
+  mediaKind?: unknown
+  reference?: unknown
+  caption?: unknown
+}
+
+interface SendAlbumPayload {
+  chatId?: unknown
+  items?: unknown
+}
+
 const TELEGRAM_TEXT_LIMIT = 4_096
 
 function idSet(values: readonly (string | number)[]): Set<string> {
@@ -145,6 +197,52 @@ function idSet(values: readonly (string | number)[]): Set<string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseMediaKind(value: unknown, album = false): TelegramMediaKind {
+  const allowed: readonly TelegramMediaKind[] = album
+    ? ['photo', 'document', 'audio', 'video']
+    : ['photo', 'document', 'audio', 'video', 'voice']
+  if (typeof value !== 'string' || !allowed.includes(value as TelegramMediaKind)) {
+    throw new TelegramDeliveryPayloadError('delivery contains an invalid media kind')
+  }
+  return value as TelegramMediaKind
+}
+
+function parseMediaReference(value: unknown): DurableMediaReference {
+  if (!isRecord(value)) throw new TelegramDeliveryPayloadError('media reference must be an object')
+  if (
+    typeof value.path !== 'string' ||
+    typeof value.fileName !== 'string' ||
+    typeof value.mimeType !== 'string' ||
+    !Number.isSafeInteger(value.size) ||
+    (value.size as number) <= 0 ||
+    typeof value.sha256 !== 'string'
+  ) {
+    throw new TelegramDeliveryPayloadError('media reference is invalid')
+  }
+  return {
+    path: value.path,
+    fileName: value.fileName,
+    mimeType: value.mimeType,
+    size: value.size as number,
+    sha256: value.sha256,
+  }
+}
+
+function prepareMediaCaption(value: unknown, extraSecrets: readonly string[]): TelegramMediaOptions {
+  if (value === undefined || value === null || value === '') return {}
+  if (typeof value !== 'string') throw new TelegramDeliveryPayloadError('media caption must be a string')
+  const rendered = markdownToTelegramHtml(value)
+  const redacted = redactSecrets(rendered, extraSecrets)
+  const validated = validateTelegramHtml(redacted)
+  if (validated.text.length > 1_024) {
+    throw new TelegramDeliveryPayloadError('media caption exceeds Telegram limit')
+  }
+  return {
+    caption: validated.text,
+    ...(validated.downgraded ? {} : { parse_mode: 'HTML' as const }),
+  }
 }
 
 function parseMessageOptions(
@@ -217,6 +315,11 @@ function withoutParseMode(options: TelegramMessageOptions): TelegramMessageOptio
   return fallback
 }
 
+function withoutMediaParseMode(options: TelegramMediaOptions): TelegramMediaOptions {
+  const { parse_mode: _parseMode, ...fallback } = options
+  return fallback
+}
+
 export class TelegramDeliveryPayloadError extends Error {
   constructor(message: string) {
     super(message)
@@ -234,6 +337,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly projectIdForChat: (chatId: string) => string
   private readonly attachmentStore: InboundAttachmentStore | undefined
   private readonly deliveryProofForSourceKey: ((sourceKey: string) => string | null) | undefined
+  private readonly outboundMediaStore: DurableOutboundMediaStore | undefined
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -248,6 +352,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.projectIdForChat = options.projectIdForChat ?? (() => this.defaultProjectId)
     this.attachmentStore = options.attachmentStore
     this.deliveryProofForSourceKey = options.deliveryProofForSourceKey
+    this.outboundMediaStore = options.outboundMediaStore
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -541,6 +646,53 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
           : '',
       }
     }
+    if (job.kind === 'send_media') {
+      if (this.outboundMediaStore === undefined) {
+        throw new TelegramDeliveryPayloadError('outbound media is not configured')
+      }
+      if (!isRecord(job.payload)) throw new TelegramDeliveryPayloadError('send_media payload must be an object')
+      const payload = job.payload as SendMediaPayload
+      if (typeof payload.chatId !== 'string' || !this.allowedChats.has(payload.chatId)) {
+        throw new TelegramDeliveryPayloadError('send_media chat is not allowlisted')
+      }
+      const kind = parseMediaKind(payload.mediaKind)
+      const media = await this.outboundMediaStore.prepare(parseMediaReference(payload.reference), kind)
+      return {
+        kind: 'send_media',
+        jobId: job.id,
+        chatId: payload.chatId,
+        media,
+        options: prepareMediaCaption(payload.caption, this.extraSecrets),
+      }
+    }
+    if (job.kind === 'send_album') {
+      if (this.outboundMediaStore === undefined) {
+        throw new TelegramDeliveryPayloadError('outbound media is not configured')
+      }
+      if (!isRecord(job.payload)) throw new TelegramDeliveryPayloadError('send_album payload must be an object')
+      const payload = job.payload as SendAlbumPayload
+      if (typeof payload.chatId !== 'string' || !this.allowedChats.has(payload.chatId)) {
+        throw new TelegramDeliveryPayloadError('send_album chat is not allowlisted')
+      }
+      if (!Array.isArray(payload.items) || payload.items.length < 2 || payload.items.length > 10) {
+        throw new TelegramDeliveryPayloadError('album must contain 2 to 10 items')
+      }
+      const items: TelegramAlbumUploadItem[] = []
+      for (const value of payload.items) {
+        if (!isRecord(value)) throw new TelegramDeliveryPayloadError('album item must be an object')
+        const kind = parseMediaKind(value.mediaKind, true) as TelegramAlbumMediaKind
+        items.push({
+          kind,
+          media: await this.outboundMediaStore.prepare(parseMediaReference(value.reference), kind),
+          options: prepareMediaCaption(value.caption, this.extraSecrets),
+        })
+      }
+      const kinds = new Set(items.map((item) => item.kind))
+      if ((kinds.has('document') && kinds.size !== 1) || (kinds.has('audio') && kinds.size !== 1)) {
+        throw new TelegramDeliveryPayloadError('album media kinds cannot be mixed')
+      }
+      return { kind: 'send_album', jobId: job.id, chatId: payload.chatId, items }
+    }
     if (job.kind !== 'send_text' && job.kind !== 'edit') {
       throw new TelegramDeliveryPayloadError(`unsupported delivery kind: ${job.kind}`)
     }
@@ -601,6 +753,55 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         prepared.text.length === 0 ? {} : { text: prepared.text },
       )
       return { remoteId: `telegram:callback:${prepared.callbackQueryId}` }
+    }
+    if (prepared.kind === 'send_media') {
+      if (this.api.sendMedia === undefined) {
+        throw new TelegramDeliveryPayloadError('Telegram API cannot send media')
+      }
+      let sent: { message_id: number }
+      try {
+        sent = await this.api.sendMedia(prepared.chatId, prepared.media.kind, prepared.media, prepared.options)
+      } catch (error) {
+        if (prepared.options.parse_mode !== 'HTML' || !isTelegramHtmlParseError(error)) throw error
+        sent = await this.api.sendMedia(
+          prepared.chatId,
+          prepared.media.kind,
+          prepared.media,
+          withoutMediaParseMode(prepared.options),
+        )
+      }
+      if (!Number.isSafeInteger(sent.message_id) || sent.message_id <= 0) {
+        throw new TelegramDeliveryPayloadError('Telegram returned an invalid media message_id')
+      }
+      return { remoteId: `telegram:${sent.message_id}` }
+    }
+    if (prepared.kind === 'send_album') {
+      if (this.api.sendMediaGroup === undefined) {
+        throw new TelegramDeliveryPayloadError('Telegram API cannot send albums')
+      }
+      let sent: readonly { message_id: number }[]
+      try {
+        sent = await this.api.sendMediaGroup(prepared.chatId, prepared.items)
+      } catch (error) {
+        if (
+          !prepared.items.some((item) => item.options.parse_mode === 'HTML') ||
+          !isTelegramHtmlParseError(error)
+        ) throw error
+        sent = await this.api.sendMediaGroup(
+          prepared.chatId,
+          prepared.items.map((item) => ({
+            ...item,
+            options: withoutMediaParseMode(item.options),
+          })),
+        )
+      }
+      if (
+        sent.length !== prepared.items.length ||
+        sent.some((message) => !Number.isSafeInteger(message.message_id) || message.message_id <= 0)
+      ) {
+        throw new TelegramDeliveryPayloadError('Telegram returned invalid album delivery proof')
+      }
+      return { remoteId: `telegram-album:${sent.map((message) => message.message_id).join(',')}` }
     }
     if (prepared.kind === 'edit') {
       if (this.api.editMessageText === undefined) {

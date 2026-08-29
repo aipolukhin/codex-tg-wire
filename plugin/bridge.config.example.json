@@ -28,6 +28,11 @@
       "text/xml"
     ]
   },
+  "outboundMedia": {
+    "enabled": true,
+    "directory": "./state/outbound-media",
+    "maxBytes": 20971520
+  },
   "codex": {
     "approvalPolicy": "on-request",
     "sandboxMode": "workspace-write",

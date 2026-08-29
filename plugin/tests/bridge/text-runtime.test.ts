@@ -128,7 +128,9 @@ describe('durable text runtime composition', () => {
         text: 'ответь коротко',
       },
     }
-    expect(runtime.ingest(update, NOW).created).toBe(true)
+    const accepted = runtime.ingest(update, NOW)
+    expect(accepted.created).toBe(true)
+    expect(accepted.update).toMatchObject({ chatId: '7001', routingClass: 'MESSAGE' })
     expect(runtime.ingest(update, NOW + 1).created).toBe(false)
 
     const processing = runtime.processInboundOnce()
@@ -202,7 +204,7 @@ describe('durable text runtime composition', () => {
   })
 
   test('routes /start through inbox and outbox without starting Codex', async () => {
-    runtime.ingest({
+    const accepted = runtime.ingest({
       update_id: 802,
       message: {
         chat: { id: 7001, type: 'private' },
@@ -210,6 +212,7 @@ describe('durable text runtime composition', () => {
         text: '/start',
       },
     }, NOW)
+    expect(accepted.update).toMatchObject({ chatId: '7001', routingClass: 'CONTROL' })
 
     expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
     expect(

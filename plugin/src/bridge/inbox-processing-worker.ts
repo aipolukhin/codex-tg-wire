@@ -15,12 +15,14 @@ import {
   type RetryPolicy,
 } from './retry-policy.js'
 import { LeaseHeartbeatError, withLeaseHeartbeat } from './lease-heartbeat.js'
+import { TurnQueuedBehindTurnError } from './durable-session-coordinator.js'
 
 export type InboxRunResult =
   | { outcome: 'idle' }
   | { outcome: 'ignored'; updateId: number }
   | { outcome: 'enqueued'; updateId: number; deliveryJobId: string }
   | { outcome: 'retry_wait'; updateId: number; retryAtMs: number }
+  | { outcome: 'queued'; updateId: number; retryAtMs: number; localTurnId: string }
   | { outcome: 'failed'; updateId: number }
 
 export interface InboxProcessingWorkerOptions {
@@ -32,6 +34,7 @@ export interface InboxProcessingWorkerOptions {
   errorSummary?: (error: unknown) => string
   commandHandler?: CommandHandler
   interactionHandler?: InteractionHandler
+  queuePollMs?: number
 }
 
 const DEFAULT_LEASE_MS = 60_000
@@ -49,6 +52,7 @@ export class InboxProcessingWorker {
   private readonly errorSummary: (error: unknown) => string
   private readonly commandHandler: CommandHandler | undefined
   private readonly interactionHandler: InteractionHandler | undefined
+  private readonly queuePollMs: number
 
   constructor(
     private readonly inbox: InboxRepository,
@@ -65,12 +69,16 @@ export class InboxProcessingWorker {
     this.errorSummary = options.errorSummary ?? safeErrorSummary
     this.commandHandler = options.commandHandler
     this.interactionHandler = options.interactionHandler
+    this.queuePollMs = options.queuePollMs ?? 500
     if (
       !Number.isSafeInteger(this.leaseHeartbeatMs) ||
       this.leaseHeartbeatMs <= 0 ||
       this.leaseHeartbeatMs > this.leaseDurationMs
     ) {
       throw new TypeError('leaseHeartbeatMs must be positive and no greater than leaseDurationMs')
+    }
+    if (!Number.isSafeInteger(this.queuePollMs) || this.queuePollMs <= 0) {
+      throw new TypeError('queuePollMs must be a positive safe integer')
     }
   }
 
@@ -99,6 +107,16 @@ export class InboxProcessingWorker {
       )
     } catch (error) {
       if (error instanceof LeaseHeartbeatError) throw error
+      if (error instanceof TurnQueuedBehindTurnError) {
+        const retryAtMs = this.now() + this.queuePollMs
+        this.inbox.deferQueued(update.id, this.workerId, retryAtMs)
+        return {
+          outcome: 'queued',
+          updateId: update.id,
+          retryAtMs,
+          localTurnId: error.localTurnId,
+        }
+      }
       return this.handleFailure(update, error)
     }
   }

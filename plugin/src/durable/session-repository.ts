@@ -45,6 +45,7 @@ export interface PreparedTextOperation {
   session: SessionRecord
   binding: ThreadBindingRecord | null
   turn: TurnRecord
+  blockingTurn: TurnRecord | null
 }
 
 export interface SessionOverview {
@@ -186,9 +187,16 @@ export class SqliteSessionRepository {
             `operation ${operation.operationKey} belongs to another session`,
           )
         }
-        return { created: false, session, binding, turn: existing }
+        return {
+          created: false,
+          session,
+          binding,
+          turn: existing,
+          blockingTurn: this.findDispatchBlocker(session.id, existing),
+        }
       }
 
+      const blockingTurn = this.findDispatchBlocker(session.id, null)
       const turnId = crypto.randomUUID()
       this.database.run(
         `INSERT INTO turns
@@ -203,7 +211,13 @@ export class SqliteSessionRepository {
           nowMs,
         ],
       )
-      return { created: true, session, binding, turn: this.requireTurn(turnId) }
+      return {
+        created: true,
+        session,
+        binding,
+        turn: this.requireTurn(turnId),
+        blockingTurn,
+      }
     }).immediate()
   }
 
@@ -447,6 +461,52 @@ export class SqliteSessionRepository {
          ORDER BY created_at_ms DESC, id DESC LIMIT 1`,
       )
       .get(sessionId)
+    return row === null ? null : turnFromRow(row)
+  }
+
+  private findDispatchBlocker(
+    sessionId: string,
+    currentTurn: TurnRecord | null,
+  ): TurnRecord | null {
+    const row = this.database
+      .query<TurnRow, [string, string, number, number, number, number]>(
+        `SELECT * FROM turns
+         WHERE session_id = ?
+           AND id != ?
+           AND (
+             state IN ('ACTIVE', 'UNKNOWN')
+             OR (
+               state = 'QUEUED'
+               AND (
+                 source_update_id IS NULL
+                 OR EXISTS (
+                   SELECT 1 FROM telegram_updates source
+                   WHERE source.id = turns.source_update_id
+                     AND source.state NOT IN ('FAILED', 'PROCESSED')
+                 )
+               )
+               AND (
+                 ? < 0
+                 OR source_update_id < ?
+                 OR (source_update_id = ? AND created_at_ms <= ?)
+               )
+             )
+           )
+         ORDER BY
+           CASE state WHEN 'ACTIVE' THEN 0 WHEN 'UNKNOWN' THEN 1 ELSE 2 END,
+           source_update_id,
+           created_at_ms,
+           id
+         LIMIT 1`,
+      )
+      .get(
+        sessionId,
+        currentTurn?.id ?? '',
+        currentTurn?.sourceUpdateId ?? -1,
+        currentTurn?.sourceUpdateId ?? -1,
+        currentTurn?.sourceUpdateId ?? -1,
+        currentTurn?.createdAtMs ?? -1,
+      )
     return row === null ? null : turnFromRow(row)
   }
 

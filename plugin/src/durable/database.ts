@@ -152,6 +152,16 @@ const MIGRATIONS: readonly Migration[] = [
         ON codex_interactions (thread_id, state, created_at_ms)`,
     ],
   },
+  {
+    version: 5,
+    name: 'telegram_update_routing',
+    statements: [
+      `ALTER TABLE telegram_updates ADD COLUMN routing_class TEXT NOT NULL DEFAULT 'OTHER'
+        CHECK (routing_class IN ('CONTROL', 'MESSAGE', 'QUEUED_MESSAGE', 'OTHER'))`,
+      `CREATE INDEX telegram_updates_routing_idx
+        ON telegram_updates (bot_id, chat_id, routing_class, state, update_id)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

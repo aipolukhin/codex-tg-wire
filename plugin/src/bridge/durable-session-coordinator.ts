@@ -51,6 +51,18 @@ export class TurnRecoveryRequiredError extends Error {
   }
 }
 
+export class TurnQueuedBehindTurnError extends Error {
+  readonly localTurnId: string
+  readonly blockingTurnId: string
+
+  constructor(localTurnId: string, blockingTurnId: string) {
+    super(`turn ${localTurnId} is queued behind turn ${blockingTurnId}`)
+    this.name = 'TurnQueuedBehindTurnError'
+    this.localTurnId = localTurnId
+    this.blockingTurnId = blockingTurnId
+  }
+}
+
 export class AgentLifecycleProtocolError extends Error {
   constructor(message: string) {
     super(message)
@@ -127,6 +139,15 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     if (!prepared.created) {
       if (prepared.turn.state === 'COMPLETED') return cachedResult(prepared.turn)
       if (prepared.turn.state !== 'QUEUED') throw new TurnRecoveryRequiredError(prepared.turn)
+    }
+    if (prepared.blockingTurn !== null) {
+      if (
+        prepared.blockingTurn.state === 'ACTIVE' ||
+        prepared.blockingTurn.state === 'QUEUED'
+      ) {
+        throw new TurnQueuedBehindTurnError(prepared.turn.id, prepared.blockingTurn.id)
+      }
+      throw new TurnRecoveryRequiredError(prepared.blockingTurn)
     }
     if (prepared.binding !== null && prepared.binding.state !== 'ACTIVE') {
       throw new TurnRecoveryRequiredError(prepared.turn)

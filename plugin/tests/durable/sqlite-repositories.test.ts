@@ -61,7 +61,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(4)
+    expect(migrations?.count).toBe(5)
   })
 })
 
@@ -161,6 +161,64 @@ describe('SqliteInboxRepository', () => {
         leaseDurationMs: LEASE_MS,
       }),
     ).toThrow(LeaseConflictError)
+  })
+
+  test('prioritizes controls and preserves queued-message FIFO per chat', () => {
+    let inbox = new SqliteInboxRepository(database)
+    const first = inbox.ingest({
+      botId: 'primary', updateId: 100, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {}, receivedAtMs: NOW,
+    })
+    const second = inbox.ingest({
+      botId: 'primary', updateId: 101, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {}, receivedAtMs: NOW,
+    })
+    const third = inbox.ingest({
+      botId: 'primary', updateId: 102, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {}, receivedAtMs: NOW,
+    })
+
+    expect(inbox.claimNext({ workerId: 'active', nowMs: NOW, leaseDurationMs: LEASE_MS })?.id).toBe(
+      first.update.id,
+    )
+    expect(inbox.claimNext({ workerId: 'queue', nowMs: NOW, leaseDurationMs: LEASE_MS })?.id).toBe(
+      second.update.id,
+    )
+    const deferred = inbox.deferQueued(second.update.id, 'queue', NOW + 500)
+    expect(deferred.routingClass).toBe('QUEUED_MESSAGE')
+    expect(deferred.attemptCount).toBe(0)
+
+    database.close()
+    database = openDurableDatabase(filename)
+    inbox = new SqliteInboxRepository(database)
+
+    const otherChat = inbox.ingest({
+      botId: 'primary', updateId: 103, chatId: '8001', routingClass: 'MESSAGE',
+      payload: {}, receivedAtMs: NOW,
+    })
+    const control = inbox.ingest({
+      botId: 'primary', updateId: 104, chatId: '7001', routingClass: 'CONTROL',
+      payload: {}, receivedAtMs: NOW,
+    })
+    expect(inbox.claimNext({ workerId: 'control', nowMs: NOW, leaseDurationMs: LEASE_MS })?.id).toBe(
+      control.update.id,
+    )
+    inbox.markProcessed(control.update.id, 'control', NOW)
+    expect(inbox.claimNext({ workerId: 'other', nowMs: NOW, leaseDurationMs: LEASE_MS })?.id).toBe(
+      otherChat.update.id,
+    )
+    inbox.markProcessed(otherChat.update.id, 'other', NOW)
+    expect(inbox.claimNext({ workerId: 'blocked', nowMs: NOW, leaseDurationMs: LEASE_MS })).toBeNull()
+
+    const resumed = inbox.claimNext({
+      workerId: 'queue-2', nowMs: NOW + 500, leaseDurationMs: LEASE_MS,
+    })
+    expect(resumed?.id).toBe(second.update.id)
+    expect(resumed?.attemptCount).toBe(1)
+    inbox.markProcessed(second.update.id, 'queue-2', NOW + 500)
+    expect(inbox.claimNext({
+      workerId: 'third', nowMs: NOW + 500, leaseDurationMs: LEASE_MS,
+    })?.id).toBe(third.update.id)
   })
 })
 

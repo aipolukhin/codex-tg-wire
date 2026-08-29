@@ -14,6 +14,7 @@ import type {
   TextTurnResult,
 } from '../../src/bridge/contracts.js'
 import { InboxProcessingWorker } from '../../src/bridge/inbox-processing-worker.js'
+import { TurnQueuedBehindTurnError } from '../../src/bridge/durable-session-coordinator.js'
 import { OutboxDeliveryWorker } from '../../src/bridge/outbox-delivery-worker.js'
 import { exponentialRetryPolicy } from '../../src/bridge/retry-policy.js'
 import type {
@@ -284,6 +285,34 @@ describe('durable text vertical slice', () => {
     release?.()
     expect((await running).outcome).toBe('enqueued')
     expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+  })
+
+  test('defers a queued turn without consuming the retry budget', async () => {
+    const accepted = inbox.ingest({ ...textUpdate(506), routingClass: 'MESSAGE' })
+    coordinator.failure = new TurnQueuedBehindTurnError('local-turn-2', 'local-turn-1')
+    const worker = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-a',
+      now: () => nowMs,
+      queuePollMs: 250,
+      retryPolicy: exponentialRetryPolicy({ maxAttempts: 1 }),
+    })
+
+    expect(await worker.runOnce()).toEqual({
+      outcome: 'queued',
+      updateId: accepted.update.id,
+      retryAtMs: START + 250,
+      localTurnId: 'local-turn-2',
+    })
+    expect(inbox.get(accepted.update.id)).toMatchObject({
+      state: 'RETRY_WAIT',
+      routingClass: 'QUEUED_MESSAGE',
+      attemptCount: 0,
+      lastError: 'queued behind active turn',
+    })
+
+    nowMs += 250
+    expect((await worker.runOnce()).outcome).toBe('queued')
+    expect(inbox.get(accepted.update.id)?.attemptCount).toBe(0)
   })
 })
 

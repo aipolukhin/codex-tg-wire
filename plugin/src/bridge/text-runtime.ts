@@ -6,7 +6,11 @@ import {
   type CodexAppServerBackendOptions,
 } from '../codex/app-server-backend.js'
 import { CodexInteractionBroker } from '../codex/interaction-broker.js'
-import type { TelegramUpdateInput, IngestResult } from '../durable/contracts.js'
+import type {
+  TelegramUpdateInput,
+  IngestResult,
+  UpdateRoutingClass,
+} from '../durable/contracts.js'
 import { SqliteCodexInteractionRepository } from '../durable/interaction-repository.js'
 import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
@@ -65,6 +69,29 @@ function telegramUpdateId(update: unknown): number {
     throw new TypeError('Telegram update_id must be a non-negative safe integer')
   }
   return updateId as number
+}
+
+function telegramRoute(update: unknown): { chatId: string | null; routingClass: UpdateRoutingClass } {
+  if (typeof update !== 'object' || update === null || Array.isArray(update)) {
+    return { chatId: null, routingClass: 'OTHER' }
+  }
+  const value = update as {
+    message?: { chat?: { id?: unknown }; text?: unknown }
+    callback_query?: { message?: { chat?: { id?: unknown } } }
+  }
+  const callbackChatId = value.callback_query?.message?.chat?.id
+  if (callbackChatId !== undefined) {
+    return { chatId: String(callbackChatId), routingClass: 'CONTROL' }
+  }
+  const chatId = value.message?.chat?.id
+  if (chatId === undefined) return { chatId: null, routingClass: 'OTHER' }
+  if (typeof value.message?.text !== 'string') {
+    return { chatId: String(chatId), routingClass: 'OTHER' }
+  }
+  return {
+    chatId: String(chatId),
+    routingClass: value.message.text.trimStart().startsWith('/') ? 'CONTROL' : 'MESSAGE',
+  }
 }
 
 export function createDurableTextRuntime(options: DurableTextRuntimeOptions): DurableTextRuntime {
@@ -127,9 +154,12 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
 
   return {
     ingest(update: unknown, receivedAtMs = Date.now()): IngestResult {
+      const route = telegramRoute(update)
       const input: TelegramUpdateInput = {
         botId: options.botId,
         updateId: telegramUpdateId(update),
+        chatId: route.chatId,
+        routingClass: route.routingClass,
         payload: update,
         receivedAtMs,
       }

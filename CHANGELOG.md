@@ -18,6 +18,10 @@ server identity reads `package.json` at runtime. Release process:
   pass through the SQLite outbox.
 - Added `/steer <text>` for explicitly injecting a correction into the active
   Codex turn through `turn/steer`, with thread/turn correlation checks.
+- Added a restart-safe FIFO queue for Codex turns. A busy session keeps later
+  text updates durable without spending their retry budget, while commands and
+  interaction callbacks bypass the message queue so `/stop`, `/steer` and
+  approval/input responses remain responsive.
 
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists

@@ -18,6 +18,7 @@ import {
   AgentLifecycleProtocolError,
   DurableSessionCoordinator,
   StaticProjectResolver,
+  TurnQueuedBehindTurnError,
   TurnRecoveryRequiredError,
   UnknownProjectError,
 } from '../../src/bridge/durable-session-coordinator.js'
@@ -46,6 +47,7 @@ class FakeAgentBackend implements AgentBackend {
   failureStage: FailureStage | undefined
   nextThreadId = 'codex-thread-1'
   nextTurnId = 'codex-turn-1'
+  beforeThreadWait: Promise<void> | undefined
   wait: Promise<void> | undefined
 
   async runTextTurn(
@@ -54,6 +56,7 @@ class FakeAgentBackend implements AgentBackend {
   ): Promise<TextTurnResult> {
     this.calls.push(input)
     if (this.failureStage === 'before_thread') throw new Error('thread/start unavailable')
+    if (this.beforeThreadWait !== undefined) await this.beforeThreadWait
 
     const threadId = input.threadId ?? this.nextThreadId
     await lifecycle.onThreadReady?.(threadId, input.threadId === null)
@@ -254,6 +257,79 @@ describe('DurableSessionCoordinator', () => {
     release()
 
     expect(await duplicate).toEqual(await first)
+    expect(backend.calls).toHaveLength(1)
+  })
+
+  test('persists a second turn as QUEUED until the active turn completes', async () => {
+    let release!: () => void
+    backend.wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const firstOperation = operation(611)
+    const first = coordinator.runTextTurn(firstOperation)
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (sessions.getTurnByOperationKey(firstOperation.operationKey)?.state === 'ACTIVE') break
+      await Promise.resolve()
+    }
+
+    const queuedOperation = operation(612)
+    await expect(coordinator.runTextTurn(queuedOperation)).rejects.toBeInstanceOf(
+      TurnQueuedBehindTurnError,
+    )
+    expect(sessions.getTurnByOperationKey(queuedOperation.operationKey)?.state).toBe('QUEUED')
+    expect(backend.calls).toHaveLength(1)
+
+    release()
+    await first
+    backend.wait = undefined
+    backend.nextTurnId = 'codex-turn-2'
+    expect((await coordinator.runTextTurn(queuedOperation)).turnId).toBe('codex-turn-2')
+    expect(backend.calls).toHaveLength(2)
+  })
+
+  test('serializes initial thread creation behind the first durable QUEUED turn', async () => {
+    let releaseThreadStart!: () => void
+    backend.beforeThreadWait = new Promise<void>((resolve) => {
+      releaseThreadStart = resolve
+    })
+    const firstOperation = operation(613)
+    const first = coordinator.runTextTurn(firstOperation)
+    for (let attempt = 0; attempt < 20 && backend.calls.length === 0; attempt += 1) {
+      await Promise.resolve()
+    }
+
+    const secondOperation = operation(614)
+    await expect(coordinator.runTextTurn(secondOperation)).rejects.toBeInstanceOf(
+      TurnQueuedBehindTurnError,
+    )
+    expect(sessions.getTurnByOperationKey(firstOperation.operationKey)?.state).toBe('QUEUED')
+    expect(sessions.getTurnByOperationKey(secondOperation.operationKey)?.state).toBe('QUEUED')
+    expect(backend.calls).toHaveLength(1)
+
+    releaseThreadStart()
+    await first
+    backend.beforeThreadWait = undefined
+    backend.nextTurnId = 'codex-turn-2'
+    expect((await coordinator.runTextTurn(secondOperation)).turnId).toBe('codex-turn-2')
+    expect(backend.calls).toHaveLength(2)
+  })
+
+  test('does not let a terminally failed inbox update poison the turn queue', async () => {
+    const failedOperation = operation(615)
+    const failedTurn = sessions.prepareTextOperation(failedOperation, 'codex', nowMs).turn
+    const claimed = inbox.claimNext({
+      workerId: 'inbox-a',
+      nowMs,
+      leaseDurationMs: 60_000,
+    })
+    expect(claimed?.id).toBe(failedOperation.inboxUpdateId)
+    inbox.fail(failedOperation.inboxUpdateId, 'inbox-a', 'terminal failure', nowMs)
+    expect(sessions.getTurn(failedTurn.id)?.state).toBe('QUEUED')
+
+    backend.nextTurnId = 'codex-turn-after-failure'
+    expect((await coordinator.runTextTurn(operation(616))).turnId).toBe(
+      'codex-turn-after-failure',
+    )
     expect(backend.calls).toHaveLength(1)
   })
 

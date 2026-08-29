@@ -16,6 +16,7 @@ import {
   type OutboxRepository,
   type RecoveryResult,
   type TelegramUpdateInput,
+  type UpdateRoutingClass,
 } from './contracts.js'
 
 interface InboxRow {
@@ -23,6 +24,7 @@ interface InboxRow {
   bot_id: string
   update_id: number
   chat_id: string | null
+  routing_class: UpdateRoutingClass
   payload_json: string
   state: InboxState
   attempt_count: number
@@ -74,6 +76,7 @@ function inboxFromRow(row: InboxRow): InboxUpdate {
     botId: row.bot_id,
     updateId: row.update_id,
     chatId: row.chat_id,
+    routingClass: row.routing_class,
     payload: JSON.parse(row.payload_json) as unknown,
     state: row.state,
     attemptCount: row.attempt_count,
@@ -115,13 +118,14 @@ export class SqliteInboxRepository implements InboxRepository {
     const receivedAtMs = input.receivedAtMs ?? Date.now()
     const result = this.database.run(
       `INSERT INTO telegram_updates
-        (bot_id, update_id, chat_id, payload_json, available_at_ms, received_at_ms)
-       VALUES (?, ?, ?, ?, ?, ?)
+        (bot_id, update_id, chat_id, routing_class, payload_json, available_at_ms, received_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (bot_id, update_id) DO NOTHING`,
       [
         input.botId,
         input.updateId,
         input.chatId ?? null,
+        input.routingClass ?? 'OTHER',
         encodePayload(input.payload),
         receivedAtMs,
         receivedAtMs,
@@ -148,9 +152,29 @@ export class SqliteInboxRepository implements InboxRepository {
     return this.database.transaction(() => {
       const candidate = this.database
         .query<{ id: number }, [number]>(
-          `SELECT id FROM telegram_updates
-           WHERE state IN ('RECEIVED', 'RETRY_WAIT') AND available_at_ms <= ?
-           ORDER BY update_id, id
+          `SELECT current.id FROM telegram_updates AS current
+           WHERE current.state IN ('RECEIVED', 'RETRY_WAIT')
+             AND current.available_at_ms <= ?
+             AND (
+               current.routing_class NOT IN ('MESSAGE', 'QUEUED_MESSAGE')
+               OR NOT EXISTS (
+                 SELECT 1 FROM telegram_updates AS earlier
+                 WHERE earlier.bot_id = current.bot_id
+                   AND earlier.chat_id IS current.chat_id
+                   AND earlier.routing_class = 'QUEUED_MESSAGE'
+                   AND earlier.state IN ('RECEIVED', 'RETRY_WAIT', 'LEASED')
+                   AND earlier.update_id < current.update_id
+               )
+             )
+           ORDER BY
+             CASE current.routing_class
+               WHEN 'CONTROL' THEN 0
+               WHEN 'QUEUED_MESSAGE' THEN 1
+               WHEN 'MESSAGE' THEN 2
+               ELSE 3
+             END,
+             current.update_id,
+             current.id
            LIMIT 1`,
         )
         .get(options.nowMs)
@@ -199,6 +223,20 @@ export class SqliteInboxRepository implements InboxRepository {
            lease_expires_at_ms = NULL, last_error = ?
        WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
       [availableAtMs, error, id, workerId],
+    )
+    if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
+    return this.require(id)
+  }
+
+  deferQueued(id: number, workerId: string, availableAtMs: number): InboxUpdate {
+    const result = this.database.run(
+      `UPDATE telegram_updates
+       SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE',
+           attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+           available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
+           last_error = 'queued behind active turn'
+       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?`,
+      [availableAtMs, id, workerId],
     )
     if (result.changes !== 1) throw new LeaseConflictError('inbox update', id)
     return this.require(id)

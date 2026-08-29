@@ -1,9 +1,11 @@
 export type InboxState = 'RECEIVED' | 'LEASED' | 'PROCESSED' | 'RETRY_WAIT' | 'FAILED'
+export type UpdateRoutingClass = 'CONTROL' | 'MESSAGE' | 'QUEUED_MESSAGE' | 'OTHER'
 
 export interface TelegramUpdateInput {
   botId: string
   updateId: number
   chatId?: string | null
+  routingClass?: UpdateRoutingClass
   payload: unknown
   receivedAtMs?: number
 }
@@ -13,6 +15,7 @@ export interface InboxUpdate {
   botId: string
   updateId: number
   chatId: string | null
+  routingClass: UpdateRoutingClass
   payload: unknown
   state: InboxState
   attemptCount: number
@@ -42,6 +45,7 @@ export interface InboxRepository {
   renewLease(id: number, options: LeaseOptions): InboxUpdate
   markProcessed(id: number, workerId: string, nowMs: number): InboxUpdate
   retry(id: number, workerId: string, error: string, availableAtMs: number): InboxUpdate
+  deferQueued(id: number, workerId: string, availableAtMs: number): InboxUpdate
   fail(id: number, workerId: string, error: string, nowMs: number): InboxUpdate
   recoverExpiredLeases(nowMs: number): number
 }

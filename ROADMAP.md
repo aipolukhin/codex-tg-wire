@@ -24,6 +24,7 @@
 - [x] Добавлен standalone personal-alpha service: строгий конфиг без токена, grammY/Codex wiring и signal shutdown.
 - [x] Добавлен первый M3 interaction slice: durable command/file approvals, user-input questions, inline callbacks, `/answer`, expiry и stale-on-disconnect.
 - [x] Добавлен явный `/steer <текст>` с `expectedTurnId`; late/mismatched команды не попадают в другой turn.
+- [x] Добавлена restart-safe FIFO-очередь turns: один активный turn на session, control updates обходят очередь, ожидание не расходует retry budget.
 
 ## 1. Что именно мы строим
 
@@ -173,7 +174,9 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 
 - Thread bindings: project/chat/topic ↔ Codex thread id.
 - `/threads`, `/switch`, `/new`, `/archive`, `/resume`.
-- Очередь пользовательских turns; ровно один активный turn на thread.
+- Очередь пользовательских turns; ровно один активный turn на thread. **Готово:**
+  порядок хранится в SQLite, переживает restart, а terminally failed inbox item
+  не блокирует очередь навсегда.
 - Явный `/steer` для `turn/steer`; обычное сообщение при занятом thread по умолчанию становится следующим queued turn.
 - `/stop` вызывает `turn/interrupt` и корректно закрывает UI state.
 - Server-initiated approvals отображаются inline buttons с проверкой owner и одноразовым решением.

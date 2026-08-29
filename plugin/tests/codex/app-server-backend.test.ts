@@ -8,6 +8,7 @@ import {
   CodexTurnBusyError,
   CodexTurnFailedError,
   CodexTurnInterruptedError,
+  CodexTurnNotActiveError,
   CodexTurnProtocolError,
   CodexTurnTimeoutError,
 } from '../../src/codex/app-server-backend.js'
@@ -19,6 +20,8 @@ import type {
   TurnInterruptParams,
   TurnStartParams,
   TurnStartResult,
+  TurnSteerParams,
+  TurnSteerResult,
 } from '../../src/codex/protocol.js'
 import type { TransportClose } from '../../src/codex/transport.js'
 
@@ -27,6 +30,7 @@ class FakeBackendClient {
   readonly threadResumes: ThreadResumeParams[] = []
   readonly turnStarts: TurnStartParams[] = []
   readonly interrupts: TurnInterruptParams[] = []
+  readonly steers: TurnSteerParams[] = []
   readonly notificationListeners = new Set<(notification: ServerNotification) => void>()
   readonly closeListeners = new Set<(close: TransportClose) => void>()
   threadIds = ['thread-1']
@@ -55,6 +59,11 @@ class FakeBackendClient {
 
   async interruptTurn(params: TurnInterruptParams): Promise<void> {
     this.interrupts.push(params)
+  }
+
+  async steerTurn(params: TurnSteerParams): Promise<TurnSteerResult> {
+    this.steers.push(params)
+    return { turnId: params.expectedTurnId }
   }
 
   onNotification(listener: (notification: ServerNotification) => void): () => void {
@@ -257,6 +266,42 @@ describe('CodexAppServerBackend text turns', () => {
     await waitForTurnStart(client)
     client.emitClose({ code: 137, signal: null })
     await expect(result).rejects.toBeInstanceOf(AppServerClosedError)
+    backend.close()
+  })
+
+  test('steers only the currently managed active turn', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    const running = backend.runTextTurn(turnInput())
+    await waitForTurnStart(client)
+
+    await backend.steerTurn({
+      operationKey: 'telegram:primary:502:turn:command:steer',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      text: 'сначала запусти unit tests',
+    })
+    expect(client.steers).toEqual([{
+      threadId: 'thread-1',
+      expectedTurnId: 'turn-1',
+      clientUserMessageId: 'telegram:primary:502:turn:command:steer',
+      input: [{ type: 'text', text: 'сначала запусти unit tests', text_elements: [] }],
+    }])
+    await expect(backend.steerTurn({
+      operationKey: 'bad',
+      threadId: 'thread-1',
+      turnId: 'other-turn',
+      text: 'wrong',
+    })).rejects.toBeInstanceOf(CodexTurnNotActiveError)
+
+    emitCompleted(client, 'thread-1', 'turn-1', 'done')
+    await running
+    await expect(backend.steerTurn({
+      operationKey: 'late',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      text: 'too late',
+    })).rejects.toBeInstanceOf(CodexTurnNotActiveError)
     backend.close()
   })
 

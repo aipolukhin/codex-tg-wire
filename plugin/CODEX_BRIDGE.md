@@ -27,7 +27,7 @@ export DASHI_CODEX_BRIDGE_CONFIG=/absolute/path/bridge.config.json
 
 Путь к нестандартному Codex можно задать как `codex.binary` в JSON или через `CODEX_BINARY_PATH`. При старте сервис проверяет токен через `getMe`, сам получает bot id/username, открывает SQLite/WAL и инициализирует `codex app-server`.
 
-Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`. Command/file approvals приходят inline-карточками. На обычные вопросы Codex можно ответить кнопкой; свободный ответ отправляется командой, указанной на карточке: `/answer <id> <номер-вопроса> <текст>`.
+Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`, `/steer <уточнение>`. `/steer` дополняет именно активный turn; обычное сообщение по-прежнему является отдельным следующим turn. Command/file approvals приходят inline-карточками. На обычные вопросы Codex можно ответить кнопкой; свободный ответ отправляется командой, указанной на карточке: `/answer <id> <номер-вопроса> <текст>`.
 
 По умолчанию `codex.approvalPolicy` равен `on-request`, а интерактивный запрос живёт 10 минут (`codex.interactionTimeoutMs`). Этот timeout должен быть меньше `codex.turnTimeoutMs`. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
 

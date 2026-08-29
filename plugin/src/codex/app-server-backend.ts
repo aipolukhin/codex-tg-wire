@@ -12,6 +12,8 @@ import type {
   ThreadResult,
   ThreadStartParams,
   TurnInterruptParams,
+  TurnSteerParams,
+  TurnSteerResult,
   TurnStartParams,
   TurnStartResult,
 } from './protocol.js'
@@ -22,6 +24,7 @@ interface CodexBackendClient {
   resumeThread(params: ThreadResumeParams): Promise<ThreadResult>
   startTurn(params: TurnStartParams): Promise<TurnStartResult>
   interruptTurn(params: TurnInterruptParams): Promise<void>
+  steerTurn(params: TurnSteerParams): Promise<TurnSteerResult>
   onNotification(listener: (notification: ServerNotification) => void): () => void
   onClose(listener: (close: TransportClose) => void): () => void
 }
@@ -63,6 +66,13 @@ export class CodexTurnBusyError extends Error {
   constructor(threadId: string) {
     super(`thread ${threadId} already has a turn managed by this backend`)
     this.name = 'CodexTurnBusyError'
+  }
+}
+
+export class CodexTurnNotActiveError extends Error {
+  constructor(threadId: string, turnId: string) {
+    super(`turn ${turnId} is not the active managed turn for thread ${threadId}`)
+    this.name = 'CodexTurnNotActiveError'
   }
 }
 
@@ -246,6 +256,29 @@ export class CodexAppServerBackend implements AgentBackend {
 
   interruptTurn(threadId: string, turnId: string): Promise<void> {
     return this.client.interruptTurn({ threadId, turnId })
+  }
+
+  async steerTurn(input: {
+    operationKey: string
+    threadId: string
+    turnId: string
+    text: string
+  }): Promise<void> {
+    const pending = this.pendingByThread.get(input.threadId)
+    if (pending === undefined || pending.turnId !== input.turnId) {
+      throw new CodexTurnNotActiveError(input.threadId, input.turnId)
+    }
+    const result = await this.client.steerTurn({
+      threadId: input.threadId,
+      expectedTurnId: input.turnId,
+      clientUserMessageId: input.operationKey,
+      input: [textInput(input.text)],
+    })
+    if (result.turnId !== input.turnId) {
+      throw new CodexTurnProtocolError(
+        `turn/steer returned ${result.turnId}, expected ${input.turnId}`,
+      )
+    }
   }
 
   close(): void {

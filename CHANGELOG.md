@@ -16,6 +16,8 @@ server identity reads `package.json` at runtime. Release process:
   owner-checked inline buttons, non-secret user-input requests support option
   buttons and `/answer`, and all prompts, edits and callback acknowledgements
   pass through the SQLite outbox.
+- Added `/steer <text>` for explicitly injecting a correction into the active
+  Codex turn through `turn/steer`, with thread/turn correlation checks.
 
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists

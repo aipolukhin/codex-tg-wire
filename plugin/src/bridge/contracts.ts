@@ -6,7 +6,7 @@ export interface IncomingTextMessage {
   text: string
 }
 
-export type PersonalAlphaCommandName = 'start' | 'new' | 'status' | 'stop'
+export type PersonalAlphaCommandName = 'start' | 'new' | 'status' | 'stop' | 'steer'
 
 export interface IncomingCommand {
   chatId: string
@@ -114,6 +114,12 @@ export interface AgentTurnLifecycle {
 export interface AgentBackend {
   runTextTurn(input: AgentTextTurnInput, lifecycle?: AgentTurnLifecycle): Promise<TextTurnResult>
   interruptTurn(threadId: string, turnId: string): Promise<void>
+  steerTurn(input: {
+    operationKey: string
+    threadId: string
+    turnId: string
+    text: string
+  }): Promise<void>
 }
 
 export interface DeliveryProof {

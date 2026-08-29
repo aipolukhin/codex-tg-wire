@@ -23,6 +23,7 @@
 - [x] Добавлены lease heartbeat, periodic reaper и supervisor loops с graceful drain.
 - [x] Добавлен standalone personal-alpha service: строгий конфиг без токена, grammY/Codex wiring и signal shutdown.
 - [x] Добавлен первый M3 interaction slice: durable command/file approvals, user-input questions, inline callbacks, `/answer`, expiry и stale-on-disconnect.
+- [x] Добавлен явный `/steer <текст>` с `expectedTurnId`; late/mismatched команды не попадают в другой turn.
 
 ## 1. Что именно мы строим
 

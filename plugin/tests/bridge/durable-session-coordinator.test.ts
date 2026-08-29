@@ -42,6 +42,7 @@ class FakeDefiniteTurnError extends Error {
 class FakeAgentBackend implements AgentBackend {
   readonly calls: AgentTextTurnInput[] = []
   readonly interrupts: Array<{ threadId: string; turnId: string }> = []
+  readonly steers: Array<{ operationKey: string; threadId: string; turnId: string; text: string }> = []
   failureStage: FailureStage | undefined
   nextThreadId = 'codex-thread-1'
   nextTurnId = 'codex-turn-1'
@@ -74,6 +75,15 @@ class FakeAgentBackend implements AgentBackend {
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {
     this.interrupts.push({ threadId, turnId })
+  }
+
+  async steerTurn(input: {
+    operationKey: string
+    threadId: string
+    turnId: string
+    text: string
+  }): Promise<void> {
+    this.steers.push(input)
   }
 }
 
@@ -126,13 +136,13 @@ function operation(remoteUpdateId: number): TextTurnOperation {
   }
 }
 
-function command(name: PersonalAlphaCommandName): CommandOperation {
+function command(name: PersonalAlphaCommandName, args = ''): CommandOperation {
   return {
     operationKey: `telegram:primary:command:${name}`,
     botId: 'primary',
     inboxUpdateId: 0,
     updateId: 0,
-    command: { chatId: '7001', projectId: 'workspace', name, args: '' },
+    command: { chatId: '7001', projectId: 'workspace', name, args },
   }
 }
 
@@ -307,5 +317,34 @@ describe('PersonalAlphaCommands', () => {
   test('/stop reports idle state without calling backend', async () => {
     expect((await commands.handleCommand(command('stop'))).text).toBe('Активного turn нет.')
     expect(backend.interrupts).toHaveLength(0)
+  })
+
+  test('/steer validates input and targets the active backend turn', async () => {
+    expect((await commands.handleCommand(command('steer'))).text).toContain('Использование')
+    expect((await commands.handleCommand(command('steer', 'clarify'))).text).toContain(
+      'Активного turn',
+    )
+
+    let release!: () => void
+    backend.wait = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const running = coordinator.runTextTurn(operation(624))
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const turn = sessions.getTurnByOperationKey('telegram:primary:624:turn')
+      if (turn?.backendTurnId !== null && turn?.backendTurnId !== undefined) break
+      await Promise.resolve()
+    }
+
+    const response = await commands.handleCommand(command('steer', 'сначала проверь тесты'))
+    expect(response.text).toContain('Уточнение отправлено')
+    expect(backend.steers).toEqual([{
+      operationKey: 'telegram:primary:command:steer',
+      threadId: 'codex-thread-1',
+      turnId: 'codex-turn-1',
+      text: 'сначала проверь тесты',
+    }])
+    release()
+    await running
   })
 })

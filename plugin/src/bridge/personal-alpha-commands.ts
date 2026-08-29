@@ -29,6 +29,7 @@ export class PersonalAlphaCommands implements CommandHandler {
             'Dashi Codex bridge готов.',
             'Отправь текст, чтобы запустить turn.',
             '/new — новый thread · /status — состояние · /stop — остановить turn',
+            '/steer <текст> — уточнить задачу внутри активного turn',
           ].join('\n'),
         }
       case 'status':
@@ -37,6 +38,8 @@ export class PersonalAlphaCommands implements CommandHandler {
         return { text: this.reset(operation) }
       case 'stop':
         return { text: await this.stop(operation) }
+      case 'steer':
+        return { text: await this.steer(operation) }
     }
   }
 
@@ -95,5 +98,29 @@ export class PersonalAlphaCommands implements CommandHandler {
     }
     await this.backend.interruptTurn(binding.threadId, turn.backendTurnId)
     return `Остановка turn ${turn.backendTurnId} запрошена.`
+  }
+
+  private async steer(operation: CommandOperation): Promise<string> {
+    const command = operation.command
+    if (command.args.trim().length === 0) return 'Использование: /steer <уточнение>'
+    const overview = this.sessions.getOverview(
+      operation.botId,
+      command.chatId,
+      command.projectId,
+      this.backendName,
+    )
+    const turn = overview.activeTurn
+    if (turn === null || turn.state !== 'ACTIVE') return 'Активного turn для steer нет.'
+    const binding = overview.binding
+    if (binding === null || turn.backendTurnId === null) {
+      return `Turn ${turn.id} ещё не получил backend id; steer пока невозможен.`
+    }
+    await this.backend.steerTurn({
+      operationKey: operation.operationKey,
+      threadId: binding.threadId,
+      turnId: turn.backendTurnId,
+      text: command.args,
+    })
+    return `Уточнение отправлено в turn ${turn.backendTurnId}.`
   }
 }

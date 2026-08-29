@@ -6,7 +6,17 @@ export interface IncomingTextMessage {
   text: string
 }
 
-export type PersonalAlphaCommandName = 'start' | 'new' | 'status' | 'stop' | 'steer'
+export type PersonalAlphaCommandName =
+  | 'start'
+  | 'new'
+  | 'status'
+  | 'stop'
+  | 'steer'
+  | 'failed'
+  | 'ambiguous'
+  | 'retry'
+  | 'resolved'
+  | 'archive'
 
 export interface IncomingCommand {
   chatId: string

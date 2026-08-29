@@ -119,6 +119,11 @@ describe('DurableTelegramTextGateway inbound', () => {
       name: 'steer',
       args: 'run tests',
     })
+    expect(gateway.extractCommand(make('/failed'))).toMatchObject({ name: 'failed', args: '' })
+    expect(gateway.extractCommand(make('/resolved@my_bot job-1 991'))).toMatchObject({
+      name: 'resolved',
+      args: 'job-1 991',
+    })
     expect(gateway.extractCommand(make('/stop@other_bot'))).toBeNull()
     expect(gateway.extractCommand(make('/threads'))).toBeNull()
   })

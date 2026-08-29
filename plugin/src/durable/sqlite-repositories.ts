@@ -5,6 +5,9 @@ import {
   type DeliveryJob,
   type DeliveryJobInput,
   type DeliveryKind,
+  type DeliveryProblemActionInput,
+  type DeliveryProblemActionResult,
+  type DeliveryProblemState,
   type DeliveryState,
   type EnqueueResult,
   type InboxRepository,
@@ -54,6 +57,15 @@ interface DeliveryRow {
   created_at_ms: number
   updated_at_ms: number
   delivered_at_ms: number | null
+}
+
+interface DeliveryProblemActionRow {
+  operation_key: string
+  job_id: string
+  action: DeliveryProblemActionInput['action']
+  actor_bot_id: string
+  actor_chat_id: string
+  remote_id: string | null
 }
 
 function encodePayload(payload: unknown): string {
@@ -448,6 +460,125 @@ export class SqliteOutboxRepository implements OutboxRepository {
         [nowMs, nowMs],
       ).changes
       return { retryable, ambiguous, expired }
+    }).immediate()
+  }
+
+  listProblems(state: DeliveryProblemState, limit = 10): DeliveryJob[] {
+    if (state !== 'FAILED' && state !== 'AMBIGUOUS' && state !== 'EXPIRED') {
+      throw new TypeError('invalid delivery problem state')
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError('problem list limit must be between 1 and 100')
+    }
+    return this.database
+      .query<DeliveryRow, [DeliveryProblemState, number]>(
+        `SELECT * FROM delivery_jobs
+         WHERE state = ?
+         ORDER BY updated_at_ms DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(state, limit)
+      .map(deliveryFromRow)
+  }
+
+  actOnProblem(input: DeliveryProblemActionInput): DeliveryProblemActionResult {
+    if (input.action !== 'RETRY' && input.action !== 'RESOLVE' && input.action !== 'ARCHIVE') {
+      throw new TypeError('invalid delivery problem action')
+    }
+    if (input.operationKey.trim().length === 0) throw new TypeError('operationKey must not be empty')
+    if (input.jobId.trim().length === 0) throw new TypeError('jobId must not be empty')
+    if (input.actorBotId.trim().length === 0 || input.actorChatId.trim().length === 0) {
+      throw new TypeError('problem action actor must not be empty')
+    }
+    if (!Number.isSafeInteger(input.nowMs)) throw new TypeError('nowMs must be a safe integer')
+    const remoteId = input.remoteId?.trim()
+    if (input.action === 'RESOLVE' && (remoteId === undefined || remoteId.length === 0)) {
+      throw new TypeError('RESOLVE requires a remoteId')
+    }
+
+    return this.database.transaction((): DeliveryProblemActionResult => {
+      const replay = this.database
+        .query<DeliveryProblemActionRow, [string]>(
+          `SELECT operation_key, job_id, action, actor_bot_id, actor_chat_id, remote_id
+           FROM delivery_problem_actions WHERE operation_key = ?`,
+        )
+        .get(input.operationKey)
+      if (replay !== null) {
+        if (
+          replay.job_id !== input.jobId ||
+          replay.action !== input.action ||
+          replay.actor_bot_id !== input.actorBotId ||
+          replay.actor_chat_id !== input.actorChatId ||
+          replay.remote_id !== (remoteId ?? null)
+        ) {
+          throw new Error(`problem operation ${input.operationKey} was replayed with different input`)
+        }
+        return { outcome: 'replayed', job: this.require(replay.job_id) }
+      }
+
+      const job = this.get(input.jobId)
+      if (job === null) return { outcome: 'not_found', job: null }
+
+      let targetState: 'PENDING' | 'DELIVERED' | 'ARCHIVED'
+      let changes: number
+      if (input.action === 'RETRY') {
+        if (job.state !== 'FAILED' && job.state !== 'EXPIRED') {
+          return { outcome: 'invalid_state', job }
+        }
+        targetState = 'PENDING'
+        changes = this.database.run(
+          `UPDATE delivery_jobs
+           SET state = 'PENDING', attempt_count = 0, available_at_ms = ?, expires_at_ms = NULL,
+               lease_owner = NULL, lease_expires_at_ms = NULL, send_started_at_ms = NULL,
+               remote_id = NULL, delivered_at_ms = NULL,
+               last_error = 'manual retry requested', updated_at_ms = ?
+           WHERE id = ? AND state = ?`,
+          [input.nowMs, input.nowMs, job.id, job.state],
+        ).changes
+      } else if (input.action === 'RESOLVE') {
+        if (job.state !== 'AMBIGUOUS') return { outcome: 'invalid_state', job }
+        targetState = 'DELIVERED'
+        changes = this.database.run(
+          `UPDATE delivery_jobs
+           SET state = 'DELIVERED', remote_id = ?, delivered_at_ms = ?, updated_at_ms = ?,
+               lease_owner = NULL, lease_expires_at_ms = NULL, last_error = NULL
+           WHERE id = ? AND state = 'AMBIGUOUS'`,
+          [remoteId as string, input.nowMs, input.nowMs, job.id],
+        ).changes
+      } else {
+        if (job.state !== 'FAILED' && job.state !== 'AMBIGUOUS' && job.state !== 'EXPIRED') {
+          return { outcome: 'invalid_state', job }
+        }
+        targetState = 'ARCHIVED'
+        changes = this.database.run(
+          `UPDATE delivery_jobs
+           SET state = 'ARCHIVED', lease_owner = NULL, lease_expires_at_ms = NULL,
+               updated_at_ms = ?
+           WHERE id = ? AND state = ?`,
+          [input.nowMs, job.id, job.state],
+        ).changes
+      }
+      if (changes !== 1) throw new Error(`delivery job ${job.id} did not transition to ${targetState}`)
+
+      this.database.run(
+        `INSERT INTO delivery_problem_actions
+          (id, operation_key, job_id, action, from_state, to_state,
+           actor_bot_id, actor_chat_id, remote_id, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          input.operationKey,
+          job.id,
+          input.action,
+          job.state,
+          targetState,
+          input.actorBotId,
+          input.actorChatId,
+          remoteId ?? null,
+          input.nowMs,
+        ],
+      )
+      return { outcome: 'applied', job: this.require(job.id) }
     }).immediate()
   }
 

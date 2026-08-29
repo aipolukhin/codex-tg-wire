@@ -13,6 +13,7 @@ import type {
   TransportClose,
 } from '../../src/codex/transport.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
+import { SqliteOutboxRepository } from '../../src/durable/sqlite-repositories.js'
 
 const NOW = 1_800_000_000_000
 
@@ -220,5 +221,33 @@ describe('durable text runtime composition', () => {
     ).toBe(false)
     expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
     expect(telegram.sent[0]?.text).toContain('/new')
+  })
+
+  test('routes /failed through the durable problem center without exposing payloads', async () => {
+    const outbox = new SqliteOutboxRepository(database)
+    const problemId = '44444444-4444-4444-8444-444444444444'
+    outbox.enqueue({
+      id: problemId,
+      sourceKey: 'turn:problem:final',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'private body' },
+      createdAtMs: NOW,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs: NOW, leaseDurationMs: 60_000 })
+    outbox.failLease(problemId, 'sender-a', 'private failure detail', NOW)
+
+    runtime.ingest({
+      update_id: 803,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/failed',
+      },
+    }, NOW)
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
+    expect(telegram.sent[0]?.text).toContain(problemId)
+    expect(telegram.sent[0]?.text).not.toContain('private body')
+    expect(telegram.sent[0]?.text).not.toContain('private failure detail')
   })
 })

@@ -22,6 +22,10 @@ server identity reads `package.json` at runtime. Release process:
   text updates durable without spending their retry budget, while commands and
   interaction callbacks bypass the message queue so `/stop`, `/steer` and
   approval/input responses remain responsive.
+- Added a Telegram delivery problem center: `/failed` and `/ambiguous` expose
+  safe job metadata; `/retry`, `/resolved` and `/archive` perform idempotent,
+  audited state transitions. `AMBIGUOUS` jobs still cannot be retried because
+  the original Telegram mutation may already have succeeded.
 
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists

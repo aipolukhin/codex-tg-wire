@@ -29,6 +29,14 @@ export DASHI_CODEX_BRIDGE_CONFIG=/absolute/path/bridge.config.json
 
 Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`, `/steer <уточнение>`. `/steer` дополняет именно активный turn; обычное сообщение становится отдельным следующим turn. Если session занята, следующие сообщения сохраняются в SQLite и выполняются FIFO, в том числе после restart. Команды, approval-кнопки и ответы на вопросы идут как control updates и не ждут за очередью сообщений — поэтому активный turn можно сразу остановить или скорректировать. Command/file approvals приходят inline-карточками. На обычные вопросы Codex можно ответить кнопкой; свободный ответ отправляется командой, указанной на карточке: `/answer <id> <номер-вопроса> <текст>`.
 
+Problem center показывает только безопасные метаданные delivery jobs, без тела сообщения и transport error detail:
+
+- `/failed` — последние `FAILED` и `EXPIRED`; `/retry <job-id>` запускает новый bounded retry cycle, `/archive <job-id>` закрывает проблему;
+- `/ambiguous` — отправки с неизвестным результатом; прямой retry запрещён из-за риска дубля;
+- `/resolved <job-id> <telegram-message-id>` — отметить проверенную вручную отправку как `DELIVERED`; `/archive <job-id>` — закрыть без повтора.
+
+Принятые действия идемпотентны и сохраняются в `delivery_problem_actions` вместе с actor, исходным и целевым состоянием.
+
 По умолчанию `codex.approvalPolicy` равен `on-request`, а интерактивный запрос живёт 10 минут (`codex.interactionTimeoutMs`). Этот timeout должен быть меньше `codex.turnTimeoutMs`. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
 
 ## Граница безопасности

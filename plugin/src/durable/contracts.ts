@@ -60,6 +60,8 @@ export type DeliveryState =
   | 'FAILED'
   | 'EXPIRED'
   | 'ARCHIVED'
+export type DeliveryProblemState = 'FAILED' | 'AMBIGUOUS' | 'EXPIRED'
+export type DeliveryProblemAction = 'RETRY' | 'RESOLVE' | 'ARCHIVE'
 
 export interface DeliveryJobInput {
   id?: string
@@ -108,6 +110,21 @@ export interface RecoveryResult {
   expired: number
 }
 
+export interface DeliveryProblemActionInput {
+  operationKey: string
+  jobId: string
+  action: DeliveryProblemAction
+  actorBotId: string
+  actorChatId: string
+  remoteId?: string
+  nowMs: number
+}
+
+export type DeliveryProblemActionResult =
+  | { outcome: 'applied' | 'replayed'; job: DeliveryJob }
+  | { outcome: 'not_found'; job: null }
+  | { outcome: 'invalid_state'; job: DeliveryJob }
+
 export interface OutboxRepository {
   enqueue(input: DeliveryJobInput): EnqueueResult
   get(id: string): DeliveryJob | null
@@ -118,6 +135,8 @@ export interface OutboxRepository {
   markDelivered(id: string, workerId: string, remoteId: string, nowMs: number): DeliveryJob
   failLease(id: string, workerId: string, error: string, nowMs: number, retryAtMs?: number): LeaseFailure
   recoverExpiredLeases(nowMs: number): RecoveryResult
+  listProblems(state: DeliveryProblemState, limit?: number): DeliveryJob[]
+  actOnProblem(input: DeliveryProblemActionInput): DeliveryProblemActionResult
 }
 
 export class LeaseConflictError extends Error {

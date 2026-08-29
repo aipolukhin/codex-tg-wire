@@ -4,21 +4,38 @@ import type {
   CommandOperation,
   CommandResult,
 } from './contracts.js'
+import type {
+  DeliveryJob,
+  DeliveryProblemAction,
+  DeliveryProblemActionResult,
+  DeliveryProblemState,
+  OutboxRepository,
+} from '../durable/contracts.js'
 import type { SqliteSessionRepository } from '../durable/session-repository.js'
 
 export interface PersonalAlphaCommandsOptions {
   backendName?: string
+  now?: () => number
+}
+
+const PROBLEM_LIST_LIMIT = 10
+
+function problemLine(job: DeliveryJob): string {
+  return `${job.id} · ${job.kind} · попыток ${job.attemptCount} · ${new Date(job.updatedAtMs).toISOString()}`
 }
 
 export class PersonalAlphaCommands implements CommandHandler {
   private readonly backendName: string
+  private readonly now: () => number
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
     private readonly backend: AgentBackend,
+    private readonly outbox: OutboxRepository,
     options: PersonalAlphaCommandsOptions = {},
   ) {
     this.backendName = options.backendName ?? 'codex'
+    this.now = options.now ?? Date.now
   }
 
   async handleCommand(operation: CommandOperation): Promise<CommandResult> {
@@ -30,6 +47,7 @@ export class PersonalAlphaCommands implements CommandHandler {
             'Отправь текст, чтобы запустить turn.',
             '/new — новый thread · /status — состояние · /stop — остановить turn',
             '/steer <текст> — уточнить задачу внутри активного turn',
+            '/failed · /ambiguous — problem center доставки',
           ].join('\n'),
         }
       case 'status':
@@ -40,6 +58,16 @@ export class PersonalAlphaCommands implements CommandHandler {
         return { text: await this.stop(operation) }
       case 'steer':
         return { text: await this.steer(operation) }
+      case 'failed':
+        return { text: this.listFailed() }
+      case 'ambiguous':
+        return { text: this.listProblems('AMBIGUOUS') }
+      case 'retry':
+        return { text: this.problemAction(operation, 'RETRY') }
+      case 'resolved':
+        return { text: this.problemAction(operation, 'RESOLVE') }
+      case 'archive':
+        return { text: this.problemAction(operation, 'ARCHIVE') }
     }
   }
 
@@ -122,5 +150,80 @@ export class PersonalAlphaCommands implements CommandHandler {
       text: command.args,
     })
     return `Уточнение отправлено в turn ${turn.backendTurnId}.`
+  }
+
+  private listFailed(): string {
+    const jobs = [
+      ...this.outbox.listProblems('FAILED', PROBLEM_LIST_LIMIT),
+      ...this.outbox.listProblems('EXPIRED', PROBLEM_LIST_LIMIT),
+    ]
+      .sort((left, right) => right.updatedAtMs - left.updatedAtMs || right.id.localeCompare(left.id))
+      .slice(0, PROBLEM_LIST_LIMIT)
+    if (jobs.length === 0) return 'FAILED/EXPIRED delivery jobs нет.'
+    return [
+      `FAILED/EXPIRED delivery jobs (${jobs.length}):`,
+      ...jobs.map(problemLine),
+      'Действия: /retry <job-id> или /archive <job-id>',
+    ].join('\n')
+  }
+
+  private listProblems(state: DeliveryProblemState): string {
+    const jobs = this.outbox.listProblems(state, PROBLEM_LIST_LIMIT)
+    if (jobs.length === 0) return `${state} delivery jobs нет.`
+    return [
+      `${state} delivery jobs (${jobs.length}):`,
+      ...jobs.map(problemLine),
+      'Проверь Telegram вручную: /resolved <job-id> <message-id> или /archive <job-id>.',
+      'Прямой retry для AMBIGUOUS запрещён: исходная отправка могла дойти.',
+    ].join('\n')
+  }
+
+  private problemAction(operation: CommandOperation, action: DeliveryProblemAction): string {
+    const parts = operation.command.args.trim().split(/\s+/).filter(Boolean)
+    if (action === 'RESOLVE') {
+      if (parts.length !== 2 || !/^[1-9]\d*$/.test(parts[1] ?? '')) {
+        return 'Использование: /resolved <job-id> <telegram-message-id>'
+      }
+    } else if (parts.length !== 1) {
+      const command = action === 'RETRY' ? 'retry' : 'archive'
+      return `Использование: /${command} <job-id>`
+    }
+    const jobId = parts[0] as string
+    const result = this.outbox.actOnProblem({
+      operationKey: operation.operationKey,
+      jobId,
+      action,
+      actorBotId: operation.botId,
+      actorChatId: operation.command.chatId,
+      ...(action === 'RESOLVE' ? { remoteId: `telegram:${parts[1] as string}` } : {}),
+      nowMs: this.now(),
+    })
+    return this.formatProblemAction(action, jobId, result)
+  }
+
+  private formatProblemAction(
+    action: DeliveryProblemAction,
+    jobId: string,
+    result: DeliveryProblemActionResult,
+  ): string {
+    if (result.outcome === 'not_found') return `Delivery job ${jobId} не найден.`
+    if (result.outcome === 'invalid_state') {
+      if (result.job.state === 'AMBIGUOUS' && action === 'RETRY') {
+        return `Job ${jobId} имеет состояние AMBIGUOUS: retry запрещён из-за риска дубля. Используй /resolved или /archive.`
+      }
+      return `Действие ${action} неприменимо: job ${jobId} имеет состояние ${result.job.state}.`
+    }
+    if (result.outcome === 'replayed' && action === 'RETRY') {
+      return `Retry job ${jobId} уже применён; текущее состояние ${result.job.state}.`
+    }
+    const replay = result.outcome === 'replayed' ? ' (уже применено)' : ''
+    switch (action) {
+      case 'RETRY':
+        return `Job ${jobId} возвращён в PENDING${replay}.`
+      case 'RESOLVE':
+        return `Job ${jobId} отмечен DELIVERED с remote proof ${result.job.remoteId}${replay}.`
+      case 'ARCHIVE':
+        return `Job ${jobId} архивирован${replay}.`
+    }
   }
 }

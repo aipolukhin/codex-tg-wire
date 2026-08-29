@@ -48,6 +48,7 @@ describe('durable database migrations', () => {
     expect(tables).toEqual([
       'codex_interactions',
       'delivery_jobs',
+      'delivery_problem_actions',
       'schema_migrations',
       'sessions',
       'telegram_poll_cursors',
@@ -61,7 +62,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(5)
+    expect(migrations?.count).toBe(6)
   })
 })
 
@@ -244,6 +245,110 @@ describe('SqliteOutboxRepository', () => {
     expect(duplicate.created).toBe(false)
     expect(duplicate.job.id).toBe('job-1')
     expect(duplicate.job.payload).toEqual({ chatId: '1001', text: 'first' })
+  })
+
+  test('lists and audits idempotent manual problem actions', () => {
+    const outbox = new SqliteOutboxRepository(database)
+    outbox.enqueue({
+      id: 'failed-job',
+      sourceKey: 'problem:failed',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'retry me' },
+      expiresAtMs: NOW + 1,
+      createdAtMs: NOW,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs: NOW, leaseDurationMs: LEASE_MS })
+    outbox.failLease('failed-job', 'sender-a', 'bounded retries exhausted', NOW)
+
+    expect(outbox.listProblems('FAILED')).toHaveLength(1)
+    const retried = outbox.actOnProblem({
+      operationKey: 'telegram:primary:200:command:retry',
+      jobId: 'failed-job',
+      action: 'RETRY',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      nowMs: NOW + 10,
+    })
+    expect(retried).toMatchObject({
+      outcome: 'applied',
+      job: {
+        id: 'failed-job',
+        state: 'PENDING',
+        attemptCount: 0,
+        expiresAtMs: null,
+      },
+    })
+    expect(outbox.actOnProblem({
+      operationKey: 'telegram:primary:200:command:retry',
+      jobId: 'failed-job',
+      action: 'RETRY',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      nowMs: NOW + 20,
+    }).outcome).toBe('replayed')
+    expect(() => outbox.actOnProblem({
+      operationKey: 'telegram:primary:200:command:retry',
+      jobId: 'failed-job',
+      action: 'RETRY',
+      actorBotId: 'primary',
+      actorChatId: 'attacker',
+      nowMs: NOW + 20,
+    })).toThrow('replayed with different input')
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM delivery_problem_actions',
+    ).get()?.count).toBe(1)
+  })
+
+  test('resolves or archives problems but never retries AMBIGUOUS implicitly', () => {
+    const outbox = new SqliteOutboxRepository(database)
+    outbox.enqueue({
+      id: 'ambiguous-job', sourceKey: 'problem:ambiguous', kind: 'send_text',
+      payload: { chatId: '7001', text: 'maybe sent' }, createdAtMs: NOW,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs: NOW, leaseDurationMs: LEASE_MS })
+    outbox.markSendStarted('ambiguous-job', 'sender-a', NOW + 1)
+    outbox.failLease('ambiguous-job', 'sender-a', 'connection lost', NOW + 2)
+
+    const unsafeRetry = outbox.actOnProblem({
+      operationKey: 'telegram:primary:201:command:retry',
+      jobId: 'ambiguous-job',
+      action: 'RETRY',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      nowMs: NOW + 3,
+    })
+    expect(unsafeRetry).toMatchObject({ outcome: 'invalid_state', job: { state: 'AMBIGUOUS' } })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM delivery_problem_actions',
+    ).get()?.count).toBe(0)
+
+    expect(outbox.actOnProblem({
+      operationKey: 'telegram:primary:202:command:resolved',
+      jobId: 'ambiguous-job',
+      action: 'RESOLVE',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      remoteId: '991',
+      nowMs: NOW + 4,
+    })).toMatchObject({
+      outcome: 'applied',
+      job: { state: 'DELIVERED', remoteId: '991' },
+    })
+
+    outbox.enqueue({
+      id: 'archived-job', sourceKey: 'problem:archive', kind: 'send_text',
+      payload: { chatId: '7001', text: 'archive me' }, createdAtMs: NOW + 5,
+    })
+    outbox.claimNext({ workerId: 'sender-b', nowMs: NOW + 5, leaseDurationMs: LEASE_MS })
+    outbox.failLease('archived-job', 'sender-b', 'invalid payload', NOW + 6)
+    expect(outbox.actOnProblem({
+      operationKey: 'telegram:primary:203:command:archive',
+      jobId: 'archived-job',
+      action: 'ARCHIVE',
+      actorBotId: 'primary',
+      actorChatId: '7001',
+      nowMs: NOW + 7,
+    })).toMatchObject({ outcome: 'applied', job: { state: 'ARCHIVED' } })
   })
 
   test('renews only a live delivery lease owned by the same worker', () => {

@@ -162,6 +162,26 @@ const MIGRATIONS: readonly Migration[] = [
         ON telegram_updates (bot_id, chat_id, routing_class, state, update_id)`,
     ],
   },
+  {
+    version: 6,
+    name: 'delivery_problem_actions',
+    statements: [
+      `CREATE TABLE delivery_problem_actions (
+        id TEXT PRIMARY KEY,
+        operation_key TEXT NOT NULL UNIQUE,
+        job_id TEXT NOT NULL REFERENCES delivery_jobs(id) ON DELETE CASCADE,
+        action TEXT NOT NULL CHECK (action IN ('RETRY', 'RESOLVE', 'ARCHIVE')),
+        from_state TEXT NOT NULL CHECK (from_state IN ('FAILED', 'AMBIGUOUS', 'EXPIRED')),
+        to_state TEXT NOT NULL CHECK (to_state IN ('PENDING', 'DELIVERED', 'ARCHIVED')),
+        actor_bot_id TEXT NOT NULL,
+        actor_chat_id TEXT NOT NULL,
+        remote_id TEXT,
+        created_at_ms INTEGER NOT NULL
+      )`,
+      `CREATE INDEX delivery_problem_actions_job_idx
+        ON delivery_problem_actions (job_id, created_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

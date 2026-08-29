@@ -139,7 +139,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     backend,
     new StaticProjectResolver(options.projects),
   )
-  const commands = new PersonalAlphaCommands(sessions, backend)
+  const commands = new PersonalAlphaCommands(sessions, backend, outbox)
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',

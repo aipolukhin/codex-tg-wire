@@ -24,7 +24,10 @@ import {
 } from '../../src/bridge/durable-session-coordinator.js'
 import { PersonalAlphaCommands } from '../../src/bridge/personal-alpha-commands.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
-import { SqliteInboxRepository } from '../../src/durable/sqlite-repositories.js'
+import {
+  SqliteInboxRepository,
+  SqliteOutboxRepository,
+} from '../../src/durable/sqlite-repositories.js'
 import { SqliteSessionRepository } from '../../src/durable/session-repository.js'
 
 const START = 1_800_000_000_000
@@ -94,6 +97,7 @@ let root: string
 let database: Database
 let nowMs: number
 let inbox: SqliteInboxRepository
+let outbox: SqliteOutboxRepository
 let sessions: SqliteSessionRepository
 let backend: FakeAgentBackend
 let coordinator: DurableSessionCoordinator
@@ -104,6 +108,7 @@ beforeEach(() => {
   database = openDurableDatabase(join(root, 'bridge.sqlite3'))
   nowMs = START
   inbox = new SqliteInboxRepository(database)
+  outbox = new SqliteOutboxRepository(database)
   sessions = new SqliteSessionRepository(database)
   backend = new FakeAgentBackend()
   coordinator = new DurableSessionCoordinator(
@@ -112,7 +117,7 @@ beforeEach(() => {
     new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
     { now: () => nowMs },
   )
-  commands = new PersonalAlphaCommands(sessions, backend)
+  commands = new PersonalAlphaCommands(sessions, backend, outbox, { now: () => nowMs })
 })
 
 afterEach(() => {
@@ -147,6 +152,17 @@ function command(name: PersonalAlphaCommandName, args = ''): CommandOperation {
     updateId: 0,
     command: { chatId: '7001', projectId: 'workspace', name, args },
   }
+}
+
+function problemCommand(
+  updateId: number,
+  name: 'retry' | 'resolved' | 'archive',
+  args: string,
+): CommandOperation {
+  const operation = command(name, args)
+  operation.operationKey = `telegram:primary:${updateId}:turn:command:${name}`
+  operation.updateId = updateId
+  return operation
 }
 
 describe('DurableSessionCoordinator', () => {
@@ -422,5 +438,74 @@ describe('PersonalAlphaCommands', () => {
     }])
     release()
     await running
+  })
+
+  test('/failed lists safe metadata and retries a failed job idempotently', async () => {
+    const jobId = '11111111-1111-4111-8111-111111111111'
+    outbox.enqueue({
+      id: jobId,
+      sourceKey: 'turn:failed:final',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'private request body' },
+      createdAtMs: nowMs,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs, leaseDurationMs: 60_000 })
+    outbox.failLease(jobId, 'sender-a', 'sensitive transport detail', nowMs)
+
+    const listing = (await commands.handleCommand(command('failed'))).text
+    expect(listing).toContain(jobId)
+    expect(listing).toContain('send_text')
+    expect(listing).not.toContain('private request body')
+    expect(listing).not.toContain('sensitive transport detail')
+
+    const retry = problemCommand(701, 'retry', jobId)
+    expect((await commands.handleCommand(retry)).text).toContain('PENDING')
+    expect(outbox.get(jobId)).toMatchObject({ state: 'PENDING', attemptCount: 0 })
+    expect((await commands.handleCommand(retry)).text).toContain('уже применён')
+  })
+
+  test('/ambiguous requires remote proof or archive and refuses unsafe retry', async () => {
+    const jobId = '22222222-2222-4222-8222-222222222222'
+    outbox.enqueue({
+      id: jobId,
+      sourceKey: 'turn:ambiguous:final',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'maybe delivered' },
+      createdAtMs: nowMs,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs, leaseDurationMs: 60_000 })
+    outbox.markSendStarted(jobId, 'sender-a', nowMs + 1)
+    outbox.failLease(jobId, 'sender-a', 'connection lost', nowMs + 2)
+
+    expect((await commands.handleCommand(command('ambiguous'))).text).toContain(jobId)
+    expect((await commands.handleCommand(problemCommand(702, 'retry', jobId))).text).toContain(
+      'риск',
+    )
+    expect(outbox.get(jobId)?.state).toBe('AMBIGUOUS')
+    expect((await commands.handleCommand(problemCommand(703, 'resolved', jobId))).text).toContain(
+      'Использование',
+    )
+    expect((await commands.handleCommand(
+      problemCommand(704, 'resolved', `${jobId} 991`),
+    )).text).toContain('remote proof telegram:991')
+    expect(outbox.get(jobId)).toMatchObject({ state: 'DELIVERED', remoteId: 'telegram:991' })
+  })
+
+  test('/archive closes a terminal delivery problem', async () => {
+    const jobId = '33333333-3333-4333-8333-333333333333'
+    outbox.enqueue({
+      id: jobId,
+      sourceKey: 'turn:archive:final',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'discard me' },
+      createdAtMs: nowMs,
+    })
+    outbox.claimNext({ workerId: 'sender-a', nowMs, leaseDurationMs: 60_000 })
+    outbox.failLease(jobId, 'sender-a', 'invalid payload', nowMs)
+
+    expect((await commands.handleCommand(problemCommand(705, 'archive', jobId))).text).toContain(
+      'архивирован',
+    )
+    expect(outbox.get(jobId)?.state).toBe('ARCHIVED')
   })
 })

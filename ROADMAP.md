@@ -25,6 +25,7 @@
 - [x] Добавлен первый M3 interaction slice: durable command/file approvals, user-input questions, inline callbacks, `/answer`, expiry и stale-on-disconnect.
 - [x] Добавлен явный `/steer <текст>` с `expectedTurnId`; late/mismatched команды не попадают в другой turn.
 - [x] Добавлена restart-safe FIFO-очередь turns: один активный turn на session, control updates обходят очередь, ожидание не расходует retry budget.
+- [x] Добавлен первый problem center: `/failed`, `/ambiguous`, audited `/retry`, `/resolved`, `/archive`; unsafe retry для `AMBIGUOUS` запрещён.
 
 ## 1. Что именно мы строим
 
@@ -165,6 +166,8 @@ Gate M1: после `kill -9` на любой границе уже принят
 - Source-key idempotency для каждого логического исходящего действия.
 - Единая модель jobs для send/edit/delete/reaction/media/album.
 - Problem center: `/failed`, `/ambiguous`, `/retry`, `/resolved`, `/archive`.
+  **Готов первый срез:** списки не раскрывают payload/error detail, действия
+  идемпотентны и пишутся в audit ledger с actor и исходным/целевым состоянием.
 - Supervisor для polling, App Server, workers, reaper и health loops.
 - Структурные тесты «no bypass»: Telegram client нельзя импортировать вне gateway/sender boundary.
 

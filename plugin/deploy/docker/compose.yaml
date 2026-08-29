@@ -1,0 +1,47 @@
+name: dashi-codex-bridge
+
+services:
+  bridge:
+    image: ${DASHI_BRIDGE_IMAGE:-dashi-codex-bridge:1.0.0}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        BUN_VERSION: ${BUN_VERSION:-1.4.0}
+        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.149.1}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    env_file:
+      - ${DASHI_BRIDGE_ENV_FILE:-./bridge.env}
+    environment:
+      HOME: /var/lib/codex
+      CODEX_HOME: /var/lib/codex
+      DASHI_CODEX_BRIDGE_CONFIG: /etc/dashi-codex-bridge/bridge.config.json
+    volumes:
+      - type: bind
+        source: ${DASHI_BRIDGE_CONFIG:-./bridge.config.json}
+        target: /etc/dashi-codex-bridge/bridge.config.json
+        read_only: true
+      - type: bind
+        source: ${DASHI_PROJECT_PATH:?set DASHI_PROJECT_PATH in deploy/docker/.env}
+        target: /workspace
+      - type: volume
+        source: bridge-state
+        target: /var/lib/dashi
+      - type: volume
+        source: codex-home
+        target: /var/lib/codex
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    stop_grace_period: 2m
+
+volumes:
+  bridge-state:
+  codex-home:

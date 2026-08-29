@@ -4,6 +4,10 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.4.0 <2"
+  },
   "bin": "./src/server.ts",
   "scripts": {
     "start": "bun run src/server.ts",

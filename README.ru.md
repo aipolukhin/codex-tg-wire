@@ -68,7 +68,7 @@
 
 ### Модель процесса
 
-В legacy-режиме плагин живёт внутри одной Claude Code сессии, которую удобно запускать в именованной **tmux-сессии** (например `channel-thrall`) — так её можно держать постоянно резидентной, переподключаться по SSH без потери состояния и мирорить pane в Telegram (раздел 6). Один workspace, один `CLAUDE.md`, один бот, один DM-чат.
+В legacy-режиме плагин живёт внутри одной Claude Code сессии, которую удобно запускать в именованной **tmux-сессии** (например `channel-agent-one`) — так её можно держать постоянно резидентной, переподключаться по SSH без потери состояния и мирорить pane в Telegram (раздел 6). Один workspace, один `CLAUDE.md`, один бот, один DM-чат.
 
 ### Как добавить свой user_id (legacy single-DM)
 
@@ -99,11 +99,11 @@ TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
 
 ### Зачем
 
-Иногда нужно вести параллельно несколько чатов одной и той же identity: личный DM вождя + рабочая группа + sandbox. Один бот, одна личность, разные «комнаты» с разными правами и разной приватностью.
+Иногда нужно вести параллельно несколько чатов одной и той же identity: личный DM владельца + рабочая группа + sandbox. Один бот, одна личность, разные «комнаты» с разными правами и разной приватностью.
 
 ### Как
 
-`MultichatRouter` (`src/router/multichat-router.ts`, default **OFF**) разводит входящие по нескольким **per-chat tmux-сессиям** `claude` через `TmuxSessionPool`. Связь плагин ↔ сессия — JSON-pipe через файловый inbox/outbox (`inbox-bridge.ts`). Гибридный роутинг (PR #33): личка вождя идёт в host-сессию (`channel-thrall`), группы — в свои per-chat сессии. Stop-хук per-chat сессии пишет финальный ответ в outbox (PR #34), откуда плагин его забирает и шлёт в Telegram.
+`MultichatRouter` (`src/router/multichat-router.ts`, default **OFF**) разводит входящие по нескольким **per-chat tmux-сессиям** `claude` через `TmuxSessionPool`. Связь плагин ↔ сессия — JSON-pipe через файловый inbox/outbox (`inbox-bridge.ts`). Гибридный роутинг (PR #33): личка владельца идёт в host-сессию (`channel-agent-one`), группы — в свои per-chat сессии. Stop-хук per-chat сессии пишет финальный ответ в outbox (PR #34), откуда плагин его забирает и шлёт в Telegram.
 
 Включение — флаг в `config.json` (или `TELEGRAM_MULTICHAT_ENABLED=1`):
 
@@ -133,9 +133,9 @@ chats:
     tmux_mirror: true                        # TmuxMirror только в этом чате
     edit_message_progress: true              # rolling editMessageText для ProgressReporter
     delivery: streamed                       # streamed | final_only
-    persona_file: chats/personas/warchief.md # per-chat persona overlay (относительно workspace_dir)
+    persona_file: chats/personas/operator.md # per-chat persona overlay (относительно workspace_dir)
     handoff_file: core/hot/handoff.md
-    system_reminder: "Это личный DM вождя. Полный доступ."
+    system_reminder: "Это личный DM владельца. Полный доступ."
     idle_ttl_ms: 1800000                     # 30 мин до выгрузки tmux-сессии (default)
     max_queue_depth: 1                        # сколько inbound можно поставить в очередь (default 1)
   "-1001234567890":
@@ -302,7 +302,7 @@ Default-**OFF**, opt-in через config (в multichat — через флаг 
 {
   "tmux_mirror": {
     "enabled": true,
-    "pane_target": "channel-thrall:0.0",
+    "pane_target": "channel-agent-one:0.0",
     "poll_interval_ms": 5000,
     "line_count": 50,
     "mode": "latest_inbound_only",
@@ -318,7 +318,7 @@ Default-**OFF**, opt-in через config (в multichat — через флаг 
 - ANSI/CSI/OSC/DCS sequences стрипаются, control-chars (кроме `\n`, `\t`) удаляются.
 - Текст проходит `redactSecrets` (раздел 10) → HTML-escape → оборачивается в `<pre>`.
 - Hash-based dedup: одинаковый poll → нет API-вызова.
-- `mode: latest_inbound_only` (default с PR #21) обрезает всё до последнего `← <channel>:` preview — видно только что агент делает после последнего сообщения вождя.
+- `mode: latest_inbound_only` (default с PR #21) обрезает всё до последнего `← <channel>:` preview — видно только что агент делает после последнего сообщения владельца.
 - `max_lines` cap (default 14, диапазон 4..100, 0=off) — верх обрезается маркером `… +N lines`.
 - Edit «message to edit not found» → re-send; прочие 4xx **не** триггерят resend (защита от storm).
 - SIGINT/SIGTERM → best-effort `deleteMessage`.
@@ -364,7 +364,7 @@ Runtime-управление: `/mirror on|off|status` без рестарта п
 Результат в промпте:
 
 ```
-<media kind="voice" mime="audio/ogg" duration_sec="5" transcript="привет мой вождь" transcription_status="ok" />
+<media kind="voice" mime="audio/ogg" duration_sec="5" transcript="привет мой владелец" transcription_status="ok" />
 ```
 
 Без `GROQ_API_KEY` → `transcription_status="missing_key"` (без ошибки — Claude сам решает, попросить ли включить).
@@ -392,7 +392,7 @@ Runtime-управление: `/mirror on|off|status` без рестарта п
 
 Чтобы в Telegram приходил красивый форматированный текст, а не сырой markdown или поломанная разметка, исходящий путь (`src/format/html.ts` + `src/safety/html-validator.ts` + `src/format/chunk.ts`) делает:
 
-**1. Markdown → Telegram HTML.** Telegram принимает узкий набор тегов: `b, strong, i, em, u, ins, s, strike, del, code, pre, a, br, blockquote, tg-spoiler`. Конвертер аккуратно «прячет» code-блоки, таблицы, инлайн-код, ссылки `[text](url)` и уже валидный HTML в плейсхолдеры **до** экранирования, экранирует остальной текст (`&`, `<`, `>`), применяет markdown-трансформы (заголовки → `<b>`, `**bold**`, `~~strike~~`, `*italic*` с word-boundary проверками чтобы не ломать `foo_bar`) и восстанавливает плейсхолдеры.
+**1. Markdown → Telegram HTML.** Telegram принимает узкий набор тегов: `b, strong, i, em, u, ins, s, strike, del, code, pre, a, br, blockquote, tg-spoiler`. Конвертер аккуратно «прячет» code-блоки, таблицы, инлайн-код, Markdown-ссылки и уже валидный HTML в плейсхолдеры **до** экранирования, экранирует остальной текст (`&`, `<`, `>`), применяет markdown-трансформы (заголовки → `<b>`, `**bold**`, `~~strike~~`, `*italic*` с word-boundary проверками чтобы не ломать `foo_bar`) и восстанавливает плейсхолдеры.
 
 **2. Pre-send валидация.** `validateTelegramHtml()` токенизирует результат, ловит несбалансированные скобки, неизвестные/неразрешённые теги, неправильные атрибуты (`<a href>` только `http/https/tg/mailto`). При любой ошибке — **downgrade в plain text** (escape сырого ввода без `parse_mode`), сообщение всё равно уходит. В лог пишется только причина, не тело.
 
@@ -538,12 +538,9 @@ bun skills/doctor-dashi-plugin/scripts/doctor.ts --plugin-dir "$PWD"
 | Skills | локальные для workspace |
 | Memory/state | свой state dir и config |
 
-Проверено в production:
-
-| Флот | Хост / агенты | Заметки |
-|---|---|---|
-| 2 агента | один VPS: `thrall`, `arthas` | cutover 2026-06-05, живой пример ниже |
-| 5 агентов | `jarvis`, `koder`, `secretary`, `researcher`, `analyst` | webhook-порты `8089–8093` |
+Ниже приведена эталонная схема с двумя агентами-заглушками. Для большего
+флота действуют те же правила: отдельные token, port, workspace, state dir и
+tmux-сокет для каждого агента.
 
 Главное: это не N API-клиентов. Это N интерактивных Claude Code сессий под одним OAuth-логином — usage остаётся внутри подписки Max (см. раздел 13).
 
@@ -556,26 +553,26 @@ bun skills/doctor-dashi-plugin/scripts/doctor.ts --plugin-dir "$PWD"
         v
 +----------------------------- host -----------------------------+
 |                                                                |
-|  systemd: channel-thrall.service                               |
+|  systemd: channel-agent-one.service                               |
 |    Type=forking                                                |
-|    tmux -L channel-thrall                                      |
+|    tmux -L channel-agent-one                                      |
 |      claude session                                            |
 |        --dangerously-load-development-channels server:dashi-channel
-|        workspace: /srv/agents/thrall   (CLAUDE.md = identity)  |
-|        plugin: /srv/agents/thrall/.claude/dashi-plugin-claude-code/plugin
-|        env: /etc/dashi-plugin/thrall/channel.env               |
-|        state: /var/lib/dashi-channel/thrall                    |
+|        workspace: /srv/agents/agent-one   (CLAUDE.md = identity)  |
+|        plugin: /srv/agents/agent-one/.claude/dashi-plugin-claude-code/plugin
+|        env: /etc/dashi-plugin/agent-one/channel.env               |
+|        state: /var/lib/dashi-channel/agent-one                    |
 |        Telegram bot token A · TELEGRAM_WEBHOOK_PORT=8089       |
 |        getUpdates poller A                                     |
 |                                                                |
-|  systemd: channel-arthas.service                               |
+|  systemd: channel-agent-two.service                               |
 |    Type=forking                                                |
-|    tmux -L channel-arthas                                      |
+|    tmux -L channel-agent-two                                      |
 |      claude session                                            |
-|        workspace: /srv/agents/arthas   (CLAUDE.md = identity)  |
-|        plugin: /srv/agents/arthas/.claude/dashi-plugin-claude-code/plugin
-|        env: /etc/dashi-plugin/arthas/channel.env               |
-|        state: /var/lib/dashi-channel/arthas                    |
+|        workspace: /srv/agents/agent-two   (CLAUDE.md = identity)  |
+|        plugin: /srv/agents/agent-two/.claude/dashi-plugin-claude-code/plugin
+|        env: /etc/dashi-plugin/agent-two/channel.env               |
+|        state: /var/lib/dashi-channel/agent-two                    |
 |        Telegram bot token B · TELEGRAM_WEBHOOK_PORT=8090       |
 |        getUpdates poller B                                     |
 +----------------------------------------------------------------+
@@ -588,9 +585,9 @@ TELEGRAM_BOT_TOKEN=123456:agent-specific-token
 TELEGRAM_EXPECTED_BOT_ID=123456
 TELEGRAM_ALLOWED_USER_IDS=<ваш числовой id>
 TELEGRAM_ALLOWED_CHAT_IDS=<ваш числовой id>
-TELEGRAM_WORKSPACE_ROOT=/srv/agents/arthas
-AGENT_ID=arthas
-TELEGRAM_STATE_DIR=/var/lib/dashi-channel/arthas
+TELEGRAM_WORKSPACE_ROOT=/srv/agents/agent-two
+AGENT_ID=agent-two
+TELEGRAM_STATE_DIR=/var/lib/dashi-channel/agent-two
 TELEGRAM_WEBHOOK_HOST=127.0.0.1
 TELEGRAM_WEBHOOK_PORT=8090
 TELEGRAM_WEBHOOK_TOKEN=<random hex>
@@ -612,14 +609,14 @@ TELEGRAM_WEBHOOK_TOKEN=<random hex>
 
 ### Пять инвариантов изоляции
 
-Это не вкусовщина. Каждый пункт — реальный production-инцидент.
+Это эксплуатационные инварианты, предотвращающие типовые мультиагентные отказы.
 
 | Инвариант | Почему важно |
 |---|---|
 | (a) Hooks только per-workspace | Ставьте hooks в `<workspace>/.claude/settings.json` через `install-hooks.sh --settings`, никогда — в общий `~/.claude/settings.json`. Общий файл срабатывает в **каждой** Claude-сессии unix-юзера: read-receipt/fallback hooks одного агента отправят текст другого агента через чужого бота. Хуже того, settings-патчер дедуплицирует по одному маркеру на файл — общий файл способен держать hook только ОДНОГО агента: последний install побеждает, остальные молча ходят в чужой порт. См. раздел 4. |
 | (b) Отдельный `TELEGRAM_WEBHOOK_PORT` | Каждому агенту — свой локальный HTTP-порт для hooks/mirror/read-receipts. |
 | (c) Отдельный bot token | Telegram допускает одного `getUpdates`-консьюмера на токен. Общий токен = `409 Conflict`, один из ботов глохнет. |
-| (d) Выделенный tmux-сокет | `tmux -L channel-<agent>` в `ExecStart`, `ExecStartPost` И `ExecStop`. Два `Type=forking` юнита на дефолтном сокете гонятся при одновременном старте: сессия второго оказывается внутри tmux-сервера и cgroup первого — systemd её теряет, а stop юнита A убивает агента B. Реальный инцидент: после ребута жив 1 из 4 агентов; с `-L` — 4 из 4. |
+| (d) Выделенный tmux-сокет | `tmux -L channel-<agent>` в `ExecStart`, `ExecStartPost` И `ExecStop`. Два `Type=forking` юнита на дефолтном сокете могут столкнуться при одновременном старте: сессия второго оказывается внутри tmux-сервера и cgroup первого — systemd теряет владение, а stop юнита A способен убить агента B. |
 | (e) `webhook.enabled=true` в state config | Дефолт — `false`, env-переменные задают только host/port. Без `<state-dir>/config.json` с включённым webhook эндпоинты hooks/read-receipt/fallback молча мертвы, при этом бот продолжает отвечать через канал — сбивающий с толку частичный отказ. |
 
 ### Readiness: не доверяйте Enter по таймеру
@@ -630,14 +627,14 @@ TELEGRAM_WEBHOOK_TOKEN=<random hex>
 
 ```bash
 #!/usr/bin/env bash
-# /usr/local/bin/channel-confirm-arthas.sh
+# /usr/local/bin/channel-confirm-agent-two.sh
 for i in $(seq 1 30); do
-  pane="$(tmux -L channel-arthas capture-pane -pt channel-arthas 2>/dev/null || true)"
+  pane="$(tmux -L channel-agent-two capture-pane -pt channel-agent-two 2>/dev/null || true)"
   if printf '%s' "$pane" | grep -q 'messages from server:dashi-channel inject\|Listening for channel messages'; then
     exit 0
   fi
   if printf '%s' "$pane" | grep -q 'Enter to confirm\|I am using this for local development\|Do you trust'; then
-    tmux -L channel-arthas send-keys -t channel-arthas Enter
+    tmux -L channel-agent-two send-keys -t channel-agent-two Enter
   fi
   sleep 3
 done
@@ -666,31 +663,33 @@ exit 1
 
 Замечания по безопасности из раздела 10 действуют для каждого агента флота.
 
-### Живой пример: флот из двух агентов (thrall + arthas)
+### Эталонный пример: два агента
 
-Реальная production-раскладка (только архитектура, без секретов):
+Иллюстративная раскладка с именами-заглушками:
 
-| | `thrall` | `arthas` |
+| | `agent-one` | `agent-two` |
 |---|---|---|
-| Роль | архитектор / кодер — правая рука владельца | мониторинг + inbox-коллектор |
+| Роль | основной ассистент | специализированный ассистент |
 | Бот | свой бот, DM + групповой multichat (раздел 3) | свой бот, только DM (multichat выключен) |
-| Юнит | `channel-thrall.service` | `channel-arthas.service` |
-| tmux | сессия `channel-thrall` | сессия `channel-arthas` на сокете `-L channel-arthas` |
+| Юнит | `channel-agent-one.service` | `channel-agent-two.service` |
+| tmux | сессия `channel-agent-one` | сессия `channel-agent-two` на сокете `-L channel-agent-two` |
 | Webhook | `127.0.0.1:8093` | `127.0.0.1:8103` |
-| Workspace | `~/.claude-lab/thrall/.claude` | `~/.claude-lab/arthas/.claude` |
+| Workspace | `~/.claude-lab/agent-one/.claude` | `~/.claude-lab/agent-two/.claude` |
 | Identity / skills | свой `CLAUDE.md`, свои `skills/` | свой `CLAUDE.md`, свои `skills/` |
 | Terminal mirror | включён (раздел 6) | включён, через `tmux_mirror.socket_name` |
 
-Оба работают под одним unix-юзером и одной подпиской Max. Координируются через общий task board и межагентскую шину сообщений — сознательно **вне** плагина (см. «нет слоя оркестрации» выше). `arthas` переехал со старого python-gateway 2026-06-05; первая попытка cutover автоматически откатилась и породила инварианты (d) и (e) — таблица выше оплачена инцидентами, а не теорией.
+Оба работают под одним unix-юзером и одной подпиской Max. Общий task board или
+межагентская шина сообщений остаются сознательно **вне** плагина (см. «нет слоя
+оркестрации» выше).
 
 ### Чек-лист: добавить агента #2..N
 
-Дано: рабочая single-agent установка, новый агент `arthas`.
+Дано: рабочая single-agent установка, новый агент `agent-two`.
 
 1. Создайте workspace и identity:
 
 ```bash
-export AGENT=arthas
+export AGENT=agent-two
 export WORKSPACE=/srv/agents/$AGENT
 export STATE_DIR=/var/lib/dashi-channel/$AGENT
 export PORT=8090
@@ -739,7 +738,7 @@ bash scripts/install-hooks.sh \
 
 ```ini
 [Unit]
-Description=Dashi Channel agent arthas
+Description=Dashi Channel agent agent-two
 After=network-online.target
 Requires=network-online.target
 
@@ -748,11 +747,11 @@ Type=forking
 User=<service-user>
 Environment=HOME=/home/<service-user>
 Environment=PATH=/home/<service-user>/.bun/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/srv/agents/arthas/.claude/dashi-plugin-claude-code/plugin
-EnvironmentFile=/etc/dashi-plugin/arthas/channel.env
-ExecStart=/usr/bin/tmux -L channel-arthas new-session -d -s channel-arthas 'claude --dangerously-load-development-channels server:dashi-channel'
-ExecStartPost=/usr/local/bin/channel-confirm-arthas.sh
-ExecStop=/usr/bin/tmux -L channel-arthas kill-session -t channel-arthas
+WorkingDirectory=/srv/agents/agent-two/.claude/dashi-plugin-claude-code/plugin
+EnvironmentFile=/etc/dashi-plugin/agent-two/channel.env
+ExecStart=/usr/bin/tmux -L channel-agent-two new-session -d -s channel-agent-two 'claude --dangerously-load-development-channels server:dashi-channel'
+ExecStartPost=/usr/local/bin/channel-confirm-agent-two.sh
+ExecStop=/usr/bin/tmux -L channel-agent-two kill-session -t channel-agent-two
 Restart=on-failure
 RestartSec=15
 
@@ -760,13 +759,13 @@ RestartSec=15
 WantedBy=multi-user.target
 ```
 
-`ExecStartPost` — confirm-цикл из «Readiness» выше. Ключевое: `tmux -L channel-arthas` **везде**.
+`ExecStartPost` — confirm-цикл из «Readiness» выше. Ключевое: `tmux -L channel-agent-two` **везде**.
 
 7. Если токен бота уже кто-то поллит (старый gateway, другой процесс) — cutover строго как single poller: сначала остановите старого консьюмера, подождите ~30 секунд, пока Telegram отпустит слот `getUpdates`, и только потом стартуйте новый юнит. Два консьюмера на одном токене = `409 Conflict`.
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now channel-arthas.service
+sudo systemctl enable --now channel-agent-two.service
 ```
 
 8. Прогоните доктора (из корня репо) и отправьте боту настоящее сообщение:
@@ -795,7 +794,7 @@ bun skills/doctor-dashi-plugin/scripts/doctor.ts --plugin-dir "$PWD/plugin" --fl
 
 Знаменатель контекстного процента больше не фиксированная константа — он берётся из **модели сессии**. Модель класса Fable показывает своё настоящее окно **1M токенов** (и пин читается `… / 1M`, а не притворяется 200k-сессией), а модель сессии читается из **транскрипта**, так что правильное окно подбирается автоматически, без ручного шага.
 
-- **Оверрайд остался и всегда побеждает:** окно можно задать явно — конфиг `context_window_tokens` или env **`JARVIS_CONTEXT_WINDOW`**. Приоритет: конфиг `context_window_tokens` > env `JARVIS_CONTEXT_WINDOW` > таблица моделей; значение оператора имеет приоритет над таблицей, так что неверная догадка таблицы правится на лету.
+- **Оверрайд остался и всегда побеждает:** окно можно задать явно — конфиг `context_window_tokens` или env **`DASHI_CONTEXT_WINDOW`**. Приоритет: конфиг `context_window_tokens` > env `DASHI_CONTEXT_WINDOW` > таблица моделей; значение оператора имеет приоритет над таблицей, так что неверная догадка таблицы правится на лету.
 - Явный маркер окна `[1m]` / `1m` в id модели (например `claude-opus-4-8[1m]`) трактуется как 1M независимо от семейства.
 
 #### Пин задач: раскрываемый список + зеркало реальности из tmux (PR #100, #104)
@@ -859,8 +858,6 @@ DM-ответы автоматически апгрейдятся до `sendRich
 - **Не понимаете, почему агент не видит свой `CLAUDE.md`?** → [docs/06-how-claude-loads-session.md](docs/06-how-claude-loads-session.md) — CWD upward search, `@-include`, global vs project.
 - **Перед первым live-прогоном** → [plugin/docs/canary-smoke.md](plugin/docs/canary-smoke.md) — smoke-матрица против тест-бота (text, media, OOB, permission relay, webhook).
 - **Параметры конфигурации** — единственный источник правды: `plugin/src/config.ts` (`RuntimeEnvSchema`) и `examples/config.example.json` + `examples/channel.env.example`.
-
-Внутренние dev-доки (история PR, review-спеки) — в [docs/dev/](docs/dev/), читать необязательно.
 
 ---
 

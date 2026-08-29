@@ -48,7 +48,7 @@ function cfg(overrides: Partial<MemoryConfig> = {}): MemoryConfig {
     workspacePath,
     logsPath,
     sourceTag: 'tg',
-    agentLabel: 'Silvana',
+    agentLabel: 'ExampleAgent',
     maxHotBytes: 20480,
     trimKeepLines: 600,
     bufferTtlMs: 5 * 60 * 1000,
@@ -67,7 +67,7 @@ function payload<E extends ClaudeHookPayload['hook_event_name']>(
   extra: Record<string, unknown> = {},
 ): ClaudeHookPayload {
   const base = {
-    chatId: '164795011',
+    chatId: '123456789',
     session_id: 'sid-1',
     transcript_path: '/tmp/none.jsonl',
     cwd: '/tmp',
@@ -118,7 +118,7 @@ describe('MemoryWriter.onHook', () => {
 
     const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
     expect(hot).toContain('**User:** user question?\n')
-    expect(hot).toContain('**Silvana:** agent reply here\n')
+    expect(hot).toContain('**ExampleAgent:** agent reply here\n')
     // Local-tz ts format: 'YYYY-MM-DD HH:MM' — just assert shape.
     expect(hot).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
 
@@ -145,7 +145,7 @@ describe('MemoryWriter.onHook', () => {
 
     const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
     expect(hot).toContain('**User:** (no prompt)\n')
-    expect(hot).toContain('**Silvana:** (inline)\n')
+    expect(hot).toContain('**ExampleAgent:** (inline)\n')
 
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.user).toBe('(no prompt)')
@@ -166,7 +166,7 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('Stop', { transcript_path: '/path/that/does/not/exist.jsonl' }))
 
     const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
-    expect(hot).toContain('**Silvana:** (inline)\n')
+    expect(hot).toContain('**ExampleAgent:** (inline)\n')
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.agent).toBe('')
   })
@@ -204,7 +204,7 @@ describe('MemoryWriter.onHook', () => {
     const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
     // snippet() slices to 200 chars
     expect(hot).toContain('**User:** ' + 'P'.repeat(200) + '\n')
-    expect(hot).toContain('**Silvana:** ' + 'A'.repeat(200) + '\n')
+    expect(hot).toContain('**ExampleAgent:** ' + 'A'.repeat(200) + '\n')
 
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.user.length).toBe(500)

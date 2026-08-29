@@ -1,6 +1,6 @@
 // Config loader with Zod validation and state-dir path resolution.
-// All env vars and config.json keys are validated at boundary; defaults
-// embed canary values (bot 8507713167, prince 164795011).
+// All env vars and config.json keys are validated at boundary. Identity and
+// access lists never have built-in values: operators must configure them.
 
 import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
@@ -34,7 +34,8 @@ export const MultichatConfigSchema = z.object({
 export type MultichatConfig = z.infer<typeof MultichatConfigSchema>
 
 export const AppConfigSchema = z.object({
-  bot_id: z.number().int().positive().default(8507713167),
+  // Optional anti-spoof pin. When omitted, Telegram getMe is authoritative.
+  bot_id: z.number().int().positive().optional(),
   // `dm_only` predates the multichat router. With `multichat.enabled=false`
   // (default) the legacy gate.ts behaviour is preserved: DM-only with
   // hardcoded drop in the gate. With `multichat.enabled=true` the gate
@@ -42,8 +43,8 @@ export const AppConfigSchema = z.object({
   // ignored. Kept here for backward compatibility with existing
   // config.json files; do NOT remove without a migration pass.
   dm_only: z.boolean().default(true),
-  allowed_user_ids: z.array(z.number().int().positive()).min(1).default([164795011]),
-  allowed_chat_ids: z.array(z.union([z.number(), z.string()])).default([164795011]),
+  allowed_user_ids: z.array(z.number().int().positive()).min(1),
+  allowed_chat_ids: z.array(z.union([z.number(), z.string()])).min(1),
   // Owner DM chat ids for OWNER-ONLY surfaces (the pinned context HUD + the
   // owner command menu). Distinct from `allowed_chat_ids`, which in multichat
   // ALSO lists group/supergroup ids — a HUD with destructive buttons or the
@@ -67,7 +68,7 @@ export const AppConfigSchema = z.object({
     interval_ms: z.number().int().positive().default(700),
     ttl_ms: z.number().int().positive().default(300_000),
     delete_on_complete: z.boolean().default(true),
-    // Warchief request 2026-05-27: the bare «Печатает...» bubble is visual
+    // Operator request 2026-05-27: the bare «Печатает...» bubble is visual
     // noise on top of the TmuxMirror status card. When true, StatusManager
     // skips the initial sendMessage while state is `typing` — the bubble is
     // created lazily on the first thinking/tool/activity transition. Native
@@ -88,8 +89,8 @@ export const AppConfigSchema = z.object({
     port: z.number().int().min(0).default(0),
   }).default({}),
   permission_relay: z.object({
-    enabled: z.boolean().default(true),
-    allowed_user_ids: z.array(z.number().int().positive()).default([164795011]),
+    enabled: z.boolean().default(false),
+    allowed_user_ids: z.array(z.number().int().positive()).default([]),
     bash_only_proof: z.boolean().default(true),
   }).default({}),
   commands: z.object({
@@ -156,7 +157,7 @@ export const AppConfigSchema = z.object({
   // ProgressReporter so behaviour stays predictable.
   //
   // collapse_completed_after: keep last N completed items in the rendered
-  // list, older ones collapse to «+M завершено ранее» — the warchief wants
+  // list, older ones collapse to «+M завершено ранее» — the operator wants
   // to see the active milestone, not a wall of done items.
   task_mirror: z.object({
     enabled: z.boolean().default(true),
@@ -164,8 +165,8 @@ export const AppConfigSchema = z.object({
     session_ttl_ms: z.number().int().positive().default(10 * 60 * 1000),
     collapse_completed_after: z.number().int().nonnegative().default(5),
   }).default({}),
-  // InboundWatcher (PR-A3, 2026-05-20) — auto-reply «Тралл занят» when the
-  // warchief sends plain text while a Claude session is mid-tool. Debounced
+  // InboundWatcher (PR-A3, 2026-05-20) — auto-reply «Агент занят» when the
+  // operator sends plain text while a Claude session is mid-tool. Debounced
   // per chat (debounce_ms = 10s by default) so a burst of messages doesn't
   // bury the conversation in auto-acks. Busy threshold is the ProgressReporter
   // lastActivityMs window — anything more recent than busy_threshold_ms
@@ -175,6 +176,7 @@ export const AppConfigSchema = z.object({
   // AND lets the original message flow to Claude through the normal path.
   watcher: z.object({
     enabled: z.boolean().default(true),
+    agent_label: z.string().trim().min(1).default('Агент'),
     debounce_ms: z.number().int().nonnegative().default(10_000),
     busy_threshold_ms: z.number().int().positive().default(30_000),
   }).default({}),
@@ -184,7 +186,7 @@ export const AppConfigSchema = z.object({
   // the message is deleted (re-sends on next poll).
   //
   // Default-OFF: pane content can include unexpected secrets, and the
-  // warchief should opt in explicitly. Enable via config.json or env.
+  // operator should opt in explicitly. Enable via config.json or env.
   // pane_target follows the `session:window.pane` syntax — empty string
   // means «use the session in $TMUX env at startup».
   tmux_mirror: z.object({
@@ -194,7 +196,7 @@ export const AppConfigSchema = z.object({
     // when the channel unit runs its session on a dedicated socket (two
     // Type=forking channel units on one host race at boot on the default
     // socket) — capture-pane must address the same socket or it finds
-    // nothing (Arthas migration, 2026-06-05).
+    // nothing (ExamplePeer migration, 2026-06-05).
     socket_name: z.string().default(''),
     poll_interval_ms: z.number().int().min(500).default(5000),
     line_count: z.number().int().min(5).max(500).default(50),
@@ -225,14 +227,14 @@ export const AppConfigSchema = z.object({
     // Anchor mode for the rolling mirror. `latest_inbound_only` (default,
     // 2026-05-22) drops every pane segment up to and including the last
     // `← <channel>: …` preview Claude Code emitted — only what the agent
-    // is doing AFTER the warchief's most recent message remains. Falls
+    // is doing AFTER the operator's most recent message remains. Falls
     // back to `full_pane` automatically when no preview exists in the
     // current capture (fresh session). Set to `full_pane` to mirror the
     // whole pane (pre-2026-05-22 behaviour).
     mode: z.enum(['full_pane', 'latest_inbound_only']).default('latest_inbound_only'),
     // Max lines kept in the rendered mirror, post-filter. Default 14 —
     // empirically that fits one iPhone-screen worth of Telegram <pre>
-    // content (the warchief asked for ≤70% screen height on 2026-05-22).
+    // content (the operator asked for ≤70% screen height on 2026-05-22).
     // Truncation removes from the TOP (oldest), preserving the live
     // tail, and prepends a `… +N lines` marker that counts toward the
     // cap. Set to 0 to disable (uncapped, only the 4096-char body cap
@@ -255,7 +257,7 @@ export const AppConfigSchema = z.object({
   multichat: MultichatConfigSchema.default({}),
   // AskUserQuestion relay (Phase ?, 2026-05-27, PRX-1 TASK-6). Bridges
   // Claude Code's native AskUserQuestion tool requests into Telegram so
-  // the warchief can answer from his phone while a session runs headless.
+  // the operator can answer from his phone while a session runs headless.
   //
   // Default OFF: until a smoke run on staging proves the round-trip,
   // AskUserQuestion still flows through the native Claude Code UI and
@@ -265,7 +267,7 @@ export const AppConfigSchema = z.object({
   // `allowed_user_ids` left undefined means «inherit from permission_relay
   // at runtime» — TASK-1 / TASK-3 must resolve `?? permission_relay
   // .allowed_user_ids` at the moment they need a recipient set. We
-  // deliberately do NOT copy the default here: duplicating the warchief
+  // deliberately do NOT copy the default here: duplicating the operator
   // id would create two sources of truth that can drift. The fallback
   // is enforced in code (see resolveAskUserQuestionAllowedUserIds below)
   // so a single change to permission_relay.allowed_user_ids propagates
@@ -273,7 +275,7 @@ export const AppConfigSchema = z.object({
   //
   // `timeout_ms` caps how long the relay waits for a Telegram answer
   // before emitting a `request_timeout` event and letting Claude fall
-  // back to its native flow. 5 min matches typical warchief response
+  // back to its native flow. 5 min matches typical operator response
   // latency without leaving stale callbacks behind.
   //
   // `max_preview_chars` bounds the per-option preview rendered in the
@@ -283,17 +285,24 @@ export const AppConfigSchema = z.object({
     enabled: z.boolean().default(false),
     timeout_ms: z.number().int().positive().default(300_000),
     allowed_user_ids: z.array(z.number().int().positive()).optional(),
+    // Explicit destination for the question card. Optional for backwards
+    // compatibility with single-owner DM installs, which derive it from the
+    // first allowed user id.
+    chat_id: z.union([
+      z.number().int().refine((value) => value !== 0, 'chat_id must be non-zero'),
+      z.string().trim().regex(/^(?:-?[1-9]\d*|@[A-Za-z0-9_]{5,})$/),
+    ]).optional(),
     max_preview_chars: z.number().int().positive().default(1000),
   }).default({}),
   // Permission gate (2026-06-09) — the INTERACTIVE confirm relay for the
-  // warchief's bypassPermissions DM session. The PreToolUse hook
+  // operator's bypassPermissions DM session. The PreToolUse hook
   // (scripts/permission-gate-hook.ts) classifies every tool call; `confirm`
   // tier POSTs /hooks/permission/request, and this relay sends an Allow/Deny
   // keyboard to Telegram. Distinct from `permission_relay` (the headless MCP
   // `--permission-prompt-tool` path that never fires interactively).
   //
   // Default OFF: dormant until activation (flip bypassPermissions + register
-  // the hook + restart channel-thrall). While off, the HTTP route answers
+  // the hook + restart channel-agent-one). While off, the HTTP route answers
   // 503 and the hook's confirm tier fails closed to deny.
   //
   // `timeout_ms` caps how long the relay waits for a tap before fail-closing
@@ -439,6 +448,7 @@ export const RuntimeEnvSchema = z.object({
   TELEGRAM_MULTICHAT_POLICY_PATH: z.string().optional(),
   TELEGRAM_MULTICHAT_STATE_DIR: z.string().optional(),
   TELEGRAM_MULTICHAT_WORKSPACE_DIR: z.string().optional(),
+  TELEGRAM_WATCHER_AGENT_LABEL: z.string().min(1).optional(),
   // AskUserQuestion relay (PRX-1 TASK-6, 2026-05-27). ENABLED follows the
   // same truthy convention as the multichat/memory flags so operators
   // memorise one mental model. ALLOWED_USER_IDS is CSV (parsed below with
@@ -450,6 +460,7 @@ export const RuntimeEnvSchema = z.object({
     .optional(),
   TELEGRAM_ASK_USER_QUESTION_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: z.string().optional(), // CSV
+  TELEGRAM_ASK_USER_QUESTION_CHAT_ID: z.string().min(1).optional(),
   TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS: z.coerce.number().int().positive().optional(),
   // Rich Messages (M1, 2026-06-14). Kill switch: a falsy value
   // (0/false/no/off, case-insensitive) forces richMessages.enabled=false;
@@ -618,6 +629,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   if (parsedEnv.TELEGRAM_MULTICHAT_WORKSPACE_DIR !== undefined) multichat.workspace_dir = parsedEnv.TELEGRAM_MULTICHAT_WORKSPACE_DIR
   if (Object.keys(multichat).length > 0) merged.multichat = multichat
 
+  const watcher = (merged.watcher && typeof merged.watcher === 'object'
+    ? merged.watcher
+    : {}) as Record<string, unknown>
+  if (parsedEnv.TELEGRAM_WATCHER_AGENT_LABEL !== undefined) {
+    watcher.agent_label = parsedEnv.TELEGRAM_WATCHER_AGENT_LABEL
+  }
+  if (Object.keys(watcher).length > 0) merged.watcher = watcher
+
   // AskUserQuestion env overrides (PRX-1 TASK-6, 2026-05-27). Same layering
   // pattern as the multichat block above.
   const askUserQuestion = (merged.ask_user_question && typeof merged.ask_user_question === 'object'
@@ -631,6 +650,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   }
   if (parsedEnv.TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS !== undefined) {
     askUserQuestion.allowed_user_ids = parseCsvUserIds(parsedEnv.TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS)
+  }
+  if (parsedEnv.TELEGRAM_ASK_USER_QUESTION_CHAT_ID !== undefined) {
+    const chatIds = parseCsvChatIds(parsedEnv.TELEGRAM_ASK_USER_QUESTION_CHAT_ID)
+    if (chatIds.length !== 1) {
+      throw new Error('TELEGRAM_ASK_USER_QUESTION_CHAT_ID must contain exactly one chat id')
+    }
+    askUserQuestion.chat_id = chatIds[0]
   }
   if (parsedEnv.TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS !== undefined) {
     askUserQuestion.max_preview_chars = parsedEnv.TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS
@@ -844,7 +870,7 @@ export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 // `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-5`). First match wins,
 // so order from most-specific/largest to least. A wrong guess here is never
 // fatal — it is correctable at runtime via the `context_window_tokens` config
-// key or the `JARVIS_CONTEXT_WINDOW` env var (resolveContextWindowOverride),
+// key or the `DASHI_CONTEXT_WINDOW` env var (resolveContextWindowOverride),
 // which ALWAYS win over this table.
 //
 // Sonnet-5 is kept at 200k: the repo carries no evidence of a 1M Sonnet-5
@@ -980,7 +1006,7 @@ function matchesModelFamily(id: string, family: string): boolean {
  *
  * Priority (first hit wins):
  *  1. `opts.override` — an explicit operator value (config `context_window_tokens`
- *     / `JARVIS_CONTEXT_WINDOW`). ALWAYS wins so a wrong table guess is fixable
+ *     / `DASHI_CONTEXT_WINDOW`). ALWAYS wins so a wrong table guess is fixable
  *     without a code change.
  *  2. An explicit `[1m]` / `1m` window marker on the model id → 1M.
  *  3. `opts.launchModel` — the CLI `--model` flag — when it carries the marker
@@ -1017,7 +1043,7 @@ export function resolveContextWindowForModel(
 
 /**
  * The EXPLICIT operator override for the context window, or `undefined` when
- * none is set. Precedence: config `context_window_tokens` > `JARVIS_CONTEXT_WINDOW`
+ * none is set. Precedence: config `context_window_tokens` > `DASHI_CONTEXT_WINDOW`
  * env var. Returned separately from the default so callers with a session model
  * (the context HUD) can let the override win over model auto-detection while an
  * unset value falls through to the model table.
@@ -1026,10 +1052,10 @@ export function resolveContextWindowOverride(config: AppConfig): number | undefi
   // Normalize the config value like every other operator input. An UNUSABLE
   // config value (0, negative, NaN — possible when the config object bypassed
   // schema validation, e.g. test literals) must FALL THROUGH to the env check,
-  // not suppress a valid JARVIS_CONTEXT_WINDOW (codex review MED, 2026-07-10).
+  // not suppress a valid DASHI_CONTEXT_WINDOW (codex review MED, 2026-07-10).
   const fromConfig = normalizeWindowValue(config.context_window_tokens)
   if (fromConfig !== undefined) return fromConfig
-  const env = process.env.JARVIS_CONTEXT_WINDOW
+  const env = process.env.DASHI_CONTEXT_WINDOW
   if (env !== undefined && env.trim().length > 0) {
     return normalizeWindowValue(Number(env.trim()))
   }
@@ -1073,7 +1099,7 @@ export function resolveHudEnabled(config: AppConfig): boolean {
 //
 // These two env vars are read from process.env directly (NOT via the
 // TELEGRAM_-prefixed RuntimeEnvSchema) — the same pattern as
-// resolveContextWindowOverride reading JARVIS_CONTEXT_WINDOW.
+// resolveContextWindowOverride reading DASHI_CONTEXT_WINDOW.
 // ─────────────────────────────────────────────────────────────────────
 
 export type AskGuardMode = 'off' | 'advisory' | 'block'

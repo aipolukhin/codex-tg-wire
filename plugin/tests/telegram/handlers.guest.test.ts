@@ -27,15 +27,15 @@ const silentLog = createLogger('test', {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: false, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -47,7 +47,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     },
     progress: { enabled: false, edit_throttle_ms: 3000, recent_buffer: 10, session_ttl_ms: 600000 },
     task_mirror: { enabled: false, edit_throttle_ms: 3000, session_ttl_ms: 600000, collapse_completed_after: 5 },
-    watcher: { enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
+    watcher: { agent_label: 'Агент', enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
     tmux_mirror: { enabled: false, pane_target: '', socket_name: '', poll_interval_ms: 5000, line_count: 50, hide_segments: ['boot_banner', 'inbound_warning', 'footer_hints', 'input_box'], mode: 'latest_inbound_only', max_lines: 14 },
     multichat: { enabled: false },
     ask_user_question: { enabled: false, timeout_ms: 300_000, max_preview_chars: 1000 },
@@ -126,7 +126,7 @@ function makeDeps(opts: {
   server?: ServerSpy
 } = {}): { deps: HandlerDeps; serverSpy: ServerSpy; registry: GuestQueryRegistry | undefined } {
   const serverSpy = opts.server ?? makeServerSpy()
-  const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+  const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
   const registry = 'registry' in opts ? opts.registry : new GuestQueryRegistry()
   const deps: HandlerDeps = {
     server: serverSpy.server,
@@ -205,7 +205,7 @@ describe('handleGuestMessage', () => {
     const { deps, serverSpy, registry } = makeDeps()
     const ctx = makeGuestCtx({
       text: '@canarybot что значит эта ошибка?',
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-1',
       chatId: -100987,
     })
@@ -216,7 +216,7 @@ describe('handleGuestMessage', () => {
     const { params } = serverSpy.calls[0]!
     expect(params.meta?.guest).toBe('1')
     expect(params.meta?.guest_query_id).toBe('gq-1')
-    expect(params.meta?.user_id).toBe('164795011')
+    expect(params.meta?.user_id).toBe('123456789')
     expect(params.meta?.chat_id).toBe('-100987')
     expect(params.content).toContain('что значит эта ошибка?')
     // Registered and claimable exactly once.
@@ -230,12 +230,12 @@ describe('handleGuestMessage', () => {
     const ctx = makeGuestCtx({
       text: 'hi',
       fromId: 999,
-      callerId: 164795011,
+      callerId: 123456789,
       guestQueryId: 'gq-2',
     })
     await handleGuestMessage(ctx, deps)
     expect(serverSpy.calls.length).toBe(1)
-    expect(serverSpy.calls[0]!.params.meta?.user_id).toBe('164795011')
+    expect(serverSpy.calls[0]!.params.meta?.user_id).toBe('123456789')
   })
 
   test('stranger caller → silent drop, nothing registered', async () => {
@@ -253,7 +253,7 @@ describe('handleGuestMessage', () => {
     const { deps, serverSpy } = makeDeps({ config })
     // Owner is NOT in the explicit guest allowlist → drop.
     await handleGuestMessage(
-      makeGuestCtx({ text: 'x', fromId: 164795011, guestQueryId: 'gq-4' }),
+      makeGuestCtx({ text: 'x', fromId: 123456789, guestQueryId: 'gq-4' }),
       deps,
     )
     expect(serverSpy.calls.length).toBe(0)
@@ -268,7 +268,7 @@ describe('handleGuestMessage', () => {
   test('disabled feature → drop even for the owner', async () => {
     const { deps, serverSpy } = makeDeps({ config: makeConfig({ guest_mode: { enabled: false } }) })
     await handleGuestMessage(
-      makeGuestCtx({ text: 'x', fromId: 164795011, guestQueryId: 'gq-6' }),
+      makeGuestCtx({ text: 'x', fromId: 123456789, guestQueryId: 'gq-6' }),
       deps,
     )
     expect(serverSpy.calls.length).toBe(0)
@@ -276,14 +276,14 @@ describe('handleGuestMessage', () => {
 
   test('missing guest_query_id → drop', async () => {
     const { deps, serverSpy } = makeDeps()
-    await handleGuestMessage(makeGuestCtx({ text: 'x', fromId: 164795011 }), deps)
+    await handleGuestMessage(makeGuestCtx({ text: 'x', fromId: 123456789 }), deps)
     expect(serverSpy.calls.length).toBe(0)
   })
 
   test('empty text → drop, nothing registered', async () => {
     const { deps, serverSpy, registry } = makeDeps()
     await handleGuestMessage(
-      makeGuestCtx({ text: '   ', fromId: 164795011, guestQueryId: 'gq-7' }),
+      makeGuestCtx({ text: '   ', fromId: 123456789, guestQueryId: 'gq-7' }),
       deps,
     )
     expect(serverSpy.calls.length).toBe(0)
@@ -299,7 +299,7 @@ describe('handleGuestMessage', () => {
   test('enabled but registry not wired → drop with no throw', async () => {
     const { deps, serverSpy } = makeDeps({ registry: undefined })
     await handleGuestMessage(
-      makeGuestCtx({ text: 'x', fromId: 164795011, guestQueryId: 'gq-9' }),
+      makeGuestCtx({ text: 'x', fromId: 123456789, guestQueryId: 'gq-9' }),
       deps,
     )
     expect(serverSpy.calls.length).toBe(0)
@@ -308,7 +308,7 @@ describe('handleGuestMessage', () => {
   test('caption-only guest message (media mention) is delivered', async () => {
     const { deps, serverSpy } = makeDeps()
     await handleGuestMessage(
-      makeGuestCtx({ caption: 'что на этом скрине?', fromId: 164795011, guestQueryId: 'gq-cap' }),
+      makeGuestCtx({ caption: 'что на этом скрине?', fromId: 123456789, guestQueryId: 'gq-cap' }),
       deps,
     )
     expect(serverSpy.calls.length).toBe(1)
@@ -320,7 +320,7 @@ describe('handleGuestMessage', () => {
     await handleGuestMessage(
       makeGuestCtx({
         text: 'объясни ошибку выше',
-        fromId: 164795011,
+        fromId: 123456789,
         guestQueryId: 'gq-rt',
         replyTo: {
           message_id: 500,
@@ -353,7 +353,7 @@ describe('handleGuestMessage', () => {
     } as unknown as HandlerDeps['botApi']
 
     const ctx = makeGuestCtx({
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-photo',
       photo: [{ file_id: 'PBIG', file_unique_id: 'b', width: 1280, height: 720, file_size: 100 }],
     })
@@ -379,7 +379,7 @@ describe('handleGuestMessage', () => {
     // makeTelegramApi().downloadFile THROWS — so if the document path tried to
     // download, this test would throw. Reaching a clean delivery proves it did not.
     const ctx = makeGuestCtx({
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-doc',
       document: { file_id: 'DGUEST', file_name: 'report.pdf', mime_type: 'application/pdf' },
     })
@@ -397,7 +397,7 @@ describe('handleGuestMessage', () => {
     // would render status="skipped" instead.
     const { deps, serverSpy } = makeDeps()
     const ctx = makeGuestCtx({
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-voice',
       voice: { file_id: 'VGUEST', duration: 4, mime_type: 'audio/ogg' },
     })
@@ -411,7 +411,7 @@ describe('handleGuestMessage', () => {
   test('guest media-only mention (no caption) is NOT dropped', async () => {
     const { deps, serverSpy, registry } = makeDeps()
     const ctx = makeGuestCtx({
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-mediaonly',
       document: { file_id: 'DONLY', file_name: 'x.zip' },
     })
@@ -427,7 +427,7 @@ describe('handleGuestMessage', () => {
     const { deps, serverSpy } = makeDeps()
     const ctx = makeGuestCtx({
       text: 'что на фото выше?',
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-reply-photo',
       replyTo: {
         message_id: 500,
@@ -451,7 +451,7 @@ describe('handleGuestMessage', () => {
     const { deps, serverSpy } = makeDeps()
     const ctx = makeGuestCtx({
       text: 'смотри',
-      fromId: 164795011,
+      fromId: 123456789,
       guestQueryId: 'gq-reply-nocap',
       replyTo: {
         message_id: 501,
@@ -479,7 +479,7 @@ describe('handleGuestMessage', () => {
     const { deps } = makeDeps({ server: failingServer })
     await expect(
       handleGuestMessage(
-        makeGuestCtx({ text: 'x', fromId: 164795011, guestQueryId: 'gq-10' }),
+        makeGuestCtx({ text: 'x', fromId: 123456789, guestQueryId: 'gq-10' }),
         deps,
       ),
     ).rejects.toThrow('guest message dead-lettered')

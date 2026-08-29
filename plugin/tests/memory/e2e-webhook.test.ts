@@ -31,11 +31,15 @@ beforeEach(() => {
   const env = {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   }
   baseConfig = loadConfig(env)
   paths = getStatePaths(baseConfig, {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   })
   ensureStateDirs(paths)
   handle = null
@@ -67,7 +71,7 @@ function memCfg(overrides: Partial<MemoryConfig> = {}): MemoryConfig {
     workspacePath: workspaceDir,
     logsPath: logsDir,
     sourceTag: 'tg',
-    agentLabel: 'Silvana',
+    agentLabel: 'ExampleAgent',
     maxHotBytes: 20480,
     trimKeepLines: 600,
     bufferTtlMs: 5 * 60 * 1000,
@@ -85,7 +89,7 @@ function enabledConfig(): AppConfig {
       workspace_path: workspaceDir,
       logs_path: logsDir,
       source_tag: 'tg',
-      agent_label: 'Silvana',
+      agent_label: 'ExampleAgent',
       max_hot_bytes: 20480,
       trim_keep_lines: 600,
       buffer_ttl_ms: 5 * 60 * 1000,
@@ -139,7 +143,7 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'UserPromptSubmit',
         session_id: 'e2e-sid',
         transcript_path: transcriptPath,
@@ -161,7 +165,7 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'e2e-sid',
         transcript_path: transcriptPath,
@@ -175,7 +179,7 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     const hot = readFileSync(hotPath, 'utf8')
     expect(hot).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
     expect(hot).toContain('**User:** end-to-end user prompt\n')
-    expect(hot).toContain('**Silvana:** agent answered the question\n')
+    expect(hot).toContain('**ExampleAgent:** agent answered the question\n')
 
     // verbose-YYYY-MM-DD.jsonl
     const files = readdirSync(logsDir).filter(f => f.startsWith('verbose-'))
@@ -302,7 +306,7 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
       method: 'POST',
       headers: { Authorization: `Bearer ${WEBHOOK_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'sid-x',
         transcript_path: '/tmp/missing.jsonl',

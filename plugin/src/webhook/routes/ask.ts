@@ -21,16 +21,10 @@
 //   4. config.ask_user_question.enabled must be true (else `pass_through`)
 //   5. body parse + Zod schema validate (caps + per-route 64 KB read)
 //
-// chatId resolution for MVP (warchief DM hardcoded):
-//   `resolveAskUserQuestionAllowedUserIds(config)[0]` — the SAME helper
-//   the /answer route uses to authorise the answerer. Using a different
-//   source here (e.g. permission_relay.allowed_user_ids[0] directly)
-//   would mean the prompt lands in chat A but only chat B is allowed
-//   to answer — a misconfiguration we'd discover only when an answer
-//   never arrives (Codex webhook #1). In a DM the user_id and chat_id
-//   are identical (Telegram convention) so the first allowed user id
-//   is the warchief's DM chat. TODO(multichat): derive from session_id
-//   ⇨ tmux session ⇨ originating chat. Out of scope for MVP.
+// chatId resolution:
+//   1. explicit ask_user_question.chat_id (works for DM/group destinations)
+//   2. backwards-compatible single-owner DM fallback via the same allowed-id
+//      helper the /answer route uses for authorisation.
 //
 // Extracted verbatim from server.ts during the route-module split; no
 // behaviour change.
@@ -68,7 +62,7 @@ const ASK_BODY_LIMIT_BYTES = 64 * 1024
 // letting the relay's own timeout drive the verdict. Telegram's API
 // usually responds in <1s; 10s is a generous ceiling that still leaves
 // 4.5 min of the default 5min relay window for the user to actually
-// answer. We do NOT cancel the underlying send — the warchief still
+// answer. We do NOT cancel the underlying send — the operator still
 // gets the prompt if TG recovers within the relay's longer window.
 const START_QUESTION_DEADLINE_MS = 10_000
 
@@ -96,12 +90,11 @@ function writeAskAuditEvent(
 }
 
 function resolveAskChatId(config: AppConfig): string | undefined {
-  // MVP: warchief DM. The warchief's chat_id == user_id in DM context.
-  // Routed through `resolveAskUserQuestionAllowedUserIds` so the route
-  // is guaranteed to use the same authoritative allowlist as /answer.
-  // The helper falls back to permission_relay when ask_user_question's
-  // dedicated list is unset — so a single allowlist change still
-  // propagates to BOTH the prompt destination and the answer authz.
+  if (config.ask_user_question.chat_id !== undefined) {
+    return String(config.ask_user_question.chat_id)
+  }
+  // Compatibility path for old single-owner DM configs. In a private chat,
+  // Telegram's user_id equals chat_id.
   const allowed = resolveAskUserQuestionAllowedUserIds(config)
   const first = allowed[0]
   return first === undefined ? undefined : String(first)
@@ -187,7 +180,7 @@ export async function handleAskRequest(
   // renderer in `src/telegram/ask-user-question.ts` can read header
   // and per-option `preview` via `relay.getPending(requestId)`.
   // Previously this site stripped header + preview, which silently
-  // dropped warchief-facing context (Codex webhook #2).
+  // dropped operator-facing context (Codex webhook #2).
   //
   // The relay's `AskQuestion` type is the canonical narrow shape
   // (`question`, optional `multiSelect`, `options[{label, description}]`).
@@ -295,7 +288,7 @@ export async function handleAskRequest(
     // Reasoning: the relay's own 5min timer is the authoritative
     // timeout, so waiting for the TG send before proceeding to await
     // the relay only ADDS latency — if TG is slow but eventually
-    // succeeds the warchief still sees the prompt and the answer flow
+    // succeeds the operator still sees the prompt and the answer flow
     // works. If TG never succeeds the relay's timeout fires cleanly.
     //
     // We still wire a 10s deadline so a stalled send produces a single

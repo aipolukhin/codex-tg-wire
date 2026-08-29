@@ -397,7 +397,7 @@ trap cleanup EXIT INT TERM
 # remain-on-exit semantics work as expected.
 #
 # Permission mode (2026-06-06): a multichat session has NO human at the
-# terminal — the warchief drives it over Telegram and cannot answer Claude
+# terminal — the operator drives it over Telegram and cannot answer Claude
 # Code's interactive permission prompts, so a default-mode session STALLS on
 # the first gated tool call (every Bash/edit/MCP/network use). We run in
 # bypassPermissions so the session is autonomous; the SECURITY GATE is the

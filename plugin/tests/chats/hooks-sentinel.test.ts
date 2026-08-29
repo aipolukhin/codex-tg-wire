@@ -4,7 +4,7 @@
 // `plugin/src/chats/hooks/` and are wired into per-chat Claude Code
 // sessions by the tmux session pool. They MUST be no-ops when the
 // surrounding process is not a per-chat session — otherwise an
-// operator who accidentally registers them into the MASTER Thrall
+// operator who accidentally registers them into the MASTER ExampleAgent
 // workspace would lock the master session out of every Bash / Edit /
 // Read call (pre-tool-use returns exit 2 = block when CHAT_ID is
 // unset).
@@ -64,14 +64,14 @@ beforeEach(() => {
   const chatsDir = join(workspace, 'chats')
   mkdirSync(chatsDir, { recursive: true })
   policyPath = join(chatsDir, 'policy.yaml')
-  // Minimal policy: chat "164795011" with one Bash deny pattern and
+  // Minimal policy: chat "123456789" with one Bash deny pattern and
   // no path/MCP denies. Lets us assert allow vs deny on Bash calls.
   writeFileSync(
     policyPath,
     [
       'version: 1',
       'chats:',
-      '  "164795011":',
+      '  "123456789":',
       '    deny:',
       '      bash_patterns:',
       '        - "rm -rf /"',
@@ -140,7 +140,7 @@ describe('pre-tool-use.sh — multichat context with CHAT_ID', () => {
       {
         MULTICHAT_STATE_DIR: workspace,
         CLAUDE_WORKSPACE_DIR: workspace,
-        CHAT_ID: '164795011',
+        CHAT_ID: '123456789',
       },
       tool,
     )
@@ -158,7 +158,7 @@ describe('pre-tool-use.sh — multichat context with CHAT_ID', () => {
       {
         MULTICHAT_STATE_DIR: workspace,
         CLAUDE_WORKSPACE_DIR: workspace,
-        CHAT_ID: '164795011',
+        CHAT_ID: '123456789',
       },
       tool,
     )
@@ -175,15 +175,15 @@ describe('session-start.sh — sentinel pass-through', () => {
   test('MULTICHAT_STATE_DIR unset -> exit 0, no additionalContext emitted', () => {
     // Even if persona/policy exist, an unset MULTICHAT_STATE_DIR must
     // produce a clean exit with no JSON payload.
-    mkdirSync(join(workspace, 'chats', '164795011'), { recursive: true })
+    mkdirSync(join(workspace, 'chats', '123456789'), { recursive: true })
     writeFileSync(
-      join(workspace, 'chats', '164795011', 'persona.md'),
+      join(workspace, 'chats', '123456789', 'persona.md'),
       'PERSONA SHOULD NOT LEAK',
       'utf8',
     )
     const r = run(SESSION_HOOK, {
       CLAUDE_WORKSPACE_DIR: workspace,
-      CHAT_ID: '164795011',
+      CHAT_ID: '123456789',
     })
     expect(r.code).toBe(0)
     expect(r.stdout).toBe('')
@@ -193,7 +193,7 @@ describe('session-start.sh — sentinel pass-through', () => {
 describe('session-start.sh — degraded-mode warning (Opus #16)', () => {
   // session-start was previously fail-open and silent when persona.md
   // was missing while pre-tool-use was fail-closed for the same state.
-  // Result: Thrall would boot up cleanly and then every tool call would
+  // Result: ExampleAgent would boot up cleanly and then every tool call would
   // be denied with no startup signal that the gate was broken. The fix
   // makes the inconsistency observable via additionalContext so the
   // session can route around the degradation on its first turn.
@@ -204,7 +204,7 @@ describe('session-start.sh — degraded-mode warning (Opus #16)', () => {
     const r = run(SESSION_HOOK, {
       MULTICHAT_STATE_DIR: workspace,
       CLAUDE_WORKSPACE_DIR: workspace,
-      CHAT_ID: '164795011',
+      CHAT_ID: '123456789',
     })
     expect(r.code).toBe(0)
     expect(r.stdout).not.toBe('')
@@ -213,9 +213,9 @@ describe('session-start.sh — degraded-mode warning (Opus #16)', () => {
     expect(payload.hookSpecificOutput?.hookEventName).toBe('SessionStart')
     const ctx = payload.hookSpecificOutput?.additionalContext ?? ''
     expect(ctx).toContain('Persona file missing')
-    expect(ctx).toContain('164795011')
+    expect(ctx).toContain('123456789')
     expect(ctx).toContain(
-      join(workspace, 'chats', '164795011', 'persona.md'),
+      join(workspace, 'chats', '123456789', 'persona.md'),
     )
     expect(ctx).toContain('degraded mode')
     // Mirror to stderr for the operator tailing logs.
@@ -223,16 +223,16 @@ describe('session-start.sh — degraded-mode warning (Opus #16)', () => {
   })
 
   test('MULTICHAT_STATE_DIR + CHAT_ID set + persona present -> normal injection, no degraded warning', () => {
-    mkdirSync(join(workspace, 'chats', '164795011'), { recursive: true })
+    mkdirSync(join(workspace, 'chats', '123456789'), { recursive: true })
     writeFileSync(
-      join(workspace, 'chats', '164795011', 'persona.md'),
-      'Ты Тралл, архитектор Оргриммара.',
+      join(workspace, 'chats', '123456789', 'persona.md'),
+      'Ты Агент, архитектор примерного флота.',
       'utf8',
     )
     const r = run(SESSION_HOOK, {
       MULTICHAT_STATE_DIR: workspace,
       CLAUDE_WORKSPACE_DIR: workspace,
-      CHAT_ID: '164795011',
+      CHAT_ID: '123456789',
     })
     expect(r.code).toBe(0)
     expect(r.stdout).not.toBe('')
@@ -240,7 +240,7 @@ describe('session-start.sh — degraded-mode warning (Opus #16)', () => {
     const payload = JSON.parse(r.stdout)
     const ctx = payload.hookSpecificOutput?.additionalContext ?? ''
     // Persona is loaded as-is; degraded marker must not appear.
-    expect(ctx).toContain('Тралл')
+    expect(ctx).toContain('Агент')
     expect(ctx).not.toContain('degraded mode')
     expect(ctx).not.toContain('Persona file missing')
   })

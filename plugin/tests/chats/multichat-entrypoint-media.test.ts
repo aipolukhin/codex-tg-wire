@@ -74,13 +74,13 @@ function writeInboxJson(name: string, payload: unknown): string {
 }
 
 const VOICE_DESCRIPTOR =
-  '<media kind="voice" file_id="abc" mime="audio/ogg" size="37410" duration_sec="10" transcript="Проверь воркшоп, вождь ждёт" transcription_status="ok" />'
+  '<media kind="voice" file_id="abc" mime="audio/ogg" size="37410" duration_sec="10" transcript="Проверь воркшоп, владелец ждёт" transcription_status="ok" />'
 
 describe('build_prompt — media_descriptors', () => {
   test('voice descriptor lands between reply_context and the speaker line', () => {
     const f = writeInboxJson('msg.json', {
       text: '',
-      user: 'dashieshiev',
+      user: 'example_owner',
       chat_id: '-1',
       user_id: '1',
       timestamp: 'x',
@@ -92,20 +92,20 @@ describe('build_prompt — media_descriptors', () => {
     const parts = res.stdout.split('\n\n')
     expect(parts[0]).toContain('untrusted_metadata')
     expect(parts[1]).toBe(VOICE_DESCRIPTOR)
-    expect(parts[2]).toContain('[from @dashieshiev]')
+    expect(parts[2]).toContain('[from @example_owner]')
   })
 
   test('descriptor without reply_context still renders before speaker line', () => {
     const f = writeInboxJson('msg.json', {
       text: 'и текст тоже',
-      user: 'dashieshiev',
+      user: 'example_owner',
       media_descriptors: [VOICE_DESCRIPTOR],
     })
     const res = runHelpers(`build_prompt '${f}'`)
     expect(res.code).toBe(0)
     const parts = res.stdout.split('\n\n')
     expect(parts[0]).toBe(VOICE_DESCRIPTOR)
-    expect(parts[1]).toBe('[from @dashieshiev] и текст тоже')
+    expect(parts[1]).toBe('[from @example_owner] и текст тоже')
   })
 
   test('non-string entries in media_descriptors are ignored', () => {
@@ -125,7 +125,7 @@ describe('build_prompt — skip-empty contract', () => {
   test('no text, no media, no reply_context → exit 3, empty stdout', () => {
     const f = writeInboxJson('msg.json', {
       text: '',
-      user: 'dashieshiev',
+      user: 'example_owner',
       chat_id: '-1',
     })
     const res = runHelpers(`rc=0; build_prompt '${f}' || rc=$?; echo "rc=$rc" >&2`)
@@ -197,10 +197,10 @@ describe('process_inbox — skipped-empty files', () => {
 
 describe('prompt_fingerprint — speaker-line preference', () => {
   test('prefers the [from @user] line over a long leading descriptor', () => {
-    const prompt = `${VOICE_DESCRIPTOR}\n[from @dashieshiev] Проверь воркшоп`
+    const prompt = `${VOICE_DESCRIPTOR}\n[from @example_owner] Проверь воркшоп`
     const res = runHelpers(`prompt_fingerprint "$(printf '%s' '${prompt.replace(/'/g, "'\\''")}')"`)
     expect(res.code).toBe(0)
-    expect(res.stdout.startsWith('[from @dashieshiev]')).toBe(true)
+    expect(res.stdout.startsWith('[from @example_owner]')).toBe(true)
   })
 
   test('falls back to first long-enough line when no speaker line exists', () => {
@@ -231,13 +231,13 @@ describe('prompt_fingerprint — reply-context steal (Codex finding 1)', () => {
       '',
       VOICE_DESCRIPTOR,
       '',
-      '[from @dashieshiev] Проверь воркшоп немедленно',
+      '[from @example_owner] Проверь воркшоп немедленно',
     ].join('\n')
     const res = runHelpers(
       `prompt_fingerprint "$(printf '%s' '${prompt.replace(/'/g, "'\\''")}')"`,
     )
     expect(res.code).toBe(0)
-    expect(res.stdout.startsWith('[from @dashieshiev]')).toBe(true)
+    expect(res.stdout.startsWith('[from @example_owner]')).toBe(true)
   })
 
   test('bare short speaker line falls back to unique descriptor head', () => {

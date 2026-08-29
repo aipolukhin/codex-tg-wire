@@ -1,5 +1,5 @@
 // Permission-gate Telegram UX — renders the Allow/Deny card for one pending
-// confirm and dispatches the warchief's tap back into the relay.
+// confirm and dispatches the operator's tap back into the relay.
 //
 // Callback data uses the `pgate:` prefix (NOT `perm:`, which the headless MCP
 // permission relay in channel/permissions.ts owns) so the two flows never

@@ -2,12 +2,9 @@
 # sync-multichat-hooks.sh — deploy multichat per-chat hooks from the repo to
 # the live hooks directory the per-chat sessions actually execute.
 #
-# Why this exists (2026-06-10): the multichat file-send feature was committed
-# to src/chats/hooks/ but the deployed copies under
-# ~/.claude-lab/thrall/.claude/chats/hooks/ were never synced, so a live chat
-# session neither learned the [[file: …]] marker (stale session-start.sh) nor
-# could the Stop hook extract it (stale stop-to-outbox.py). Hook sync is part
-# of EVERY multichat activation — run this script instead of copying by hand.
+# The repository and deployed hook copies can drift independently. Hook sync
+# is part of every multichat activation — run this script instead of copying
+# files by hand.
 #
 # Behavior:
 #   * Backs up each deployed file as <name>.bak.<timestamp> before overwrite.
@@ -37,17 +34,44 @@
 # child workspace runs; do NOT add wide notification feeders here.
 #
 # Usage:
-#   scripts/sync-multichat-hooks.sh [--deploy-dir /abs/path]
-# Default deploy dir: ~/.claude-lab/thrall/.claude/chats/hooks
+#   scripts/sync-multichat-hooks.sh --workspace /abs/workspace
+#   scripts/sync-multichat-hooks.sh --deploy-dir /abs/workspace/chats/hooks
+# Or set CLAUDE_WORKSPACE_DIR / DASHI_MULTICHAT_HOOKS_DIR.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_HOOKS="${SCRIPT_DIR}/../src/chats/hooks"
-DEPLOY_DIR="${HOME}/.claude-lab/thrall/.claude/chats/hooks"
+DEPLOY_DIR="${DASHI_MULTICHAT_HOOKS_DIR:-}"
+WORKSPACE_DIR="${CLAUDE_WORKSPACE_DIR:-${TELEGRAM_WORKSPACE_ROOT:-}}"
 
-if [[ "${1:-}" == "--deploy-dir" ]]; then
-  DEPLOY_DIR="${2:?--deploy-dir requires a path}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --deploy-dir)
+      DEPLOY_DIR="${2:?--deploy-dir requires a path}"
+      shift 2
+      ;;
+    --workspace)
+      WORKSPACE_DIR="${2:?--workspace requires a path}"
+      shift 2
+      ;;
+    -h|--help)
+      sed -n 's/^# \{0,1\}//p' "$0" | head -n 45
+      exit 0
+      ;;
+    *)
+      echo "sync-multichat-hooks: unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "${DEPLOY_DIR}" && -n "${WORKSPACE_DIR}" ]]; then
+  DEPLOY_DIR="${WORKSPACE_DIR%/}/chats/hooks"
+fi
+if [[ -z "${DEPLOY_DIR}" ]]; then
+  echo "sync-multichat-hooks: set --workspace, --deploy-dir, CLAUDE_WORKSPACE_DIR, or DASHI_MULTICHAT_HOOKS_DIR" >&2
+  exit 2
 fi
 
 HOOK_FILES=(

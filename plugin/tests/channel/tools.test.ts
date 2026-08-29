@@ -54,15 +54,15 @@ function makeStubApi(overrides: Partial<TelegramApi> = {}): TelegramApi {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -85,6 +85,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -180,7 +181,7 @@ describe('callTool', () => {
   test('status tool no-ops cleanly when no active session (returns no-op content)', async () => {
     const deps = makeDeps()
     const result = await callTool(
-      callReq('status', { chat_id: '164795011', state: 'thinking' }),
+      callReq('status', { chat_id: '123456789', state: 'thinking' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -190,7 +191,7 @@ describe('callTool', () => {
 
   test('status tool rejects missing state via zod', async () => {
     const deps = makeDeps()
-    const result = await callTool(callReq('status', { chat_id: '164795011' }), deps)
+    const result = await callTool(callReq('status', { chat_id: '123456789' }), deps)
     expect(result.isError).toBe(true)
     expect(result.content[0]?.text).toContain('state')
     rmSync(deps.statePaths.root, { recursive: true, force: true })
@@ -200,8 +201,8 @@ describe('callTool', () => {
     let active = true
     const stubMgr = {
       isActive: () => active,
-      activeChatIds: () => ['164795011'],
-      start: async () => ({ chatId: '164795011', messageId: 1, startedAt: 0 }),
+      activeChatIds: () => ['123456789'],
+      start: async () => ({ chatId: '123456789', messageId: 1, startedAt: 0 }),
       update: async () => {},
       updateByChatId: async () => {},
       complete: async () => { active = false },
@@ -209,7 +210,7 @@ describe('callTool', () => {
     } as unknown as ToolDeps['statusManager']
     const deps = makeDeps({ statusManager: stubMgr })
     const result = await callTool(
-      callReq('status', { chat_id: '164795011', state: 'tool' }),
+      callReq('status', { chat_id: '123456789', state: 'tool' }),
       deps,
     )
     expect(result.isError).toBe(true)
@@ -221,8 +222,8 @@ describe('callTool', () => {
     const calls: string[] = []
     const stubMgr = {
       isActive: () => true,
-      activeChatIds: () => ['164795011'],
-      start: async () => ({ chatId: '164795011', messageId: 1, startedAt: 0 }),
+      activeChatIds: () => ['123456789'],
+      start: async () => ({ chatId: '123456789', messageId: 1, startedAt: 0 }),
       update: async () => { calls.push('update') },
       updateByChatId: async () => { calls.push('updateByChatId') },
       complete: async () => { calls.push('complete') },
@@ -230,7 +231,7 @@ describe('callTool', () => {
     } as unknown as ToolDeps['statusManager']
     const deps = makeDeps({ statusManager: stubMgr })
     const result = await callTool(
-      callReq('status', { chat_id: '164795011', state: 'stopped', reason: 'oops' }),
+      callReq('status', { chat_id: '123456789', state: 'stopped', reason: 'oops' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -251,7 +252,7 @@ describe('callTool', () => {
     expect(deps.config.workspace_root).toBeUndefined()
     const result = await callTool(
       callReq('reply', {
-        chat_id: '164795011',
+        chat_id: '123456789',
         text: 'hi',
         files: ['/tmp/anything.png'],
       }),
@@ -271,10 +272,10 @@ describe('callTool', () => {
       },
     })
     const deps = makeDeps({ telegramApi: api })
-    const result = await callTool(callReq('reply', { chat_id: '164795011', text: 'hello' }), deps)
+    const result = await callTool(callReq('reply', { chat_id: '123456789', text: 'hello' }), deps)
     expect(result.isError).toBeUndefined()
     expect(captured).not.toBeNull()
-    expect(captured!.chatId).toBe('164795011')
+    expect(captured!.chatId).toBe('123456789')
     expect(captured!.text).toBe('hello')
     expect(result.content[0]?.text).toContain('sent')
     expect(result.content[0]?.text).toContain('99')
@@ -299,7 +300,7 @@ describe('callTool', () => {
     const deps = makeDeps({ telegramApi: api })
     const result = await callTool(
       callReq('reply', {
-        chat_id: '164795011',
+        chat_id: '123456789',
         text: 'Hello **bold** world',
         format: 'html',
       }),
@@ -327,7 +328,7 @@ describe('callTool', () => {
     const body = [para, para, para, para].join('\n\n')
     const result = await callTool(
       callReq('reply', {
-        chat_id: '164795011',
+        chat_id: '123456789',
         text: body,
         reply_to: '55',
         format: 'html',
@@ -368,7 +369,7 @@ describe('callTool', () => {
     const deps = makeDeps({ telegramApi: api })
     const result = await callTool(
       callReq('reply', {
-        chat_id: '164795011',
+        chat_id: '123456789',
         text: 'oops **bad** html',
         format: 'html',
       }),
@@ -388,7 +389,7 @@ describe('callTool', () => {
     // Schema regression: 'html' must be a legal format value.
     const deps = makeDeps()
     const result = await callTool(
-      callReq('reply', { chat_id: '164795011', text: 'hi', format: 'html' }),
+      callReq('reply', { chat_id: '123456789', text: 'hi', format: 'html' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -408,7 +409,7 @@ describe('callTool', () => {
     })
     const deps = makeDeps({ telegramApi: api })
     const result = await callTool(
-      callReq('reply', { chat_id: '164795011', text: '# Title', format: 'rich' }),
+      callReq('reply', { chat_id: '123456789', text: '# Title', format: 'rich' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -431,7 +432,7 @@ describe('callTool', () => {
     })
     const deps = makeDeps({ telegramApi: api })
     const result = await callTool(
-      callReq('reply', { chat_id: '164795011', text: 'Hello **bold** world' }),
+      callReq('reply', { chat_id: '123456789', text: 'Hello **bold** world' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -456,7 +457,7 @@ describe('callTool', () => {
     })
     const deps = makeDeps({ telegramApi: api })
     const result = await callTool(
-      callReq('reply', { chat_id: '164795011', text: 'curl https://x.com?a=1&b=2 < y > z' }),
+      callReq('reply', { chat_id: '123456789', text: 'curl https://x.com?a=1&b=2 < y > z' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -483,7 +484,7 @@ describe('callTool', () => {
     const para = 'y'.repeat(2900)
     const body = [para, para, para].join('\n\n')
     const result = await callTool(
-      callReq('reply', { chat_id: '164795011', text: body, format: 'text' }),
+      callReq('reply', { chat_id: '123456789', text: body, format: 'text' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -509,7 +510,7 @@ describe('callTool', () => {
     const para = 'z'.repeat(2900)
     const body = [para, para, para].join('\n\n')
     const result = await callTool(
-      callReq('reply', { chat_id: '164795011', text: body, format: 'markdownv2' }),
+      callReq('reply', { chat_id: '123456789', text: body, format: 'markdownv2' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -554,7 +555,7 @@ describe('callTool', () => {
     })
     const deps = makeDeps({ telegramApi: api })
     const result = await callTool(
-      callReq('download_attachment', { chat_id: '164795011', file_id: 'AgAD...' }),
+      callReq('download_attachment', { chat_id: '123456789', file_id: 'AgAD...' }),
       deps,
     )
     expect(result.isError).toBeUndefined()
@@ -577,7 +578,7 @@ import {
   saveAutonomyState,
 } from '../../src/autonomy/store.js'
 
-const OWNER_CHAT = '164795011'
+const OWNER_CHAT = '123456789'
 const HOUR = 3_600_000
 
 describe('autonomy tool', () => {

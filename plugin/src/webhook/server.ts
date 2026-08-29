@@ -111,7 +111,7 @@ function fireHud(log: Logger, fn: () => Promise<void> | void): void {
 // layer is decoupled from the concrete implementation in
 // src/telegram/ask-user-question.ts (which TASK-2 owns). The function is
 // async because TG sendMessage is async; we await it before resolving so
-// the warchief sees the keyboard before the relay times out.
+// the operator sees the keyboard before the relay times out.
 export interface AskUserQuestionUi {
   startQuestion(requestId: string): Promise<void> | void
 }
@@ -185,16 +185,16 @@ export interface WebhookDeps {
   // {chat_id, message_id} here once it has confirmed the agent actually read
   // an inbound message in a turn (parsed from the session transcript). We set
   // the 👀 reaction at THAT point — not when the bot first received the update
-  // — so the reaction deterministically means "Thrall read it through the
+  // — so the reaction deterministically means "ExampleAgent read it through the
   // plugin". Optional so tests/legacy paths can omit; when absent the route
   // answers 503 and the hook degrades to a no-op (no read receipt, no crash).
   reactToMessage?: (chatId: string, messageId: number, emoji: string) => Promise<void>
-  // 2026-06-03: DM fallback-reply capability. The warchief's DM session
+  // 2026-06-03: DM fallback-reply capability. The operator's DM session
   // normally answers through the `mcp__dashi-channel__reply` MCP tool. When a
   // turn ends WITHOUT having sent such a reply, the fallback-reply Stop hook
   // posts the turn's final assistant text to POST /hooks/fallback-reply and we
   // send it via this capability — a fire-and-forget plain-text Telegram
-  // message so the warchief still sees the answer. Wired through the same
+  // message so the operator still sees the answer. Wired through the same
   // safe-wrapped, rate-limited telegramApi as every other outbound send.
   // Optional so tests/legacy paths can omit; when absent the route answers 503
   // and the hook degrades to a no-op (no fallback, no crash).
@@ -707,7 +707,7 @@ async function handleRequest(
 // `permission_relay.allowed_user_ids`, log a warning so a drift between
 // the two lists is visible at startup rather than only at the first
 // failed round-trip. Both lists are allowed to differ (operator may
-// want only warchief in permission_relay but a wider audience for
+// want only operator in permission_relay but a wider audience for
 // AskUserQuestion), but the divergence should be intentional.
 function logAskUserQuestionAllowlistConsistency(
   config: AppConfig,

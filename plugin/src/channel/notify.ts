@@ -8,7 +8,7 @@
 // originating Telegram chat id (already done in handlers.ts:buildMeta).
 // The master Claude session inspects `meta.chat_id` to know which chat
 // the inbound message came from — there is NO implicit fallback to the
-// warchief's DM. This module never injects a default chat_id; an event
+// operator's DM. This module never injects a default chat_id; an event
 // arriving without one is a wiring bug at the caller, not something we
 // paper over here.
 

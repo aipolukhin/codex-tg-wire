@@ -77,7 +77,7 @@ describe('buildSanitizedTmuxEnv', () => {
   test('drops arbitrary non-allowlisted keys (HOSTNAME, FOO_BAR)', () => {
     const parent = {
       PATH: '/usr/bin',
-      HOSTNAME: 'thrall',
+      HOSTNAME: 'agent-one',
       FOO_BAR: 'baz',
       SOMETHING_ELSE: 'value',
     }
@@ -234,7 +234,7 @@ describe('buildSanitizedTmuxEnv', () => {
     // hit plain shell metadata keys.
     const parent = {
       PATH: '/usr/bin',
-      HOSTNAME: 'thrall',
+      HOSTNAME: 'agent-one',
       HOME: '/home/test',
       USER: 'test',
       TERM: 'xterm',
@@ -490,7 +490,7 @@ describe('TmuxSessionPool end-to-end env sanitization', () => {
     if (fixture === undefined) throw new Error('fixture missing')
     // HOSTNAME is commonly set by the shell but is not on our
     // allowlist — verify it's dropped from the tmux child env.
-    process.env.HOSTNAME = 'thrall-test-host'
+    process.env.HOSTNAME = 'agent-one-test-host'
 
     const pool = new TmuxSessionPool({
       policy: makePolicy('555'),
@@ -505,10 +505,10 @@ describe('TmuxSessionPool end-to-end env sanitization', () => {
 
     const env = readFileSync(fixture.envLog, 'utf8')
     // HOSTNAME must not appear in the tmux child process env.
-    expect(env).not.toMatch(/^HOSTNAME=thrall-test-host$/m)
+    expect(env).not.toMatch(/^HOSTNAME=agent-one-test-host$/m)
     // And not in -e flags either.
     const argv = readFileSync(fixture.argvLog, 'utf8')
-    expect(argv).not.toContain('HOSTNAME=thrall-test-host')
+    expect(argv).not.toContain('HOSTNAME=agent-one-test-host')
   })
 
   // ──────────────────────────────────────────────────────────────────

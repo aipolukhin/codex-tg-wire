@@ -63,7 +63,7 @@ export type { TmuxExec, TmuxExecResult }
  *   backward compatibility ONLY — any caller still wired to it would
  *   otherwise re-introduce the fail-OPEN regression HIGH #9 (codex
  *   review 2026-05-27) eliminated: pre-fix this function returned
- *   `true` for chats absent from `policy.chats`, leaking warchief
+ *   `true` for chats absent from `policy.chats`, leaking operator
  *   pane content into misconfigured public groups. Re-implemented as
  *   a thin shim around the fail-CLOSED primitive so legacy imports
  *   get the correct semantics automatically (FIX-C bug #4, codex
@@ -85,7 +85,7 @@ export interface TmuxMirrorOptions {
   api: TelegramApi
   log: Logger
   chatId: string
-  // tmux target spec, e.g. `channel-thrall:0.0` (session:window.pane).
+  // tmux target spec, e.g. `channel-<agent>:0.0` (session:window.pane).
   paneTarget: string
   // Optional tmux socket name (`tmux -L <name>`). Empty/omitted = default
   // socket. Channel units on a dedicated socket (boot-race isolation)
@@ -117,7 +117,7 @@ export interface TmuxMirrorOptions {
   hideSegments?: ReadonlyArray<SegmentType>
   // Optional: anchor mode for the mirror (see `RenderMode`). Default
   // `latest_inbound_only` — show only the activity that came AFTER the
-  // warchief's last inbound message. Use `full_pane` for the legacy
+  // operator's last inbound message. Use `full_pane` for the legacy
   // whole-pane mirror (debugging or wide-terminal screenshots).
   mode?: RenderMode
   // Optional: cap on the number of lines surfaced into the rendered
@@ -133,8 +133,8 @@ export interface TmuxMirrorOptions {
   //
   // Migrated from the boolean `enabled` option (codex review
   // 2026-05-27, HIGH #9): a construction-time boolean computed from a
-  // global `shouldEnableMirror(warchiefChatId, policy)` would leak the
-  // warchief's mirror permission across the wrong chat instance, and
+  // global `shouldEnableMirror(operatorChatId, policy)` would leak the
+  // operator's mirror permission across the wrong chat instance, and
   // would not react if the chat-id field of TmuxMirror diverged from
   // the chat used to compute `enabled`.
   policy?: MultichatPolicy | null
@@ -159,7 +159,7 @@ const HTML_OPTS = { parse_mode: 'HTML' as const }
 
 // Debounce window for bump(). A burst of inbound messages within this
 // window collapses to a single delete+resend, avoiding both Telegram
-// rate-limit pressure and visible flicker for the warchief.
+// rate-limit pressure and visible flicker for the operator.
 const BUMP_DEBOUNCE_MS = 1500
 // Max time bump() will wait for a concurrent interval poll to release
 // the inFlight slot before kicking its own poll anyway. 2s is well
@@ -203,7 +203,7 @@ function hash(text: string): string {
 // above as `defaultTmuxExec`.
 
 // Render the body. Wraps content in a `<pre>` block and enforces the body
-// cap by trimming from the TOP (oldest lines) — the warchief almost always
+// cap by trimming from the TOP (oldest lines) — the operator almost always
 // cares about the most recent output. No header: the mirror opens as just
 // the terminal window. An error, when present, surfaces as a single italic
 // line above the pane so failures stay visible.
@@ -322,7 +322,7 @@ export class TmuxMirror {
     // read the raw pane layout) and BEFORE redaction/rendering, so no
     // emoji-presentation glyph survives into the Telegram message.
     filtered = sanitizeTerminalGlyphs(filtered)
-    // Line cap runs AFTER the segment filter so the warchief's iPhone
+    // Line cap runs AFTER the segment filter so the operator's iPhone
     // sees a tidy ~14-line tail of the post-filter content, not a
     // 14-line slice of raw tmux output that includes hidden segments.
     // `capLines(_, 0)` is a no-op — keeps the existing 4096-char body
@@ -409,7 +409,7 @@ export class TmuxMirror {
 
   // Drop the current rolling message and immediately re-send a fresh
   // one so the mirror is anchored at the bottom of the chat again.
-  // Triggered by Telegram-side events (e.g. an incoming warchief
+  // Triggered by Telegram-side events (e.g. an incoming operator
   // message scrolled the mirror up the conversation). The method is
   // idempotent on a disabled or empty mirror — both states are no-ops.
   //
@@ -483,7 +483,7 @@ export class TmuxMirror {
   // resets lastError, AND flips `enabled` back to false so the
   // caller's subsequent start() can re-arm the polling loop.
   // Idempotent on a healthy mirror (no-op when not disabled). Wire
-  // `/mirror on` to call this before start() so the warchief doesn't
+  // `/mirror on` to call this before start() so the operator doesn't
   // have to restart the plugin to recover from a 403/parse error
   // (MED-A #2).
   //
@@ -506,7 +506,7 @@ export class TmuxMirror {
     // FIX-C bug #3 (codex status #3) — stop() must always be cleanup,
     // never a no-op gated by policy.
     //
-    // Pre-fix: if the chat was REVOKED from policy mid-life (warchief
+    // Pre-fix: if the chat was REVOKED from policy mid-life (operator
     // edits policy.yaml while the mirror is running), the early-return
     // gate fired and stop() exited without disarming the interval
     // timer or attempting to delete the rolling message. The interval

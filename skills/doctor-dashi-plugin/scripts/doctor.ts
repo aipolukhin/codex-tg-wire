@@ -35,7 +35,7 @@ export type OS = 'linux' | 'macos' | 'other'
 
 /** Required floors. Below these, migration is unsupported. */
 export const MIN_CLAUDE = [2, 1, 0] as const
-// 1.3.9 is the lowest Bun verified in production (Thrall VPS fleet: live
+// 1.3.9 is the lowest Bun verified in production (ExampleAgent VPS fleet: live
 // channel + 1266 plugin tests green). The previous 1.3.14 floor was the
 // authoring machine's version, not a real requirement, and failed working
 // hosts for no reason.
@@ -395,8 +395,8 @@ interface SettingsPermShape {
  * Permission gate (2026-06-09, hardened 2026-06-10) — the interactive
  * Allow/Deny confirm hook for a bypassPermissions DM session. Under
  * --permission-mode bypassPermissions the native terminal prompt is suppressed,
- * so the gate is the SOLE confirmation path that reaches the warchief: a bypass
- * session without it silently renders confirms in an unwatched pane (the Silvana
+ * so the gate is the SOLE confirmation path that reaches the operator: a bypass
+ * session without it silently renders confirms in an unwatched pane (the ExampleAgent
  * incident). The feature is therefore only "optional" when the session is NOT a
  * bypass session and the gate is not configured on. When it IS registered we
  * verify:
@@ -430,7 +430,7 @@ export function checkPermissionGate(
     // genuinely off and SKIP is correct (don't over-fail an unreadable host).
     if (unitBypass === true || gateEnabled === true) {
       const cause = unitBypass === true
-        ? 'the unit runs --permission-mode bypassPermissions (native prompts are suppressed) but no gate hook is registered — confirms never reach the warchief'
+        ? 'the unit runs --permission-mode bypassPermissions (native prompts are suppressed) but no gate hook is registered — confirms never reach the operator'
         : 'permission_gate.enabled=true in the state config but no gate PreToolUse hook is registered — the configured gate never fires'
       return [{
         id: 'permission-gate',
@@ -589,7 +589,7 @@ export interface ProbeCode {
  * The gate is the sole confirm path under bypassPermissions, so a dead webhook
  * means every confirm silently fails closed. We MUST verify the endpoint is up
  * WITHOUT ever exercising the real permission route — POSTing
- * /hooks/permission/request would card the warchief. Two layers:
+ * /hooks/permission/request would card the operator. Two layers:
  *   (a) the parsed listener table — gate required but nothing on the port = FAIL;
  *   (b) GET /health (unauthenticated, 200, no side effects) via an injected
  *       probe so the check is pure-unit-testable.
@@ -805,7 +805,7 @@ export function resolveSettingsPath(
  * The effective plugin dir to inspect. Running the doctor from the repo root
  * (cwd ≠ the plugin/ the live session runs in) made settings resolve to
  * user-level → a FALSE gate FAIL (2026-06-10 self-FP, found running the new
- * permission-gate checks on Thrall). When autodetect matched a systemd unit
+ * permission-gate checks on ExampleAgent). When autodetect matched a systemd unit
  * whose WorkingDirectory IS a real plugin checkout (has a .claude/), trust the
  * unit: that is the dir the live session actually runs from, so its
  * .claude/settings.json is the one that fires. An explicit --plugin-dir always
@@ -1052,7 +1052,7 @@ export function checkPermissionPolicy(policyText: string | null, policyPath: str
   const { rules: overrides, opaque } = extractConfirmOverrides(policyText)
   const dangerous = overrides.filter((o) => DANGEROUS_OVERRIDE_RULES.some((d) => o === d || o === d.trim()))
   if (dangerous.length > 0) {
-    // WARN, not FAIL (warchief ultra-autonomy order 2026-06-10): sudo / rm -rf
+    // WARN, not FAIL (operator ultra-autonomy order 2026-06-10): sudo / rm -rf
     // are BUILTIN_CONFIRM rules (overridable by design), not hard-deny — lifting
     // them is a legitimate, deliberate owner choice. The genuinely catastrophic
     // forms (rm -rf /, fork bomb, dd-to-disk) and secret reads stay hard-denied
@@ -1357,7 +1357,7 @@ function readFileSafe(p: string): string | null {
  * `probe`): it does a `fetch` with a 2s AbortController and prints only the
  * numeric status code. Returns null on any error / timeout / non-bun host.
  * The one-liner only ever issues a GET to /health — it never touches the real
- * /hooks/permission/request route, so probing cannot card the warchief.
+ * /hooks/permission/request route, so probing cannot card the operator.
  */
 function healthHttpProbe(url: string): ProbeCode | null {
   // Only loopback /health is ever probed — refuse anything else as defence in
@@ -1631,7 +1631,7 @@ export function checkFleet(agents: FleetAgent[], sharedSettingsRaw: string | nul
     out.push({ id: 'fleet-hook-ports', title: 'Each agent\'s hooks point at its own port', status: 'pass', detail: 'no foreign-port hooks' })
   }
 
-  // Fleet-wide gate invariant (2026-06-10, the Silvana incident generalised):
+  // Fleet-wide gate invariant (2026-06-10, the ExampleAgent incident generalised):
   // EVERY bypassPermissions agent must have the gate hook registered AND
   // permission_gate.enabled=true. A bypass agent without it confirms into an
   // unwatched pane (incident) or fails closed to DENY (config off). Non-bypass
@@ -2118,7 +2118,7 @@ function gatherChecks(opts: Options): Check[] {
   // Permission endpoint liveness (gap 5): the gate is the sole confirm path
   // under bypassPermissions, so a dead webhook fails every confirm closed. SAFE
   // probe only — GET /health (unauthenticated, no side effects); NEVER POST the
-  // real /hooks/permission/request route (it would card the warchief).
+  // real /hooks/permission/request route (it would card the operator).
   const gateRequired = unitBypass === true || gateEnabled === true
   if (gateRequired) {
     checks.push(checkPermissionEndpoint(true, webhookPort, parsedListeners, healthHttpProbe))
@@ -2188,7 +2188,7 @@ function gatherChecks(opts: Options): Check[] {
 
   // live session state (crash loop / auth / welcome hang / listening)
   if (opts.tmuxSession) {
-    // Fleet convention since the Arthas migration: channel units run their
+    // Fleet convention since the ExamplePeer migration: channel units run their
     // tmux session on a DEDICATED socket named after the session
     // (`tmux -L channel-<agent>`), so two Type=forking/launchd units never
     // race on the default socket and env never bleeds between agents. The
@@ -2198,7 +2198,7 @@ function gatherChecks(opts: Options): Check[] {
     let cap = probe('tmux', ['capture-pane', '-t', opts.tmuxSession, '-p', '-S', '-200'])
     if (cap.code !== 0) {
       // Prefer the REAL socket parsed from the matched unit (socket name and
-      // session name can differ — `-L channel-arthas … -s main` gave a false
+      // session name can differ — `-L channel-agent-two … -s main` gave a false
       // "session not found" when we only retried the convention socket).
       const socketNames = [...new Set([unitAgent?.sockets[0], opts.tmuxSession].filter((s): s is string => !!s))]
       for (const sock of socketNames) {

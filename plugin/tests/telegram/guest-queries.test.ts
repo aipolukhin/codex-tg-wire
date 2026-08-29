@@ -23,7 +23,7 @@ function makeRegistry(ttlMs = 15 * 60 * 1000): {
 
 const ENTRY = {
   guestQueryId: 'q1',
-  callerUserId: '164795011',
+  callerUserId: '123456789',
   callerChatId: '-100123',
   messageText: 'что это за ошибка?',
 }
@@ -36,7 +36,7 @@ describe('GuestQueryRegistry', () => {
     const first = registry.claim('q1')
     expect(first.kind).toBe('ok')
     if (first.kind === 'ok') {
-      expect(first.entry.callerUserId).toBe('164795011')
+      expect(first.entry.callerUserId).toBe('123456789')
       expect(first.entry.messageText).toBe('что это за ошибка?')
     }
 
@@ -212,7 +212,7 @@ describe('GuestQueryRegistry', () => {
     test('entry with unknown origin (callerChatId undefined) accepts any chat', () => {
       const { registry } = makeRegistry()
       // Register WITHOUT callerChatId → entry.callerChatId is undefined.
-      registry.register({ guestQueryId: 'q-noorigin', callerUserId: '164795011', messageText: 'q' })
+      registry.register({ guestQueryId: 'q-noorigin', callerUserId: '123456789', messageText: 'q' })
       expect(registry.hasActiveEntry('q-noorigin', '-100123')).toBe(true)
       expect(registry.hasActiveEntry('q-noorigin', '-999')).toBe(true)
     })

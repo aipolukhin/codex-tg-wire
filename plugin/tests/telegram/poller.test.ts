@@ -20,11 +20,20 @@ let config: AppConfig
 
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), 'dashi-channel-poller-'))
-  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir }
+  const env = {
+    TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
+    TELEGRAM_STATE_DIR: stateDir,
+    TELEGRAM_EXPECTED_BOT_ID: '987654321',
+    TELEGRAM_ALLOWED_USER_IDS: '123456789',
+    TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
+  }
   config = loadConfig(env)
   paths = getStatePaths(config, {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+    TELEGRAM_EXPECTED_BOT_ID: 987654321,
+    TELEGRAM_ALLOWED_USER_IDS: '123456789',
+    TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   })
   ensureStateDirs(paths)
 })
@@ -61,8 +70,8 @@ function makeUpdate(id: number, text = 'hello'): Update {
     message: {
       message_id: id,
       date: Math.floor(Date.now() / 1000),
-      chat: { id: 164795011, type: 'private', first_name: 'D' },
-      from: { id: 164795011, is_bot: false, first_name: 'D' },
+      chat: { id: 123456789, type: 'private', first_name: 'D' },
+      from: { id: 123456789, is_bot: false, first_name: 'D' },
       text,
     },
   } as unknown as Update

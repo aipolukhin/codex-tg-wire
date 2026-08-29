@@ -16,7 +16,7 @@ from typing import Iterable, TextIO
 
 
 CANARY_AGENT = "canary"
-CANARY_SESSION = "orgrimmar-canary"
+CANARY_SESSION = "dashi-canary"
 CANARY_CHANNEL = "dashi-telegram-canary"
 LIVE_START_ENABLED = False
 

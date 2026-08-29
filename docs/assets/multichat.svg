@@ -39,12 +39,12 @@
         font-family="ui-monospace,'JetBrains Mono','SF Mono',monospace"
         font-size="9" fill="#8b949e">chat_id dispatch</text>
 
-  <!-- Arrow: router -> host session (terracotta, warchief DM) -->
+  <!-- Arrow: router -> host session (terracotta, operator DM) -->
   <line x1="412" y1="168" x2="245" y2="258"
         stroke="#d97757" stroke-width="1.6" marker-end="url(#arrow-terra-mc)"/>
   <text x="305" y="222" text-anchor="middle"
         font-family="ui-monospace,'JetBrains Mono','SF Mono',monospace"
-        font-size="10" fill="#d97757">warchief DM</text>
+        font-size="10" fill="#d97757">operator DM</text>
 
   <!-- Arrow: router -> per-chat A (cool-blue) -->
   <line x1="500" y1="192" x2="500" y2="258"
@@ -61,7 +61,7 @@
         font-size="10" fill="#58a6ff">group B</text>
 
   <!-- SESSION NODES row -->
-  <!-- host session / channel-thrall (terracotta border = private) -->
+  <!-- host session / channel-agent-one (terracotta border = private) -->
   <rect x="60" y="260" width="240" height="72" rx="12"
         fill="#11161d" stroke="#d97757" stroke-width="1.5"/>
   <text x="180" y="288" text-anchor="middle"
@@ -69,7 +69,7 @@
         font-size="12" font-weight="600" fill="#e6edf3">host session</text>
   <text x="180" y="306" text-anchor="middle"
         font-family="ui-monospace,'JetBrains Mono','SF Mono',monospace"
-        font-size="10" fill="#8b949e">channel-thrall</text>
+        font-size="10" fill="#8b949e">channel-agent-one</text>
   <text x="180" y="322" text-anchor="middle"
         font-family="ui-monospace,'JetBrains Mono','SF Mono',monospace"
         font-size="9" fill="#d97757">private</text>

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-12 типовых проблем — все взяты из реальных инцидентов. Каждая: **симптом** → **корень** → **фикс** → **как не повторить**.
+12 типовых проблем. Каждая: **симптом** → **корень** → **фикс** → **как не повторить**.
 
 > **Прочтите перед использованием.** Документ разделён на две секции:
 > - **Section A — Current (Bun plugin) — problems** — актуальные проблемы текущей версии плагина на Bun + TypeScript. Применимо ко всем установкам.
@@ -193,7 +193,7 @@ Telegram pending updates = 0 (плагин их забирает), tmux пока
 
 `TELEGRAM_ALLOWED_USER_IDS` и/или `TELEGRAM_ALLOWED_CHAT_IDS` в `channel.env` не содержит ваш Telegram user ID. Плагин получает update, проверяет gate — и тихо дропает (это by-design, защита от спама / попадания в чужие чаты).
 
-Default allowlist в коде = `[<your-telegram-user-id>]` (зашитый user ID разработчика плагина — должен быть переопределён через env под ваш ID), он применяется только если в env ничего не указано.
+Оба allowlist обязательны: встроенных user/chat ID в плагине нет. Если `TELEGRAM_ALLOWED_USER_IDS` или `TELEGRAM_ALLOWED_CHAT_IDS` не заданы, конфигурация отклоняется при старте — это fail-closed поведение.
 
 ### Фикс
 
@@ -256,7 +256,7 @@ sudo -u <service-user> tmux attach -t channel-<agent>
 # 4. Detach: Ctrl-B, D
 ```
 
-После /login claude подхватит новые токены, сохранит в `~/.openclaw/` (или `~/.claude/` — зависит от версии CLI), при следующем prompt уже ответит.
+После /login claude подхватит новые токены, сохранит в `~/.agent-state/` (или `~/.claude/` — зависит от версии CLI), при следующем prompt уже ответит.
 
 ### Как не повторить
 
@@ -285,38 +285,17 @@ tmux capture-pane -t channel-<agent> -p -S -50 | grep -i 'login\|401\|unauthoriz
 no server running on /tmp/tmux-1000/default
 ```
 
-Журнал:
-```
-May 20 00:30:32 thrall sh[1608429]: no server running on /tmp/tmux-1000/default
-May 20 00:30:55 thrall sh[1608832]: no server running on /tmp/tmux-1000/default
-May 20 00:31:19 thrall sh[1612639]: no server running on /tmp/tmux-1000/default
-...
-```
+В журнале повторяется `no server running on /tmp/tmux-<uid>/default`.
 
 ### Корень
 
-**Агент через `sudo` удалил каталог со своим Claude OAuth state** (типично: `~/.openclaw/` или `~/.claude/`).
-
-Реальный инцидент Orgrimmar/Thrall, 2026-05-20 00:24:44 UTC. Хронология из journalctl:
-
-```
-00:24:33  sudo du -sh /home/openclaw/.openclaw/
-00:24:33  sudo find /home/openclaw/.openclaw/ -not -user openclaw -type d
-00:24:44  sudo rm -rf /home/openclaw/.openclaw    ← АГЕНТ САМ
-```
-
-Контекст: агент выполнял `audit batrak before removal` (чистка legacy user). Нашёл в `~/.openclaw/` директории не-openclaw-owned (нормально — некоторые subdirs root-owned после init процессов). Решил, что это «orphan», снёс всю папку — вместе со своим OAuth.
-
-Что было в `.openclaw/`:
-- Claude CLI OAuth credentials (access + refresh tokens)
-- `.openclaw/.secrets/` (restic env, DO Spaces credentials)
-- Прочие toolings configs
+**Процесс с широкими правами удалил каталог Claude OAuth state** (обычно `~/.claude/`) вместе с credentials и локальными настройками.
 
 После удаления при следующем рестарте claude процесс не находит auth state → выходит → tmux single-window закрывается → tmux server останавливается (последняя session) → systemd видит «exited 0» → рестартует через 15s → loop.
 
 ### Фикс
 
-OAuth восстановить только через интерактивный /login. Файлы из `.openclaw/.secrets/` восстанавливать из бэкапа (DO Spaces restic snapshot, 1Password, итд).
+OAuth восстановить только через интерактивный `/login`. Другие секреты и настройки восстанавливайте из своего backup/secret manager.
 
 ```bash
 # 1. Stop crash loop
@@ -329,14 +308,10 @@ claude --dangerously-load-development-channels server:dashi-channel
 # в prompt: /login → открыть URL → авторизоваться → Enter
 # detach: Ctrl-B, D
 
-# 3. Возможно нужно восстановить .secrets/
-restic restore <latest-snapshot> --target /home/<service-user>/.openclaw/.secrets \
-  --include /home/<service-user>/.openclaw/.secrets
-
-# 4. Restart systemd
+# 3. Restart systemd
 sudo systemctl start channel-<agent>
 
-# 5. Smoke: написать боту, должен ответить
+# 4. Smoke: написать боту, должен ответить
 ```
 
 ### Как не повторить (КРИТИЧНО)
@@ -352,7 +327,6 @@ sudo systemctl start channel-<agent>
       "Bash(sudo rm -rf:*)",
       "Bash(rm -rf /)",
       "Bash(rm -rf ~)",
-      "Bash(rm -rf /home/*/.openclaw*)",
       "Bash(rm -rf /home/*/.claude*)",
       "Bash(sudo userdel:*)",
       "Bash(sudo chown -R:*)",
@@ -430,7 +404,7 @@ Systemd видит «exited 0» (потому что `tmux new-session -d` са�
    ```
 
 3. Скорее всего одно из:
-   - **OAuth error** (см. Проблема 7 + 8 — `.openclaw` удалён или token expired)
+   - **OAuth error** (см. Проблема 7 + 8 — `.agent-state` удалён или token expired)
    - **plugin path ENOENT** (`--dangerously-load-development-channels` ссылка битая)
    - **CLAUDE.md import error** (если используется @-include, файл не найден)
 
@@ -466,7 +440,7 @@ Watchdog хелсчек: cron, который раз в минуту прове�
     "deny": [
       "Bash(rm -rf /)",
       "Bash(rm -rf ~)",
-      "Bash(rm -rf /home/*/.openclaw*)",
+      "Bash(rm -rf /home/*/.agent-state*)",
       "Bash(rm -rf /home/*/.claude*)",
       "Bash(rm -rf /home/*/.secrets*)",
       "Bash(rm -rf /opt:*)",
@@ -501,18 +475,18 @@ Watchdog хелсчек: cron, который раз в минуту прове�
 {
   "permissions": {
     "deny": [
-      "Bash(rm * .openclaw*)",
+      "Bash(rm * .agent-state*)",
       "Bash(rm * .claude*)",
-      "Bash(mv .openclaw*)",
+      "Bash(mv .agent-state*)",
       "Bash(mv .claude*)",
-      "Bash(sudo rm * .openclaw*)",
+      "Bash(sudo rm * .agent-state*)",
       "Bash(sudo rm * .claude*)"
     ]
   }
 }
 ```
 
-И параллельно — file watcher / inotify alert на `~/.openclaw/` который пишет в Telegram канал если что-то удаляется.
+И параллельно — file watcher / inotify alert на `~/.agent-state/` который пишет в Telegram канал если что-то удаляется.
 
 ### Как не повторить
 
@@ -520,7 +494,7 @@ Watchdog хелсчек: cron, который раз в минуту прове�
 
 ```bash
 # Что должно блокироваться (агент должен ОТКАЗАТЬСЯ выполнить):
-"rm -rf ~/.openclaw"        # → blocked
+"rm -rf ~/.agent-state"        # → blocked
 "sudo rm -rf /home/me"      # → blocked
 "chmod 777 /etc"            # → blocked
 "git push --force"          # → blocked
@@ -607,7 +581,7 @@ Issue: https://github.com/qwwiwi/dashi-plugin-claude-code/issues (создайт
 
 1. При установке плагина для **любого autonomous-агента** — сразу копируйте [`examples/settings.local.json.example`](../examples/settings.local.json.example) в `~/.claude-lab/<agent>/.claude/settings.local.json`
 2. Не давайте агенту `--allowedTools '*'` без явного `--disallowedTools 'AskUserQuestion,ExitPlanMode'`
-3. В CLAUDE.md агента включите правило: «Для autonomous-режима всегда формулируй вопросы как обычный текст принцу через Telegram. Не используй `AskUserQuestion` — этот tool заблокирован»
+3. В CLAUDE.md агента включите правило: «Для autonomous-режима всегда формулируй вопросы как обычный текст владельцу через Telegram. Не используй `AskUserQuestion` — этот tool заблокирован»
 
 ### Manual-unstuck (если уже залип)
 
@@ -743,11 +717,11 @@ sudo systemctl start channel-<agent>
 
 ### Корень
 
-Claude Code читает **project settings** (`<project>/.claude/settings.json`) относительно **cwd сессии**, а не относительно workspace-каталога агента. Сервис плагина обычно стартует с `WorkingDirectory=<...>/jarvis-channel/plugin` — значит «project» для живой сессии это **репозиторий плагина**, а не `~/.claude-lab/<agent>/`.
+Claude Code читает **project settings** (`<project>/.claude/settings.json`) относительно **cwd сессии**, а не относительно workspace-каталога агента. Сервис плагина обычно стартует с `WorkingDirectory=<...>/dashi-plugin-claude-code/plugin` — значит «project» для живой сессии это **репозиторий плагина**, а не `~/.claude-lab/<agent>/`.
 
 Если хук зарегистрировать в `~/.claude-lab/<agent>/.claude/settings.json`, ошибочно считая это «project settings» сессии, — живая сессия этот файл **не читает**, и хук не выполняется. Диагностический признак: **ни один** Stop-хук из этого settings не отрабатывает — `core/hot/handoff.md` и `recent.md` не обновляются, heartbeat-файл пустой/старый.
 
-Реальный инцидент (2026-05-29): read-receipt хук положили в workspace-settings; сессия стартует из `jarvis-channel/plugin` → читает только глобальный `~/.claude/settings.json` → 👀 пропали полностью.
+Типовой сценарий: read-receipt хук положили в workspace-settings; сессия стартует из `dashi-plugin-claude-code/plugin` → читает только глобальный `~/.claude/settings.json` → 👀 пропадают полностью.
 
 ### Фикс
 

@@ -16,7 +16,7 @@ import type { AppConfig } from '../../src/config.js'
 import type { Logger } from '../../src/log.js'
 import type { TelegramApi } from '../../src/channel/tools.js'
 
-const CHAT = '164795011'
+const CHAT = '123456789'
 
 function silentLog(): Logger {
   return { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }

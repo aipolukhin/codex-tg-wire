@@ -35,15 +35,15 @@ const silentLog = createLogger('test', {
 
 function makeConfig(): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: false, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -55,7 +55,7 @@ function makeConfig(): AppConfig {
     },
     progress: { enabled: false, edit_throttle_ms: 3000, recent_buffer: 10, session_ttl_ms: 600000 },
     task_mirror: { enabled: false, edit_throttle_ms: 3000, session_ttl_ms: 600000, collapse_completed_after: 5 },
-    watcher: { enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
+    watcher: { agent_label: 'Агент', enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
     tmux_mirror: { enabled: false, pane_target: '', socket_name: '', poll_interval_ms: 5000, line_count: 50, hide_segments: ['boot_banner', 'inbound_warning', 'footer_hints', 'input_box'], mode: 'latest_inbound_only', max_lines: 14 },
     multichat: { enabled: false },
     ask_user_question: { enabled: false, timeout_ms: 300_000, max_preview_chars: 1000 },
@@ -173,7 +173,7 @@ function replyReq(args: Record<string, unknown>): CallToolRequest {
 function registered(registry: GuestQueryRegistry, id: string): void {
   registry.register({
     guestQueryId: id,
-    callerUserId: '164795011',
+    callerUserId: '123456789',
     callerChatId: '-100987',
     messageText: 'q',
   })
@@ -272,7 +272,7 @@ describe('download_attachment tool — guest path', () => {
     const registry = new GuestQueryRegistry(1, () => Date.now())
     registry.register({
       guestQueryId: 'gq-exp',
-      callerUserId: '164795011',
+      callerUserId: '123456789',
       callerChatId: '-100987',
       messageText: 'q',
     })
@@ -301,7 +301,7 @@ describe('download_attachment tool — guest path', () => {
   test('regression: no guest_query_id + non-allowlisted chat still throws (allowlist path intact)', async () => {
     const { api, downloadCalls } = makeDownloadApi()
     const deps = makeDeps({ api, registry: new GuestQueryRegistry() })
-    // -100987 is NOT in allowed_chat_ids ([164795011]) → assertAllowedChat refuses.
+    // -100987 is NOT in allowed_chat_ids ([123456789]) → assertAllowedChat refuses.
     const result = await callTool(
       downloadReq({ chat_id: '-100987', file_id: 'FILE1' }),
       deps,
@@ -314,9 +314,9 @@ describe('download_attachment tool — guest path', () => {
   test('no guest_query_id + allowlisted chat → normal download', async () => {
     const { api, downloadCalls } = makeDownloadApi()
     const deps = makeDeps({ api, registry: new GuestQueryRegistry() })
-    // 164795011 IS in allowed_chat_ids.
+    // 123456789 IS in allowed_chat_ids.
     const result = await callTool(
-      downloadReq({ chat_id: '164795011', file_id: 'FILE1' }),
+      downloadReq({ chat_id: '123456789', file_id: 'FILE1' }),
       deps,
     )
     expect(result.isError).toBeUndefined()

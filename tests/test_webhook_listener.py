@@ -6,7 +6,7 @@ Covers:
 - _build_prompt embeds the configured agent name + task_id.
 - _notify_owner is a no-op when WEBHOOK_OWNER_CHAT_ID is unset.
 - _notify_owner skips 3-way degraded payloads (the v6.3 silent-retry rule).
-- listener.py source has no Orgrimmar-internal identifiers (public-repo safety).
+- listener artifacts contain placeholders rather than deployment fingerprints.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -459,31 +460,12 @@ class HealthzMinimalTest(unittest.TestCase):
 
 
 class ListenerSourceSafetyTest(unittest.TestCase):
-    """Catch Orgrimmar-internal identifiers if they sneak into the listener
-    or its bundled examples. Mirrors the docs-zone check in
-    test_docs_public_safety.py but for the listener artifacts."""
+    """Listener examples must not pin a real user, Telegram ID or endpoint."""
 
-    FORBIDDEN = (
-        "164795011",
-        "/home/openclaw",
-        "sa-thrall",
-        "100.97.43.49",
-        "100.104.191.127",
-        "принц",
-        "warchief",
-        "вождь",
-        "jasonqwwen",
-        "TRALL_WORKSPACE",
-        # Bare org/agent identifiers. Defaults must be placeholders, not the
-        # operator's concrete agent name or gbrain host.
-        "orgrimmar",
-        "orgrimmar.xyz",
-        "thrall",
-        "channel-thrall",
-        "orgrimmar-silvana",
-        "orgrimmar-kaelthas",
-        "orgrimmar-garrosh",
-        "orgrimmar-arthas",
+    CONCRETE_HOME_RE = re.compile(r"/(?:Users|home)/(?!<)[A-Za-z0-9._-]+")
+    CONCRETE_OWNER_ID_RE = re.compile(r"WEBHOOK_OWNER_CHAT_ID\s*=\s*-?\d{6,}")
+    CONCRETE_SWARM_URL_RE = re.compile(
+        r"WEBHOOK_GBRAIN_SWARM_URL\s*=\s*https?://(?![^\s]*<your-domain>)[^\s#]+"
     )
 
     FILES = (
@@ -498,9 +480,13 @@ class ListenerSourceSafetyTest(unittest.TestCase):
         leaks: list[str] = []
         for path in self.FILES:
             text = path.read_text(encoding="utf-8")
-            for token in self.FORBIDDEN:
-                if token in text:
-                    leaks.append(f"{path.name}: contains forbidden token `{token}`")
+            for label, pattern in (
+                ("concrete home", self.CONCRETE_HOME_RE),
+                ("concrete owner id", self.CONCRETE_OWNER_ID_RE),
+                ("concrete swarm URL", self.CONCRETE_SWARM_URL_RE),
+            ):
+                for match in pattern.finditer(text):
+                    leaks.append(f"{path.name}: {label} `{match.group(0)}`")
         self.assertEqual(leaks, [], "\n".join(leaks))
 
 

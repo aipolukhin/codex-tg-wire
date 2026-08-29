@@ -2,13 +2,13 @@
 
 > Новый standalone-мост Telegram → **Codex App Server** развивается рядом с legacy Claude channel runtime. Инструкция personal alpha: [CODEX_BRIDGE.md](CODEX_BRIDGE.md), запуск — `bun run start:codex`.
 
-Custom Claude Code channel plugin для Orgrimmar Telegram agents. Замена Python `claude -p` gateway. Параллелен Anthropic Telegram plugin'у — наш fork с full Jarvis parity.
+Custom Claude Code channel plugin для Telegram-агентов. Замена Python `claude -p` gateway с multichat, durable delivery и безопасными controls.
 
 Этот README — plugin-scoped (как запускать из `plugin/`, env vars, hooks, multichat). Общий обзор архитектуры и сравнение с gateway — в корневом [../README.md](../README.md) и [../docs/01-what-is-this.md](../docs/01-what-is-this.md).
 
 ## Why this exists
 
-Миграция Silvana / Kaelthas / Garrosh / Arthas / Claude с Python gateway.py на Claude Code Channels до `2026-06-15` billing cutover. См. [../DEPRECATION-PATH.md](../DEPRECATION-PATH.md).
+Инструкция миграции с Python gateway.py на Claude Code Channels: [../DEPRECATION-PATH.md](../DEPRECATION-PATH.md).
 
 ## Status
 
@@ -46,11 +46,11 @@ bash plugin/scripts/install-hooks.sh \
 
 ## Read receipts (реакция 👀)
 
-**Зачем.** Реакция `👀` на входящем сообщении — это сигнал «агент это **прочитал**». Главная её ценность в том, что вождь видит, какие сообщения уже дошли до агента и обработаны, а какие ещё нет — особенно для голосовых, файлов и фото, где иначе непонятно, «увидел» ли их агент вообще. Поэтому момент постановки реакции критичен: `👀` должна означать «прочитано агентом», а не «бот принял апдейт».
+**Зачем.** Реакция `👀` на входящем сообщении — это сигнал «агент это **прочитал**». Главная её ценность в том, что владелец видит, какие сообщения уже дошли до агента и обработаны, а какие ещё нет — особенно для голосовых, файлов и фото, где иначе непонятно, «увидел» ли их агент вообще. Поэтому момент постановки реакции критичен: `👀` должна означать «прочитано агентом», а не «бот принял апдейт».
 
 **Как это работает (детерминистски).** Реакция ставится НЕ в момент приёма апдейта ботом. Если так делать, при занятой сессии сообщение стоит в очереди, а глаза уже горят — сигнал врёт. Вместо этого:
 
-1. Сообщение доходит до сессии Claude (через MCP-нотификацию в личке вождя или через per-chat сессию в мультичате) и попадает в её ход как блок `<channel source="telegram" ... chat_id="X" message_id="Y">`.
+1. Сообщение доходит до сессии Claude (через MCP-нотификацию в личке владельца или через per-chat сессию в мультичате) и попадает в её ход как блок `<channel source="telegram" ... chat_id="X" message_id="Y">`.
 2. По событию `Stop` (конец хода) хук `scripts/read-receipt-hook.ts` читает транскрипт сессии, находит telegram-блоки, которые ход реально прочитал, и POST'ит их в роут плагина `POST /hooks/react`.
 3. Роут (loopback + bearer + chat-allowlist) ставит `👀` единственным ботом.
 
@@ -82,11 +82,11 @@ bash plugin/scripts/install-hooks.sh \
 
 ## DM fallback reply (Stop hook → `/hooks/fallback-reply`)
 
-**Зачем (2026-06-03).** Личка вождя (главная/launcher-сессия) отвечает ему через MCP-тул `mcp__dashi-channel__reply` — именно этот вызов доходит до Telegram, транскрипт сессии — нет. Если ход завершился БЕЗ вызова `reply()`/`edit_message()`, вождь получает тишину, хотя финальный ответ хода есть. Этот fallback закрывает разрыв.
+**Зачем (2026-06-03).** Личка владельца (главная/launcher-сессия) отвечает ему через MCP-тул `mcp__dashi-channel__reply` — именно этот вызов доходит до Telegram, транскрипт сессии — нет. Если ход завершился БЕЗ вызова `reply()`/`edit_message()`, владелец получает тишину, хотя финальный ответ хода есть. Этот fallback закрывает разрыв.
 
 **Как работает.** По событию `Stop` хук `scripts/fallback-reply-hook.ts` читает транскрипт текущего хода (идёт с конца до последнего настоящего user-промпта — та же логика, что в `src/chats/hooks/stop-to-outbox.py`) и:
 
-1. Если ход вызвал `mcp__dashi-channel__reply` ИЛИ `mcp__dashi-channel__edit_message` — ответ уже дошёл до вождя → молчит (без дубля).
+1. Если ход вызвал `mcp__dashi-channel__reply` ИЛИ `mcp__dashi-channel__edit_message` — ответ уже дошёл до владельца → молчит (без дубля).
 2. Если у хода нет финального assistant-текста (чистый tool/thinking-ход) → молчит.
 3. Если ход не отвечал на Telegram-сообщение (в его user-промпте нет `<channel source="telegram" ... chat_id="...">`) → молчит. Этот же блок даёт `chat_id` назначения — не доверяя никакому chat_id из env.
 4. Иначе POST'ит `{chat_id, text}` в `POST /hooks/fallback-reply`. Роут (loopback + bearer + chat-allowlist) шлёт текст единственным ботом через `sendMessage`.
@@ -124,9 +124,14 @@ bash plugin/scripts/install-hooks.sh \
 | `TELEGRAM_BOT_TOKEN` | Bot API token. **Обязательно.** |
 | `TELEGRAM_STATE_DIR` | Корень runtime-state (логи, allowlist, pid, inbox). Default `~/.claude/channels/dashi-telegram-canary`. |
 | `TELEGRAM_CONFIG_FILE` | Путь до `config.json`. Default — внутри `TELEGRAM_STATE_DIR`. |
-| `TELEGRAM_EXPECTED_BOT_ID` | Защита от подмены: при несовпадении с `getMe()` плагин падает. |
-| `TELEGRAM_ALLOWED_USER_IDS` | CSV — кто имеет право писать боту (legacy DM-режим). |
+| `TELEGRAM_EXPECTED_BOT_ID` | Опциональная защита от подмены: при несовпадении с `getMe()` плагин падает. |
+| `TELEGRAM_ALLOWED_USER_IDS` | Обязательный CSV — кто имеет право писать боту. Встроенного ID нет. |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Обязательный CSV разрешённых DM/group chat ID. Встроенного chat ID нет. |
 | `TELEGRAM_WORKSPACE_ROOT` | Корень agent workspace (где CLAUDE.md). |
+| `TELEGRAM_WATCHER_AGENT_LABEL` | Опциональная публичная подпись агента в watcher auto-reply. Default `Агент`. |
+| `TELEGRAM_ASK_USER_QUESTION_CHAT_ID` | Явный DM/group chat для карточек AskUserQuestion; без него legacy DM выводится из allowlist. |
+| `TELEGRAM_TMUX_PANE_TARGET` | Явная tmux pane (`session:window.pane` или `%pane`) для mirror/reconciler; иначе используется `$TMUX_PANE`. |
+| `TELEGRAM_TASK_RECONCILER` | Opt-in (`1/true/yes/on`) для pane-based task reconciler. |
 | `TELEGRAM_WEBHOOK_HOST` / `TELEGRAM_WEBHOOK_PORT` / `TELEGRAM_WEBHOOK_TOKEN` | Bind для webhook-сервера хуков. |
 | `TELEGRAM_CHANNEL_ENV_FILE` | Путь до env-файла плагина — read-receipt хук (`Stop`) берёт из него `WEBHOOK_PORT/HOST/TOKEN`, чтобы ставить `👀` даже из per-chat сессии с очищенным env. См. секцию «Read receipts». |
 | `TELEGRAM_READ_RECEIPT_URL` | Явный URL роута `/hooks/react` (альтернатива выводу из `HOST`+`PORT`). |
@@ -149,7 +154,7 @@ bash plugin/scripts/install-hooks.sh \
   "memory": {
     "enabled": true,
     "workspace_path": "/Users/<you>/.claude-lab/<agent>/.claude",
-    "agent_label": "Silvana",
+    "agent_label": "MyAgent",
     "source_tag": "tg"
   }
 }
@@ -159,7 +164,7 @@ Env overrides: `TELEGRAM_MEMORY_ENABLED`, `TELEGRAM_MEMORY_WORKSPACE`, `TELEGRAM
 
 ## Multichat router (опционально, default OFF)
 
-`MultichatRouter` разводит входящие сообщения по нескольким per-chat tmux-сессиям `claude` (одна identity, разные чаты — DM вождя, рабочая группа, sandbox). По умолчанию выключен: legacy single-DM-режим продолжает работать без изменений.
+`MultichatRouter` разводит входящие сообщения по нескольким per-chat tmux-сессиям `claude` (одна identity, разные чаты — DM владельца, рабочая группа, sandbox). По умолчанию выключен: legacy single-DM-режим продолжает работать без изменений.
 
 Минимальный config:
 
@@ -191,14 +196,14 @@ chats:
     tmux_mirror: true                         # включить TmuxMirror в этом чате
     edit_message_progress: true               # rolling editMessageText для ProgressReporter
     delivery: streamed                        # streamed | final_only
-    persona_file: chats/personas/warchief.md  # per-chat persona overlay (относительно workspace_dir)
+    persona_file: chats/personas/operator.md  # per-chat persona overlay (относительно workspace_dir)
     handoff_file: core/hot/handoff.md
-    system_reminder: "Это личный DM вождя."
+    system_reminder: "Это личный DM владельца."
     idle_ttl_ms: 1800000                      # 30 мин до выгрузки tmux-сессии (default)
     max_queue_depth: 1                        # сколько inbound сообщений можно поставить в очередь (default 1)
 ```
 
-Per-chat persona-файл резолвится относительно `multichat.workspace_dir`. Оверлей накладывает SessionStart-хук `chats/hooks/session-start.sh`: он читает `{workspace}/chats/{chat_id}/persona.md` внутри tmux-сессии и инжектит поверх единой Thrall identity через `additionalContext`. Никаких отдельных CLAUDE.md per chat не нужно.
+Per-chat persona-файл резолвится относительно `multichat.workspace_dir`. Оверлей накладывает SessionStart-хук `chats/hooks/session-start.sh`: он читает `{workspace}/chats/{chat_id}/persona.md` внутри tmux-сессии и инжектит поверх общей identity через `additionalContext`. Никаких отдельных CLAUDE.md per chat не нужно.
 
 Логи: `{state_dir}/chats/<chat_id>/{inbox,outbox,processing,dead-letter}/*.json` — JSON-pipe между плагином и tmux-сессией. Outbox dead-letter содержит сообщения которые не удалось отправить в Telegram даже после retry — оператор разбирает руками.
 
@@ -214,7 +219,7 @@ Default-OFF — opt-in через config:
 {
   "tmux_mirror": {
     "enabled": true,
-    "pane_target": "channel-thrall:0.0",
+    "pane_target": "channel-agent-one:0.0",
     "poll_interval_ms": 5000,
     "line_count": 50,
     "mode": "latest_inbound_only",
@@ -230,7 +235,7 @@ Default-OFF — opt-in через config:
 - Текст пропускается через `redactSecrets` (тот же что в safe-telegram-api), затем HTML-escape, затем оборачивается в `<pre>`
 - Hash-based dedup: identical poll → нет API call
 - Edit «message to edit not found» (400 с подходящим description) → re-send. Прочие 4xx (403, 413 и т.д.) НЕ триггерят resend, чтобы не было storm
-- `mode: latest_inbound_only` (default с PR #21) обрезает всё до последнего `← <channel>: …` preview — видно только то, что агент делает после последнего сообщения вождя
+- `mode: latest_inbound_only` (default с PR #21) обрезает всё до последнего `← <channel>: …` preview — видно только то, что агент делает после последнего сообщения владельца
 - `max_lines` cap (default 14, диапазон 4..100 или 0=off) — топ обрезается с маркером `… +N lines`
 - `hide_segments` фильтрует boot banner, footer hints, input box и т.д.
 - SIGINT/SIGTERM → попытка `deleteMessage` (best-effort cleanup)
@@ -241,14 +246,9 @@ Keystroke-команды (PR #81/#83): `/keys` — инлайн-панель к�
 
 ## WARNING
 
-- НЕ использовать production bot токены здесь без явного OK принца. Production боты:
-  - Silvana (`@fridayhumanbot`)
-  - Kaelthas (`@kaelthasproducerbot`)
-  - Garrosh (`@garroshsalebot`)
-  - Arthas (own bot)
-  - Claude (own bot)
-- Тестовый бот: `@testmyfirsttmuxbot` (id `8507713167`).
-- Production cutover — отдельный план, RED operation, требует явное «да, на prod» от принца.
+- Не коммитьте bot token и не используйте production token в локальном smoke.
+- Для smoke создайте отдельного тестового бота и отдельный state directory.
+- Production cutover выполняйте отдельно, с backup и готовым rollback.
 
 ## Smoke test
 
@@ -260,7 +260,7 @@ Local pre-flight (детерминистично, без сети):
 
 Запускает `bun install`, `bun run typecheck`, `bun test tests/`. Exit non-zero на первой ошибке.
 
-Live smoke против `@testmyfirsttmuxbot` (15-row matrix, operator-driven): см. [`docs/canary-smoke.md`](docs/canary-smoke.md). Покрывает text, HTML chunking, reply anti-spoof, photo/document/voice/album, OOB (`/status`, `/help`, `/stop`, `/reset`, `/mirror`), permission relay (allow/deny), webhook путь. Включает rollback procedure на Python canary.
+Live smoke против `@example_test_bot` (15-row matrix, operator-driven): см. [`docs/canary-smoke.md`](docs/canary-smoke.md). Покрывает text, HTML chunking, reply anti-spoof, photo/document/voice/album, OOB (`/status`, `/help`, `/stop`, `/reset`, `/mirror`), permission relay (allow/deny), webhook путь. Включает rollback procedure на Python canary.
 
 End-to-end Progress Reporter (после установки хуков):
 
@@ -288,7 +288,7 @@ bash scripts/smoke-test-progress.sh --bot-id <expected_bot_id>
 
 ## Architecture (per-agent process model)
 
-Один plugin process = один Telegram бот = одна set of allowed chats. В legacy single-DM режиме — один workspace, один CLAUDE.md. В multichat-режиме — один workspace, одна Thrall identity, **N tmux-сессий** `claude` (по одной на чат) с per-chat persona overlay. State-dir изолирован через `TELEGRAM_STATE_DIR`. Все file-locking — внутри-процессное (`Mutex` per path), потому что single-writer invariant.
+Один plugin process = один Telegram бот = один набор allowed chats. В legacy single-DM режиме — один workspace, один CLAUDE.md. В multichat-режиме — один workspace, одна identity, **N tmux-сессий** `claude` (по одной на чат) с per-chat persona overlay. State-dir изолирован через `TELEGRAM_STATE_DIR`. Все file-locking — внутри-процессное (`Mutex` per path), потому что single-writer invariant.
 
 ## Attribution
 

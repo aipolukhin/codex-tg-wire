@@ -105,7 +105,7 @@ export interface TaskCreateEvent {
   readonly input: TaskCreateInput
   // Populated on PostToolUse when the harness has materialised the task.
   // Format: usually `Task #<n> created` — TaskMirror runs the same regex
-  // extract as the warchief's terminal renderer. We map ONLY the PostToolUse
+  // extract as the operator's terminal renderer. We map ONLY the PostToolUse
   // pass (see toTodoWriteEvent): a provisional PreToolUse create would race the
   // permission gate on the same event and, if rejected, leave a phantom task.
   readonly toolResult?: unknown

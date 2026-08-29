@@ -12,15 +12,15 @@ import type { AppConfig } from '../../src/config.js'
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -43,6 +43,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -62,18 +63,18 @@ function dmInput(senderId: string, chatId: string): GateInput {
 
 describe('gateTelegramMessage', () => {
   test('allows DM from configured user id', () => {
-    const decision = gateTelegramMessage(dmInput('164795011', '164795011'), makeConfig())
+    const decision = gateTelegramMessage(dmInput('123456789', '123456789'), makeConfig())
     expect(decision.kind).toBe('allow')
     if (decision.kind === 'allow') {
-      expect(decision.senderId).toBe('164795011')
-      expect(decision.chatId).toBe('164795011')
+      expect(decision.senderId).toBe('123456789')
+      expect(decision.chatId).toBe('123456789')
     }
   })
 
   test('drops DM from unknown user even when chat id is allowed', () => {
     // chatId is in allowed_chat_ids but sender is not in allowed_user_ids.
     // Gate must reject on sender first, never delivering for a chat-only match.
-    const decision = gateTelegramMessage(dmInput('999000111', '164795011'), makeConfig())
+    const decision = gateTelegramMessage(dmInput('999000111', '123456789'), makeConfig())
     expect(decision.kind).toBe('drop')
     if (decision.kind === 'drop') {
       expect(decision.reason).toBe('sender_not_allowed')
@@ -83,7 +84,7 @@ describe('gateTelegramMessage', () => {
   test('drops message with missing from field', () => {
     const input: GateInput = {
       chatType: 'private',
-      chatId: '164795011',
+      chatId: '123456789',
       senderId: undefined,
       isBot: undefined,
     }
@@ -96,7 +97,7 @@ describe('gateTelegramMessage', () => {
     const group: GateInput = {
       chatType: 'group',
       chatId: '-1001234567890',
-      senderId: '164795011',
+      senderId: '123456789',
       isBot: false,
     }
     const supergroup: GateInput = { ...group, chatType: 'supergroup' }
@@ -145,7 +146,7 @@ describe('gateTelegramMessage', () => {
 
 describe('assertAllowedChat', () => {
   test('outbound assertAllowedChat allows configured chat', () => {
-    expect(() => assertAllowedChat('164795011', makeConfig())).not.toThrow()
+    expect(() => assertAllowedChat('123456789', makeConfig())).not.toThrow()
   })
 
   test('outbound assertAllowedChat rejects non-allowlisted chat with descriptive error', () => {
@@ -154,8 +155,8 @@ describe('assertAllowedChat', () => {
   })
 
   test('accepts numeric chat ids configured as numbers', () => {
-    const config = makeConfig({ allowed_chat_ids: [164795011, '777'] })
-    expect(() => assertAllowedChat('164795011', config)).not.toThrow()
+    const config = makeConfig({ allowed_chat_ids: [123456789, '777'] })
+    expect(() => assertAllowedChat('123456789', config)).not.toThrow()
     expect(() => assertAllowedChat('777', config)).not.toThrow()
   })
 })

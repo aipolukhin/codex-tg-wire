@@ -244,7 +244,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
   test('format=html parses and round-trips', () => {
     const parsed = OutboxMessageSchema.parse({
       text: '<b>bold</b>',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-05-27T00:00:00Z',
       format: 'html',
     })
@@ -255,7 +255,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
   test('format=markdown parses', () => {
     const parsed = OutboxMessageSchema.parse({
       text: '*bold*',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-05-27T00:00:00Z',
       format: 'markdown',
     })
@@ -265,7 +265,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
   test('format=text parses', () => {
     const parsed = OutboxMessageSchema.parse({
       text: 'plain text',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-05-27T00:00:00Z',
       format: 'text',
     })
@@ -275,7 +275,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
   test('missing format → default html applied', () => {
     const parsed = OutboxMessageSchema.parse({
       text: 'no format key',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-05-27T00:00:00Z',
     })
     // Default keeps the regression fix safe: a writer that forgets
@@ -287,7 +287,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
   test('format=auto parses (2026-06-05 Stop-hook contract)', () => {
     const parsed = OutboxMessageSchema.parse({
       text: '**bold**',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-06-05T00:00:00Z',
       format: 'auto',
     })
@@ -297,7 +297,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
   test('format=rich (invalid enum) → ZodError', () => {
     const result = OutboxMessageSchema.safeParse({
       text: 'x',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-05-27T00:00:00Z',
       format: 'rich',
     })
@@ -311,7 +311,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
     // JSON.stringify drops the key) lands in the same default path.
     const parsed = OutboxMessageSchema.parse({
       text: 'x',
-      chat_id: '164795011',
+      chat_id: '123456789',
       timestamp: '2026-05-27T00:00:00Z',
       format: undefined,
     })
@@ -339,7 +339,7 @@ describe('OutboxMessageSchema (FIX-F)', () => {
 
 describe('deliverClaim format → parse_mode mapping (FIX-F)', () => {
   let fx: Fixture
-  const ownerChat = '164795011'
+  const ownerChat = '123456789'
 
   beforeEach(() => {
     fx = setupFixture()
@@ -577,7 +577,7 @@ describe('deliverClaim format → parse_mode mapping (FIX-F)', () => {
 
 describe('deliverClaim partial delivery (format=auto)', () => {
   let fx: Fixture
-  const ownerChat = '164795011'
+  const ownerChat = '123456789'
 
   beforeEach(() => {
     fx = setupFixture()
@@ -647,7 +647,7 @@ describe('deliverClaim partial delivery (format=auto)', () => {
 
 describe('deliverClaim combined reply_to + format (FIX-F)', () => {
   let fx: Fixture
-  const ownerChat = '164795011'
+  const ownerChat = '123456789'
 
   beforeEach(() => {
     fx = setupFixture()

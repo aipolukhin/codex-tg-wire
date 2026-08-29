@@ -89,7 +89,7 @@ Welcome-промты Claude Code (external imports + `--dangerously-load-develop
 - Если бюджет на отдельный VPS не оправдан
 - Mac mini как «домашний сервер» — типичный сценарий
 
-Оба варианта prod-ready. У одного автора могут спокойно сосуществовать несколько агентов на Mac mini + несколько на Linux VPS — пилот Orgrimmar именно так и устроен (Тралл/Артас на Ubuntu VPS, Сильвана/Кельтас/Гаррош/Клод на Mac mini).
+Оба варианта prod-ready. Несколько агентов могут одновременно работать на macOS и Linux, если каждому выделены отдельные bot token, state directory, workspace и Telegram allowlist.
 
 ---
 

@@ -5,7 +5,7 @@
 //   * tmux-mirror bump does not fire for a non-addressed group message
 //   * setMessageReaction never runs at bot-receive time at all
 //     (fix/eyes-on-read 2026-05-28): the 👀 read receipt moved to the
-//     Stop hook so it means "Thrall read it", not "the bot saw it".
+//     Stop hook so it means "ExampleAgent read it", not "the bot saw it".
 //     These tests now assert NO receive-time reaction for any sender —
 //     allowed or dropped. The receipt path is covered by
 //     tests/hooks/read-receipt-hook.test.ts + tests/webhook/react-route.test.ts.
@@ -44,15 +44,15 @@ const silentLog = createLogger('test', {
   stream: { write: () => true } as unknown as NodeJS.WritableStream,
 })
 
-const WARCHIEF_USER_ID = 164795011
+const OWNER_USER_ID = 123456789
 const ALLOWED_GROUP_CHAT_ID = -1003784643974
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [WARCHIEF_USER_ID],
-    allowed_chat_ids: [WARCHIEF_USER_ID],
+    allowed_user_ids: [OWNER_USER_ID],
+    allowed_chat_ids: [OWNER_USER_ID],
     status: {
       enabled: false,
       interval_ms: 700,
@@ -86,6 +86,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -132,7 +133,7 @@ function makePolicy(overrides: {
     tmux_mirror: true,
     edit_message_progress: true,
     delivery: 'streamed',
-    persona_file: 'thrall.md',
+    persona_file: 'agent-one.md',
     handoff_file: 'handoff.md',
     system_reminder: '',
     idle_ttl_ms: 1_800_000,
@@ -144,14 +145,14 @@ function makePolicy(overrides: {
     tmux_mirror: false,
     edit_message_progress: false,
     delivery: 'final_only',
-    persona_file: 'thrall.md',
+    persona_file: 'agent-one.md',
     handoff_file: 'handoff.md',
     system_reminder: '',
     idle_ttl_ms: 1_800_000,
     max_queue_depth: 1,
   }
   const defaultChats: Record<string, ChatPolicy> = {
-    [String(WARCHIEF_USER_ID)]: dmChatPolicy,
+    [String(OWNER_USER_ID)]: dmChatPolicy,
     [String(ALLOWED_GROUP_CHAT_ID)]: groupChatPolicy,
   }
   const chats = overrides.chats ?? defaultChats
@@ -159,10 +160,10 @@ function makePolicy(overrides: {
     version: 1,
     allowlist: {
       chats: overrides.allowlist_chats ?? Object.keys(chats),
-      users: overrides.allowlist_users ?? [String(WARCHIEF_USER_ID)],
+      users: overrides.allowlist_users ?? [String(OWNER_USER_ID)],
     },
     mention_allowlist:
-      overrides.mention_allowlist ?? [String(WARCHIEF_USER_ID)],
+      overrides.mention_allowlist ?? [String(OWNER_USER_ID)],
     chats,
   }
 }
@@ -212,7 +213,7 @@ function makeDeps(opts: MakeDepsOpts = {}): {
 } {
   const config = opts.config ?? makeConfig()
   const statePaths = makeStatePaths()
-  const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+  const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
   const tg = opts.telegramApi ?? makeTelegramApi().api
   const deps: HandlerDeps = {
     server: {
@@ -253,7 +254,7 @@ function makeGroupCtx(opts: {
         date: 1700000000,
         text: 'bot speaking',
         from: {
-          id: 8507713167,
+          id: 987654321,
           is_bot: true,
           username: botUsername,
         },
@@ -262,7 +263,7 @@ function makeGroupCtx(opts: {
   return {
     chat: { id: opts.chatId, type: 'supergroup' as const },
     from: { id: opts.fromId, is_bot: false, first_name: 'x' },
-    me: { id: 8507713167, username: botUsername },
+    me: { id: 987654321, username: botUsername },
     message: {
       message_id: 42,
       date: 1700000000,
@@ -279,7 +280,7 @@ function makeDmCtx(opts: { text: string; chatId: number; fromId: number; botUser
   return {
     chat: { id: opts.chatId, type: 'private' as const },
     from: { id: opts.fromId, is_bot: false, first_name: 'x' },
-    me: { id: 8507713167, username: botUsername },
+    me: { id: 987654321, username: botUsername },
     message: {
       message_id: 42,
       date: 1700000000,
@@ -321,7 +322,7 @@ describe('handleInboundText — addressing gate on side effects (Bug #3)', () =>
     const ctx = makeGroupCtx({
       text: 'just chatting in the group',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: false,
     })
     await handleInboundText(ctx, deps)
@@ -358,7 +359,7 @@ describe('handleInboundText — addressing gate on side effects (Bug #3)', () =>
     const ctx = makeGroupCtx({
       text: 'привет',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: true,
     })
     await handleInboundText(ctx, deps)
@@ -385,7 +386,7 @@ describe('handleInboundText — addressing gate on side effects (Bug #3)', () =>
     const ctx = makeGroupCtx({
       text: 'plain group chat',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: false,
     })
     await handleInboundText(ctx, deps)
@@ -409,8 +410,8 @@ describe('handleInboundText — addressing gate on side effects (Bug #3)', () =>
     const { deps, statePaths } = makeDeps({ tmuxMirror })
     const ctx = makeDmCtx({
       text: 'hi',
-      chatId: WARCHIEF_USER_ID,
-      fromId: WARCHIEF_USER_ID,
+      chatId: OWNER_USER_ID,
+      fromId: OWNER_USER_ID,
     })
     await handleInboundText(ctx, deps)
     await new Promise((r) => setTimeout(r, 0))
@@ -430,7 +431,7 @@ describe('handleInboundText — no receive-time reaction (fix/eyes-on-read)', ()
     // Sender 99999 is not in allowed_user_ids.
     const ctx = makeDmCtx({
       text: 'random hello',
-      chatId: WARCHIEF_USER_ID, // chat id is allowed, but…
+      chatId: OWNER_USER_ID, // chat id is allowed, but…
       fromId: 99999, // …sender is not.
     })
     await handleInboundText(ctx, deps)
@@ -440,7 +441,7 @@ describe('handleInboundText — no receive-time reaction (fix/eyes-on-read)', ()
   })
 
   // fix/eyes-on-read (2026-05-28): the 👀 receipt no longer fires at
-  // bot-receive time — it moved to the Stop hook so it means "Thrall read
+  // bot-receive time — it moved to the Stop hook so it means "ExampleAgent read
   // it", not "the bot saw it". An allowed DM message must therefore produce
   // NO reaction inside handleInboundText.
   test('allowed DM sender gets NO receive-time reaction (moved to Stop hook)', async () => {
@@ -448,8 +449,8 @@ describe('handleInboundText — no receive-time reaction (fix/eyes-on-read)', ()
     const { deps, statePaths } = makeDeps({ telegramApi: tg.api })
     const ctx = makeDmCtx({
       text: 'hi',
-      chatId: WARCHIEF_USER_ID,
-      fromId: WARCHIEF_USER_ID,
+      chatId: OWNER_USER_ID,
+      fromId: OWNER_USER_ID,
     })
     await handleInboundText(ctx, deps)
     expect(tg.reactions.length).toBe(0)
@@ -463,7 +464,7 @@ describe('handleInboundText — no receive-time reaction (fix/eyes-on-read)', ()
     const ctx = makeGroupCtx({
       text: 'привет',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: true,
     })
     await handleInboundText(ctx, deps)
@@ -478,7 +479,7 @@ describe('handleInboundText — no receive-time reaction (fix/eyes-on-read)', ()
     const ctx = makeGroupCtx({
       text: 'just talking',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: false,
     })
     await handleInboundText(ctx, deps)
@@ -491,7 +492,7 @@ describe('handleInboundText — no receive-time reaction (fix/eyes-on-read)', ()
     // in the chat-allowlist are silently dropped.
     const policy = makePolicy({
       mention_allowlist: [],
-      allowlist_users: [String(WARCHIEF_USER_ID), '99999'],
+      allowlist_users: [String(OWNER_USER_ID), '99999'],
     })
     const tg = makeTelegramApi()
     const { deps, statePaths } = makeDeps({ policy, telegramApi: tg.api })
@@ -525,12 +526,12 @@ describe('FIX-D M1 — text handler policy/router XOR check', () => {
       },
     }
     const policy = makePolicy({
-      // Sender 164795011 is in users; group chat allowed.
+      // Sender 123456789 is in users; group chat allowed.
     })
     const tg = makeTelegramApi()
     // Build deps with policy but NO router — the bug we're defending.
     const statePaths = makeStatePaths()
-    const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+    const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
     const deps: HandlerDeps = {
       server: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -553,7 +554,7 @@ describe('FIX-D M1 — text handler policy/router XOR check', () => {
     const ctx = makeGroupCtx({
       text: 'help me',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: true,
     })
     await handleInboundText(ctx, deps)
@@ -573,7 +574,7 @@ describe('FIX-D M1 — text handler policy/router XOR check', () => {
     const policy = makePolicy()
     const tg = makeTelegramApi()
     const statePaths = makeStatePaths()
-    const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+    const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
     const deps: HandlerDeps = {
       server: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -595,8 +596,8 @@ describe('FIX-D M1 — text handler policy/router XOR check', () => {
 
     const ctx = makeDmCtx({
       text: 'hi',
-      chatId: WARCHIEF_USER_ID,
-      fromId: WARCHIEF_USER_ID,
+      chatId: OWNER_USER_ID,
+      fromId: OWNER_USER_ID,
     })
     await handleInboundText(ctx, deps)
 
@@ -608,10 +609,10 @@ describe('FIX-D M1 — text handler policy/router XOR check', () => {
 
 // ─────────────────────────────────────────────────────────────────────
 // Hybrid routing (2026-05-28): even with router AND policy wired, a
-// private DM lands in the master (channel-thrall) session via legacy
+// private DM lands in the master (channel-agent-one) session via legacy
 // notify — NOT a per-chat tmux session. Only group/supergroup chats are
-// dispatched to the router. This is the warchief's explicit topology:
-// "main Telegram → channel-thrall, group chats → multichat".
+// dispatched to the router. This is the operator's explicit topology:
+// "main Telegram → channel-agent-one, group chats → multichat".
 // ─────────────────────────────────────────────────────────────────────
 
 describe('hybrid routing — DM to master, groups to per-chat (router wired)', () => {
@@ -631,7 +632,7 @@ describe('hybrid routing — DM to master, groups to per-chat (router wired)', (
     notifyCalls: Array<{ method: string; params: unknown }>,
   ): { deps: HandlerDeps; statePaths: StatePaths } {
     const statePaths = makeStatePaths()
-    const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+    const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
     const deps: HandlerDeps = {
       server: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -660,8 +661,8 @@ describe('hybrid routing — DM to master, groups to per-chat (router wired)', (
 
     const ctx = makeDmCtx({
       text: 'привет',
-      chatId: WARCHIEF_USER_ID,
-      fromId: WARCHIEF_USER_ID,
+      chatId: OWNER_USER_ID,
+      fromId: OWNER_USER_ID,
     })
     await handleInboundText(ctx, deps)
 
@@ -679,7 +680,7 @@ describe('hybrid routing — DM to master, groups to per-chat (router wired)', (
     const ctx = makeGroupCtx({
       text: 'эй',
       chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: WARCHIEF_USER_ID,
+      fromId: OWNER_USER_ID,
       mentionBot: true,
     })
     await handleInboundText(ctx, deps)

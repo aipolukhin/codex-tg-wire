@@ -38,7 +38,7 @@ function fakeApi(): {
 describe('registerOwnerScopedCommands', () => {
   test('clears default + all_private_chats, then registers per owner chat', async () => {
     const { api, deletes, sets } = fakeApi()
-    await registerOwnerScopedCommands(api, CMDS, [164795011], log)
+    await registerOwnerScopedCommands(api, CMDS, [123456789], log)
 
     // Two deleteMyCommands: default (no arg) + all_private_chats.
     expect(deletes.length).toBe(2)
@@ -47,7 +47,7 @@ describe('registerOwnerScopedCommands', () => {
 
     // One setMyCommands scoped to the owner chat.
     expect(sets.length).toBe(1)
-    expect(sets[0]!.scope).toEqual({ type: 'chat', chat_id: 164795011 })
+    expect(sets[0]!.scope).toEqual({ type: 'chat', chat_id: 123456789 })
     expect(sets[0]!.commands.map((c) => c.command)).toEqual(['help', 'status'])
   })
 
@@ -76,11 +76,11 @@ describe('registerOwnerScopedCommands', () => {
         return true
       },
     }
-    await registerOwnerScopedCommands(api, CMDS, [164795011], log)
+    await registerOwnerScopedCommands(api, CMDS, [123456789], log)
     // BOTH deletes were attempted (separate try/catch) despite the first throw.
     expect(deletes.length).toBe(2)
     expect(deletes[1]).toEqual({ scope: { type: 'all_private_chats' } })
-    expect(sets).toEqual([164795011])
+    expect(sets).toEqual([123456789])
   })
 
   test('a per-chat setMyCommands failure does not abort the rest', async () => {
@@ -109,7 +109,7 @@ describe('registerOwnerScopedCommands', () => {
         return true
       },
     }
-    await registerOwnerScopedCommands(api, CMDS, [164795011], log)
-    expect(sets).toEqual([164795011])
+    await registerOwnerScopedCommands(api, CMDS, [123456789], log)
+    expect(sets).toEqual([123456789])
   })
 })

@@ -38,7 +38,7 @@ import type {
   TelegramApi,
 } from '../../src/channel/tools.js'
 
-const OWNER = 164795011
+const OWNER = 123456789
 const CHAT = String(OWNER)
 
 function silentLog(): Logger {
@@ -82,7 +82,7 @@ function fakeTelegram(state: Sends): TelegramApi {
 
 function mkConfig(): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
     allowed_user_ids: [OWNER],
     allowed_chat_ids: [OWNER],

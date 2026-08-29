@@ -195,7 +195,7 @@ function modeLabel(permissionMode: string): string {
  * With a `work` view the card grows a mode line («режим: план» /
  * «выполнение», only when the permission mode is known) and a compact
  * «Задачи» section (renderStatusTasks) — the combined status pin the
- * warchief asked for on 2026-07-04: ONE pinned message = context + work.
+ * operator asked for on 2026-07-04: ONE pinned message = context + work.
  *
  * PURE — no I/O, no clock — so it is trivially unit-testable against fixed inputs.
  */
@@ -285,7 +285,7 @@ export interface ContextHudOptions {
   // Fallback context window (tokens) used when the session model is unknown or
   // absent — the model-unaware default (resolveContextWindowTokens).
   windowTokens: number
-  // Explicit operator override (config context_window_tokens / JARVIS_CONTEXT_WINDOW),
+  // Explicit operator override (config context_window_tokens / DASHI_CONTEXT_WINDOW),
   // or undefined when unset. When present it wins over per-model auto-detection
   // (resolveContextWindowForModel); when absent the model table drives the
   // window so a Fable-5 session reports its true 1M window. Optional so the many
@@ -422,7 +422,7 @@ export class ContextHud {
   //
   // Task snapshot handling: SessionStart fires for startup, resume, clear AND
   // compact. A compact keeps the SAME session id, so clearing the task list on
-  // every SessionStart would wipe the milestones the warchief is watching every
+  // every SessionStart would wipe the milestones the operator is watching every
   // time the context is auto-compacted. We therefore clear ONLY on a genuine
   // session change (new id) or an explicit `source === 'clear'`; a compact with
   // the same id preserves the snapshot.
@@ -717,7 +717,7 @@ export class ContextHud {
           if (!retired) {
             // BOTH legs failed — the old card may still be pinned somewhere.
             // Bail out and keep pointing at it: a stale position beats a
-            // second pinned card (the one-pin invariant is the warchief's
+            // second pinned card (the one-pin invariant is the operator's
             // hard requirement). The next bump retries the whole sequence.
             this.messageIds.set(chatId, old)
             return
@@ -1173,7 +1173,7 @@ export async function handleHudCallback(
   if (!result.ok) {
     // L10 (IT2-8): a SECOND answerCallbackQuery on the same query id is DROPPED by
     // Telegram, so the failure was invisible. Surface it VISIBLY with a fresh
-    // short message (empty keyboard) instead — the warchief must see that «Сжать»
+    // short message (empty keyboard) instead — the operator must see that «Сжать»
     // did not fire. Best-effort: a failed send must never throw out of the HUD.
     const notice = `🗜 <b>Сжать</b> — ${compactFailureToast(result.reason)}`
     try {

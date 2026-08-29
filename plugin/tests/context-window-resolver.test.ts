@@ -1,6 +1,6 @@
 // Tests for the model → context-window resolver (config.ts). Covers the family
 // table, the [1m] marker, the unknown/absent fallback, and the operator
-// override chain (config key + JARVIS_CONTEXT_WINDOW env), which must win over
+// override chain (config key + DASHI_CONTEXT_WINDOW env), which must win over
 // model auto-detection so a wrong table guess is always correctable.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
@@ -126,7 +126,7 @@ describe('resolveContextWindowForModel — override wins', () => {
 })
 
 describe('resolveContextWindowOverride — config + env chain', () => {
-  const KEY = 'JARVIS_CONTEXT_WINDOW'
+  const KEY = 'DASHI_CONTEXT_WINDOW'
   let saved: string | undefined
 
   beforeEach(() => {
@@ -164,7 +164,7 @@ describe('resolveContextWindowOverride — config + env chain', () => {
   })
 
   test('invalid config value (0) falls through to a valid env override', () => {
-    // config context_window_tokens: 0 must NOT suppress JARVIS_CONTEXT_WINDOW —
+    // config context_window_tokens: 0 must NOT suppress DASHI_CONTEXT_WINDOW —
     // an unusable config value falls through to the env check (codex MED).
     process.env[KEY] = '1000000'
     expect(resolveContextWindowOverride(cfg(0))).toBe(1_000_000)

@@ -54,6 +54,7 @@ const voiceConfig: AppConfig = {
     collapse_completed_after: 5,
   },
   watcher: {
+    agent_label: 'Агент',
     enabled: true,
     debounce_ms: 10_000,
     busy_threshold_ms: 30_000,
@@ -122,12 +123,12 @@ describe('renderMediaDescriptor', () => {
       mime: 'audio/ogg',
       size: 12345,
       durationSec: 5,
-      transcript: 'привет мой принц',
+      transcript: 'привет мой владелец',
       transcriptionStatus: 'ok',
     }
     const out = renderMediaDescriptor(md)
     expect(out).toBe(
-      '<media kind="voice" file_id="voiceF" mime="audio/ogg" size="12345" duration_sec="5" transcript="привет мой принц" transcription_status="ok" />',
+      '<media kind="voice" file_id="voiceF" mime="audio/ogg" size="12345" duration_sec="5" transcript="привет мой владелец" transcription_status="ok" />',
     )
   })
 
@@ -167,12 +168,12 @@ describe('renderMediaDescriptor', () => {
       kind: 'sticker',
       fileId: 'sF',
       emoji: '🔥',
-      setName: 'orgrimmar_pack',
+      setName: 'example_sticker_pack',
       size: 4096,
     }
     const out = renderMediaDescriptor(md)
     expect(out).toBe(
-      '<media kind="sticker" file_id="sF" emoji="🔥" set_name="orgrimmar_pack" size="4096" />',
+      '<media kind="sticker" file_id="sF" emoji="🔥" set_name="example_sticker_pack" size="4096" />',
     )
   })
 

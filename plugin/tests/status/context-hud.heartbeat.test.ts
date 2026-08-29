@@ -15,7 +15,7 @@ import type { EditOpts, SendMessageOpts } from '../../src/channel/tools.js'
 import type { Logger } from '../../src/log.js'
 
 const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger
-const OWNER = '164795011'
+const OWNER = '123456789'
 
 const dirs: string[] = []
 function stateDir(): string {

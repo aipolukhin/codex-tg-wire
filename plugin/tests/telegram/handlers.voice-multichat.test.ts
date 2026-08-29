@@ -31,16 +31,16 @@ const silentLog = createLogger('test', {
   stream: { write: () => true } as unknown as NodeJS.WritableStream,
 })
 
-const WARCHIEF_USER_ID = 164795011
+const OWNER_USER_ID = 123456789
 const ALLOWED_GROUP_CHAT_ID = -1003784643974
-const BOT_ID = 8507713167
+const BOT_ID = 987654321
 
 function makeConfig(): AppConfig {
   return {
     bot_id: BOT_ID,
     dm_only: true,
-    allowed_user_ids: [WARCHIEF_USER_ID],
-    allowed_chat_ids: [WARCHIEF_USER_ID],
+    allowed_user_ids: [OWNER_USER_ID],
+    allowed_chat_ids: [OWNER_USER_ID],
     status: {
       enabled: false,
       interval_ms: 700,
@@ -74,6 +74,7 @@ function makeConfig(): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -114,7 +115,7 @@ function makePolicy(): MultichatPolicy {
     tmux_mirror: false,
     edit_message_progress: false,
     delivery: 'final_only',
-    persona_file: 'thrall.md',
+    persona_file: 'agent-one.md',
     handoff_file: 'handoff.md',
     system_reminder: '',
     idle_ttl_ms: 1_800_000,
@@ -127,9 +128,9 @@ function makePolicy(): MultichatPolicy {
     version: 1,
     allowlist: {
       chats: Object.keys(chats),
-      users: [String(WARCHIEF_USER_ID)],
+      users: [String(OWNER_USER_ID)],
     },
-    mention_allowlist: [String(WARCHIEF_USER_ID)],
+    mention_allowlist: [String(OWNER_USER_ID)],
     chats,
   }
 }
@@ -186,12 +187,12 @@ function makeDeps(router: MultichatRouter): { deps: HandlerDeps; statePaths: Sta
 
 // Voice message in the allowed group, replying to a bot message — the
 // reply-to-bot satisfies the addressing gate (a voice note has no text
-// to carry an @mention; this is exactly how the warchief talks to the
+// to carry an @mention; this is exactly how the operator talks to the
 // bot in the intensive group).
 function makeGroupVoiceCtx(): Context {
   return {
     chat: { id: ALLOWED_GROUP_CHAT_ID, type: 'supergroup' as const },
-    from: { id: WARCHIEF_USER_ID, is_bot: false, username: 'dashieshiev' },
+    from: { id: OWNER_USER_ID, is_bot: false, username: 'example_owner' },
     me: { id: BOT_ID, username: 'canarybot' },
     message: {
       message_id: 1793,
@@ -203,7 +204,7 @@ function makeGroupVoiceCtx(): Context {
         file_size: 37410,
       },
       chat: { id: ALLOWED_GROUP_CHAT_ID, type: 'supergroup' as const },
-      from: { id: WARCHIEF_USER_ID, is_bot: false, username: 'dashieshiev' },
+      from: { id: OWNER_USER_ID, is_bot: false, username: 'example_owner' },
       reply_to_message: {
         message_id: 1792,
         date: 1700000000,
@@ -275,8 +276,8 @@ describe('writeToInbox persists media_descriptors to the JSON file', () => {
       {
         text: '',
         chat_id: chatId,
-        user_id: '164795011',
-        user: 'dashieshiev',
+        user_id: '123456789',
+        user: 'example_owner',
         timestamp: new Date().toISOString(),
         media_descriptors: [descriptor],
       },

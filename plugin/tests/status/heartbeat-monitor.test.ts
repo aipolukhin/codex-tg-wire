@@ -28,7 +28,7 @@ const silentLog: Logger = {
   error: () => {},
 } as unknown as Logger
 
-const CHAT = '164795011'
+const CHAT = '123456789'
 const MIN = 60 * 1000
 const HOUR = 60 * MIN
 

@@ -11,17 +11,17 @@ import type { TelegramApi } from '../../src/channel/tools.js'
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
     permission_relay: {
       enabled: true,
-      allowed_user_ids: [164795011],
+      allowed_user_ids: [123456789],
       bash_only_proof: true,
     },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
@@ -46,6 +46,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -96,12 +97,12 @@ function makeTelegramApi(): TelegramApi {
 
 function makeCtx(overrides: Partial<OobContext> = {}): OobContext {
   return {
-    chatId: '164795011',
-    senderId: '164795011',
+    chatId: '123456789',
+    senderId: '123456789',
     config: makeConfig(),
     telegramApi: makeTelegramApi(),
     log: makeLogger(),
-    botId: 8507713167,
+    botId: 987654321,
     stateDir: '/tmp/state',
     ...overrides,
   }
@@ -192,17 +193,17 @@ describe('handleOobCommand', () => {
     const result = await handleOobCommand(
       parsed,
       makeCtx({
-        botId: 8507713167,
+        botId: 987654321,
         stateDir: '/var/lib/canary',
-        senderId: '164795011',
+        senderId: '123456789',
       }),
     )
     expect(result.notifyChannel).toBeUndefined()
     expect(result.replyToTelegram).toBeDefined()
     const text = result.replyToTelegram!.text
-    expect(text).toContain('8507713167')
+    expect(text).toContain('987654321')
     expect(text).toContain('/var/lib/canary')
-    expect(text).toContain('164795011')
+    expect(text).toContain('123456789')
   })
 
   test('/status includes status_manager and webhook info when supplied', async () => {
@@ -211,7 +212,7 @@ describe('handleOobCommand', () => {
       parsed,
       makeCtx({
         statusManager: {
-          isActive: (cid: string) => cid === '164795011',
+          isActive: (cid: string) => cid === '123456789',
           cancel: async () => {},
         },
         webhookStatus: () => ({ enabled: true, port: 8089 }),
@@ -230,7 +231,7 @@ describe('handleOobCommand', () => {
     expect(result.command).toBe('stop')
     expect(result.notifyChannel).toBeDefined()
     expect(result.notifyChannel!.meta.command).toBe('stop')
-    expect(result.notifyChannel!.meta.chat_id).toBe('164795011')
+    expect(result.notifyChannel!.meta.chat_id).toBe('123456789')
     expect(result.notifyChannel!.meta.source).toBe('telegram')
     expect(result.replyToTelegram).toBeDefined()
   })

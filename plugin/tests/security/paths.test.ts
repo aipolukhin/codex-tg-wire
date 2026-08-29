@@ -36,15 +36,15 @@ function makeOutside(): { outside: string; cleanup: () => void } {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -67,6 +67,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,

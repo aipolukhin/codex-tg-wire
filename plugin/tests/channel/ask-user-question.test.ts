@@ -38,7 +38,7 @@ function singleQ(): SubmitInput {
   return {
     toolUseId: 'toolu_single_1',
     sessionId: 'sess_a',
-    chatId: '164795011',
+    chatId: '123456789',
     questions: [
       {
         question: 'Pick a stack',
@@ -56,7 +56,7 @@ function multiQ(): SubmitInput {
   return {
     toolUseId: 'toolu_multi_1',
     sessionId: 'sess_b',
-    chatId: '164795011',
+    chatId: '123456789',
     questions: [
       {
         question: 'Q1: Color?',
@@ -74,7 +74,7 @@ function multiSelectQ(): SubmitInput {
   return {
     toolUseId: 'toolu_msel_1',
     sessionId: 'sess_c',
-    chatId: '164795011',
+    chatId: '123456789',
     questions: [
       {
         question: 'Pick frameworks',
@@ -176,7 +176,7 @@ describe('submit() — return contract (FIX-T3 F1)', () => {
     const { requestId, result } = relay.submit({
       toolUseId: 'toolu_zero',
       sessionId: 'sess_z',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [],
     })
     expect(requestId).toBeUndefined()
@@ -344,7 +344,7 @@ describe('AskAnswerOutcome contract', () => {
     const { requestId } = relay.submit({
       toolUseId: 'toolu_oc_1',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [
         { question: 'Q1', options: [{ label: 'A' }, { label: 'B' }] },
         { question: 'Q2', options: [{ label: 'C' }] },
@@ -470,7 +470,7 @@ describe('pass_through and edge cases', () => {
     const { requestId, result } = relay.submit({
       toolUseId: 'toolu_empty_1',
       sessionId: 'sess_x',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [],
     })
     expect(requestId).toBeUndefined()
@@ -647,7 +647,7 @@ describe('peek + setTelegramMessageId', () => {
     const relay = mkRelay()
     const { requestId } = relay.submit(multiQ())
     const snap = relay.getPending(requestId!)
-    expect(snap?.chatId).toBe('164795011')
+    expect(snap?.chatId).toBe('123456789')
     expect(snap?.currentIndex).toBe(0)
     expect(snap?.questions.length).toBe(2)
     relay.expire(requestId!)

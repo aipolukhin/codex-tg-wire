@@ -35,14 +35,14 @@ function prov(over: Partial<PaneProvenance> = {}): PaneProvenance {
   return {
     sessionId: 'sess-1',
     paneTarget: '%0',
-    cwd: '/home/openclaw/work',
+    cwd: '/home/service-user/work',
     capturedAt: 1_000,
     ...over,
   }
 }
 
 function binding(over: Partial<SessionBinding> = {}): SessionBinding {
-  return { sessionId: 'sess-1', paneTarget: '%0', cwd: '/home/openclaw/work', ...over }
+  return { sessionId: 'sess-1', paneTarget: '%0', cwd: '/home/service-user/work', ...over }
 }
 
 function ev(over: Partial<ToolTaskEvent> = {}): ToolTaskEvent {

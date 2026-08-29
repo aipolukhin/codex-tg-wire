@@ -8,7 +8,7 @@ picks up the task from gbrain via swarm.list_my_pending.
 Designed for the dashi-channel plugin family, which has no inbox-poll
 loop — Claude is invoked directly when a webhook arrives.
 
-Bind: $WEBHOOK_BIND_HOST:$WEBHOOK_PORT (default 0.0.0.0:8094).
+Bind: $WEBHOOK_BIND_HOST:$WEBHOOK_PORT (default 127.0.0.1:8094).
 Auth: Bearer token from $WEBHOOK_BEARER_FILE.
 
 v6.3 features:

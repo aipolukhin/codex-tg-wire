@@ -139,7 +139,7 @@ export interface TmuxMirrorControl {
   bump?(): Promise<void>
   // MED-A #2: recovery from a permanent Telegram error (403 / parse)
   // that flipped `disabled=true`. /mirror on calls reset() before
-  // start() so the warchief never has to restart the plugin.
+  // start() so the operator never has to restart the plugin.
   // Optional for source-compat with existing test stubs.
   reset?(): void
   status(): {
@@ -603,7 +603,7 @@ export async function handleOobCommand(
     case 'compact': {
       // Non-destructive: shrink the session context. Runs Claude Code's own
       // /compact reliably (probe → interrupt-if-busy → send → confirm) and
-      // reports the REAL outcome so the warchief knows if it actually fired.
+      // reports the REAL outcome so the operator knows if it actually fired.
       if (!ctx.tmuxKeys) {
         return {
           handled: true,

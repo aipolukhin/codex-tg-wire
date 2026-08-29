@@ -14,7 +14,7 @@ import type { ControlCommandResult } from '../../src/commands/keys.js'
 import type { Logger } from '../../src/log.js'
 
 const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger
-const ALLOWED = [164795011]
+const ALLOWED = [123456789]
 const PANE = { paneTarget: '%1', socketPath: '/tmp/s' }
 
 function makeCtx(
@@ -215,7 +215,7 @@ describe('handleNewqCallback', () => {
       tmuxKeysTarget: PANE,
       log,
       sendControl: sender,
-      ownerChatIds: [164795011],
+      ownerChatIds: [123456789],
     }
     // Tap arrives from a group chat (negative id) — not the owner DM.
     const { ctx, answers } = makeCtx(`${NEWQ_PREFIX}confirm`, ALLOWED[0]!, '-1001234567890')
@@ -231,9 +231,9 @@ describe('handleNewqCallback', () => {
       tmuxKeysTarget: PANE,
       log,
       sendControl: sender,
-      ownerChatIds: [164795011],
+      ownerChatIds: [123456789],
     }
-    const { ctx } = makeCtx(`${NEWQ_PREFIX}confirm`, ALLOWED[0]!, '164795011')
+    const { ctx } = makeCtx(`${NEWQ_PREFIX}confirm`, ALLOWED[0]!, '123456789')
     await handleNewqCallback(ctx, deps)
     expect(calls).toEqual(['clear'])
   })

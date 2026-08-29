@@ -42,7 +42,7 @@ function runInstall(extraArgs: string[] = []): { code: number; stderr: string } 
     [
       INSTALL_SH,
       '--settings', settings,
-      '--chat-id', '164795011',
+      '--chat-id', '123456789',
       '--webhook-url', 'http://127.0.0.1:8089/hooks/agent',
       '--agent-id', 'dashi-channel',
       ...extraArgs,
@@ -66,7 +66,7 @@ describe('install-hooks.sh — fresh settings file', () => {
     const hooks = (parsed as { hooks?: Record<string, unknown> }).hooks ?? {}
     expect(hooks.PreToolUse).toBeUndefined()
     expect(flat).toContain(POST_HOOK)
-    expect(flat).toContain("TELEGRAM_HOOK_CHAT_ID='164795011'")
+    expect(flat).toContain("TELEGRAM_HOOK_CHAT_ID='123456789'")
     expect(flat).toContain("TELEGRAM_HOOK_AGENT_ID='dashi-channel'")
   })
 
@@ -102,7 +102,7 @@ describe('install-hooks.sh — URL validation (L3)', () => {
       [
         INSTALL_SH,
         '--settings', settings,
-        '--chat-id', '164795011',
+        '--chat-id', '123456789',
         '--webhook-url', badUrl,
         '--agent-id', 'dashi-channel',
       ],
@@ -182,7 +182,7 @@ describe('patchSettingsFile — writeAtomic same-dir staging (regression)', () =
     const target = join(tmp, 'settings.json')
     patchSettingsFile({
       settingsPath: target,
-      chatId: '164795011',
+      chatId: '123456789',
       webhookUrl: 'http://127.0.0.1:8089/hooks/agent',
       helperPath: '/abs/post-hook.ts',
     })
@@ -308,7 +308,7 @@ describe('applyPatch (pure)', () => {
   test('permission gate: registers a PreToolUse gate entry FIRST, only on PreToolUse', () => {
     const out = applyPatch({}, {
       settingsPath: '/tmp/x',
-      chatId: '164795011',
+      chatId: '123456789',
       webhookUrl: 'http://127.0.0.1:8093/hooks/agent',
       helperPath: '/p/scripts/post-hook.ts',
       permissionGateHelperPath: '/p/scripts/permission-gate-hook.ts',
@@ -331,7 +331,7 @@ describe('applyPatch (pure)', () => {
   test('permission gate: never writes the bearer token', () => {
     const out = applyPatch({}, {
       settingsPath: '/tmp/x',
-      chatId: '164795011',
+      chatId: '123456789',
       webhookUrl: 'http://127.0.0.1:8093',
       helperPath: '/p/post-hook.ts',
       permissionGateHelperPath: '/p/permission-gate-hook.ts',
@@ -345,7 +345,7 @@ describe('applyPatch (pure)', () => {
   test('permission gate: re-run replaces the gate entry, no duplicates', () => {
     const opts = {
       settingsPath: '/tmp/x',
-      chatId: '164795011',
+      chatId: '123456789',
       webhookUrl: 'http://127.0.0.1:8093',
       helperPath: '/p/post-hook.ts',
       permissionGateHelperPath: '/p/permission-gate-hook.ts',
@@ -382,7 +382,7 @@ describe('applyPatch (pure) — channel reminder', () => {
   test('registers the reminder hook on UserPromptSubmit only when reminderHelperPath set', () => {
     const out = applyPatch({}, {
       settingsPath: '/tmp/x',
-      chatId: '164795011',
+      chatId: '123456789',
       webhookUrl: 'http://127.0.0.1:8093/hooks/agent',
       helperPath: '/p/scripts/post-hook.ts',
       reminderHelperPath: '/p/scripts/channel-reminder.ts',
@@ -391,7 +391,7 @@ describe('applyPatch (pure) — channel reminder', () => {
     const reminder = ups.find((e) => e.marker === 'dashi-channel-reminder-hook')
     expect(reminder).toBeDefined()
     expect(reminder!.hooks?.[0]?.command).toContain('channel-reminder.ts')
-    expect(reminder!.hooks?.[0]?.command).toContain("CHAT_ID='164795011'")
+    expect(reminder!.hooks?.[0]?.command).toContain("CHAT_ID='123456789'")
     // Reminder must NOT appear on other events.
     for (const ev of ['SessionStart', 'PreToolUse', 'PostToolUse', 'Stop']) {
       expect((out.hooks[ev] ?? []).find((e) => e.marker === 'dashi-channel-reminder-hook')).toBeUndefined()
@@ -411,7 +411,7 @@ describe('applyPatch (pure) — channel reminder', () => {
   test('bakes the resolved state root into the reminder command (fix-loop #5)', () => {
     const out = applyPatch({}, {
       settingsPath: '/tmp/x',
-      chatId: '164795011',
+      chatId: '123456789',
       webhookUrl: 'http://127.0.0.1:8093/hooks/agent',
       helperPath: '/p/scripts/post-hook.ts',
       reminderHelperPath: '/p/scripts/channel-reminder.ts',

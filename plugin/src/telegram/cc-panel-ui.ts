@@ -101,7 +101,7 @@ export function buildCcKeyboard(): InlineKeyboardLike {
 }
 
 // Header text rendered above the keypad. HTML parse mode. Lists each command
-// with its explanation so the warchief knows what every button does.
+// with its explanation so the operator knows what every button does.
 export const CC_PANEL_HEADER =
   '<b>Команды Claude Code</b> — тап = выполнить в моей сессии.\n'
   + CC_PANEL_COMMANDS.map((c) => `<code>/${c.name}</code> — ${c.desc}`).join('\n')
@@ -140,7 +140,7 @@ export interface CcmdCallbackDeps {
 
 // Dispatch a `ccmd:*` callback. Always answers the callback query and returns
 // true when it consumed the event. NEVER types a command for a non-allowed
-// user id. Does NOT mutate the keyboard message (the warchief taps it
+// user id. Does NOT mutate the keyboard message (the operator taps it
 // repeatedly).
 export async function handleCcmdCallback(
   ctx: CcmdCallbackContext,
@@ -182,7 +182,7 @@ export async function handleCcmdCallback(
         error: err instanceof Error ? err.message : String(err),
       })
       // L12: the card never posted → do NOT claim «подтвердите очистку» (that
-      // would tell the warchief to look for a card that isn't there). Report the
+      // would tell the operator to look for a card that isn't there). Report the
       // failure instead.
       await ctx.answerCallbackQuery({ text: 'не удалось показать подтверждение' })
       return true

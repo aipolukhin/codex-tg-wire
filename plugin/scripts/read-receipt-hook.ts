@@ -9,7 +9,7 @@
 // Stop event (once per turn the agent completes), scans the session
 // transcript for the inbound `<channel source="telegram" ...>` block(s) the
 // turn actually read, and posts them to the plugin's `/hooks/react` route so
-// the single bot sets 👀. Because EVERY session (the warchief DM + each
+// the single bot sets 👀. Because EVERY session (the operator DM + each
 // per-chat multichat session) runs the same Stop hook against its own
 // transcript, the receipt works uniformly across the DM and group chats.
 //
@@ -35,7 +35,7 @@ import { dirname, join } from 'path'
 // ─────────────────────────────────────────────────────────────────────
 // Channel-block parsing. Tolerant of BOTH the JSON-escaped form found in a
 // transcript line (`message_id=\"28045\"`) and the raw form. Only telegram
-// blocks are matched — orgrimmar-inbox events carry no Telegram message_id.
+// blocks are matched — agent-inbox events carry no Telegram message_id.
 // ─────────────────────────────────────────────────────────────────────
 
 export interface ReadReceiptRef {

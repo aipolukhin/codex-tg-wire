@@ -1,5 +1,5 @@
 // ProgressReporter tests (Phase 9 / 2026-05-18) — persistent activity
-// thread shown to the warchief in Telegram. Patterned on
+// thread shown to the operator in Telegram. Patterned on
 // status-manager.test.ts: FakeClock + FakeApi, no real network, no real
 // timers.
 //
@@ -41,10 +41,10 @@ const silentLog = createLogger('test', {
 
 function makeConfig(overrides: Partial<AppConfig['progress']> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: {
       enabled: true,
       interval_ms: 700,
@@ -55,7 +55,7 @@ function makeConfig(overrides: Partial<AppConfig['progress']> = {}): AppConfig {
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -79,6 +79,7 @@ function makeConfig(overrides: Partial<AppConfig['progress']> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -241,12 +242,12 @@ const STOP: ActivityStatusEvent = { kind: 'session_stop' }
 describe('ProgressReporter', () => {
   test('first tool_start sends a new Telegram message (no edits yet)', async () => {
     const { reporter, api } = makeReporter()
-    await reporter.recordEvent('164795011', bashStart())
+    await reporter.recordEvent('123456789', bashStart())
     const sends = api.calls.filter((c) => c.kind === 'send')
     const edits = api.calls.filter((c) => c.kind === 'edit')
     expect(sends.length).toBe(1)
     expect(edits.length).toBe(0)
-    expect(sends[0]!.chatId).toBe('164795011')
+    expect(sends[0]!.chatId).toBe('123456789')
     expect(sends[0]!.text).toContain('running')
   })
 

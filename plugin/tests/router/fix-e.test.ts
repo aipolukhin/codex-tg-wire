@@ -535,7 +535,7 @@ describe('FIX-E M3 — dispatch concurrent + max_queue_depth', () => {
   }
 
   test('5 concurrent dispatches with max_queue_depth=1 → at most 1 inbox file', async () => {
-    const chatId = '164795011'
+    const chatId = '123456789'
     const policy = makePolicy({
       chats: { [chatId]: makeChatPolicy({ max_queue_depth: 1 }) },
       allowlist_users: [chatId],
@@ -586,7 +586,7 @@ describe('FIX-E M3 — dispatch concurrent + max_queue_depth', () => {
       chats: {
         [chatId]: makeChatPolicy({ max_queue_depth: 3, mode: 'public' }),
       },
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
       allowlist_chats: [chatId],
     })
     const pool = new FakePool()
@@ -607,7 +607,7 @@ describe('FIX-E M3 — dispatch concurrent + max_queue_depth', () => {
         router.dispatch({
           text: `msg-${i}`,
           chat_id: chatId,
-          user_id: '164795011',
+          user_id: '123456789',
           user: 'dashi',
           timestamp: `2026-05-27T00:00:${String(i).padStart(2, '0')}Z`,
         }),

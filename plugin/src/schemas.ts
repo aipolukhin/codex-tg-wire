@@ -63,7 +63,7 @@ export const ReactRouteRequestSchema = z.object({
 export type ReactRouteRequest = z.infer<typeof ReactRouteRequestSchema>
 
 // Webhook route body - POST /hooks/fallback-reply (DM fallback Stop hook →
-// plugin). 2026-06-03. The warchief's DM session normally replies through the
+// plugin). 2026-06-03. The operator's DM session normally replies through the
 // `mcp__dashi-channel__reply` MCP tool. When a turn ends WITHOUT having sent
 // such a reply, the fallback-reply Stop hook posts the turn's final assistant
 // text here so it still reaches his Telegram. chat_id is a numeric string
@@ -77,7 +77,7 @@ export type FallbackReplyRouteRequest = z.infer<typeof FallbackReplyRouteRequest
 
 // Webhook route body — POST /hooks/permission/request (2026-06-09). The
 // PreToolUse permission-gate hook posts a `confirm`-tier tool call here; the
-// plugin sends an Allow/Deny keyboard to the warchief and long-waits for the
+// plugin sends an Allow/Deny keyboard to the operator and long-waits for the
 // tap. preview/reason are bounded so a hostile/huge tool input can't blow the
 // body cap; the safe-telegram-api redacts secrets before any of it reaches the
 // chat. timeout_ms is optional (server clamps to permission_gate.timeout_ms).
@@ -411,7 +411,7 @@ export type PermissionRequestParams = z.infer<typeof PermissionRequestParamsSche
 // transcript_path, timeout_ms). Constraints below are intentionally
 // strict so a malformed `/request` payload returns a clean 400 instead
 // of being silently coerced into a degenerate prompt that wastes the
-// warchief's attention.
+// operator's attention.
 //
 // Caps come from CC docs (1..4 questions, 2..4 options/question) and
 // the body-limit budget reserved for AskUserQuestion (~64 KB). Total

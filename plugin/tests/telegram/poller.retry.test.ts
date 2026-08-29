@@ -26,11 +26,13 @@ let config: AppConfig
 
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), 'dashi-channel-poller-retry-'))
-  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir }
+  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir, TELEGRAM_ALLOWED_USER_IDS: '123456789', TELEGRAM_ALLOWED_CHAT_IDS: '123456789' }
   config = loadConfig(env)
   paths = getStatePaths(config, {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   })
   ensureStateDirs(paths)
 })

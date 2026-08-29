@@ -20,7 +20,7 @@ describe('maskSecrets', () => {
   test('masks secret paths (direct ~/.foo/secrets/...)', () => {
     // Python regex `(~/?\.\w+/)secrets/\S+` matches a single dot-prefixed
     // segment immediately before `secrets/`. Deep paths (e.g.
-    // `~/.claude-lab/silvana/secrets/...`) intentionally fall through to
+    // `~/.claude-lab/agent-one/secrets/...`) intentionally fall through to
     // the generic-long-token rule instead.
     expect(maskSecrets('~/.config/secrets/openviking.key')).toContain('secrets/***')
     expect(maskSecrets('~/.config/secrets/openviking.key')).not.toContain('openviking.key')
@@ -28,7 +28,7 @@ describe('maskSecrets', () => {
 
   test('masks anchored secrets/<file> after path summarization (regression)', () => {
     // After lastTwoSegments collapse, an absolute path like
-    // /Users/x/.claude-lab/silvana/secrets/openviking.key becomes
+    // /Users/x/.claude-lab/agent-one/secrets/openviking.key becomes
     // `secrets/openviking.key` — the legacy `~/.foo/secrets/...` rule no
     // longer matches. Broadened rule must mask the filename.
     expect(maskSecrets('read secrets/openviking.key')).toContain('secrets/***')
@@ -278,7 +278,7 @@ describe('buildActivityDetail', () => {
 
 describe('secret-path leak after summarization (regression)', () => {
   test('Read of /Users/.../secrets/foo.key never reaches render unmasked', () => {
-    const absPath = '/Users/jasonqwwen/.claude-lab/silvana/secrets/openviking.key'
+    const absPath = '/Users/example/.claude-lab/agent-one/secrets/openviking.key'
     const detail = buildActivityDetail('Read', { file_path: absPath })
     // Buffer-level: filename must be masked at store time.
     expect(detail).not.toContain('openviking.key')

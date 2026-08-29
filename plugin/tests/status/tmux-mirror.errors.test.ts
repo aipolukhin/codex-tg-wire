@@ -147,7 +147,7 @@ describe('TmuxMirror — send error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -176,7 +176,7 @@ describe('TmuxMirror — send error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -202,7 +202,7 @@ describe('TmuxMirror — send error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -239,7 +239,7 @@ describe('TmuxMirror — edit error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -266,7 +266,7 @@ describe('TmuxMirror — edit error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -285,7 +285,7 @@ describe('TmuxMirror — edit error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -316,7 +316,7 @@ describe('TmuxMirror — edit error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -339,7 +339,7 @@ describe('TmuxMirror — edit error classification', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -361,7 +361,7 @@ describe('TmuxMirror — edit error classification', () => {
 // never gated by the policy check.
 //
 // Pre-fix: stop() began with an `if (!this.isMirrorAllowed()) return`.
-// If the chat was REVOKED from policy mid-life (warchief edits
+// If the chat was REVOKED from policy mid-life (operator edits
 // policy.yaml while the mirror is running), stop() exited without
 // disarming the interval OR deleting the rolling message — a ghost
 // mirror message stayed in the chat forever, and the host process
@@ -402,7 +402,7 @@ describe('TmuxMirror — FIX-C bug #3 (stop() after policy revocation)', () => {
     const stub = makeStubApi()
     const exec = makeExec([ok('initial pane'), ok('updated pane')])
     const policy = makePolicy({
-      '164795011': makeChatPolicy({ tmux_mirror: true }),
+      '123456789': makeChatPolicy({ tmux_mirror: true }),
     })
     // Spy on clearInterval BEFORE constructing the mirror so we capture
     // the disarm call inside stop(). The mirror uses setInterval
@@ -413,8 +413,8 @@ describe('TmuxMirror — FIX-C bug #3 (stop() after policy revocation)', () => {
       const mirror = new TmuxMirror({
         api: stub.api,
         log: stubLog,
-        chatId: '164795011',
-        paneTarget: 'channel-thrall:0.0',
+        chatId: '123456789',
+        paneTarget: 'channel-agent-one:0.0',
         pollIntervalMs: 1_000_000, // long — interval never fires within the test window
         lineCount: 50,
         exec,
@@ -425,10 +425,10 @@ describe('TmuxMirror — FIX-C bug #3 (stop() after policy revocation)', () => {
       expect(mirror.status().messageId).toBeDefined()
       const messageId = mirror.status().messageId!
 
-      // Revoke the policy entry mid-life (warchief edits policy.yaml).
+      // Revoke the policy entry mid-life (operator edits policy.yaml).
       // The policy reference is shared by-ref with the mirror, so the
       // next isMirrorAllowed() call sees the chat as absent.
-      delete (policy.chats as Record<string, ChatPolicy>)['164795011']
+      delete (policy.chats as Record<string, ChatPolicy>)['123456789']
 
       const clearCallsBefore = clearSpy.mock.calls.length
       await mirror.stop()
@@ -483,7 +483,7 @@ describe('TmuxMirror — FIX-C bug #5 (disabled=true disarms the polling timer)'
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -515,7 +515,7 @@ describe('TmuxMirror — FIX-C bug #5 (disabled=true disarms the polling timer)'
         api: stub.api,
         log: stubLog,
         chatId: '100',
-        paneTarget: 'channel-thrall:0.0',
+        paneTarget: 'channel-agent-one:0.0',
         pollIntervalMs: 1_000_000,
         lineCount: 50,
         exec,
@@ -564,7 +564,7 @@ describe('TmuxMirror — MED-A #2 (reset() recovery)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -604,7 +604,7 @@ describe('TmuxMirror — MED-A #2 (reset() recovery)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -627,7 +627,7 @@ describe('TmuxMirror — MED-A #2 (reset() recovery)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,

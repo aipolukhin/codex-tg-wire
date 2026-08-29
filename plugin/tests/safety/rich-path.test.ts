@@ -36,7 +36,7 @@ const silentLog = createLogger('test', {
   stream: { write: () => true } as unknown as NodeJS.WritableStream,
 })
 
-const PRINCE_DM = '164795011' // positive id ⇒ DM
+const OWNER_DM = '123456789' // positive id ⇒ DM
 const GROUP = '-1001234567890' // negative id ⇒ group (M1 must skip)
 
 // ─── Stub inner TelegramApi (records calls, programmable rich behaviour) ──
@@ -87,15 +87,15 @@ function emptyRecorder(): Recorder {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011, -1001234567890],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789, -1001234567890],
     status: { enabled: false, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: true },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -107,7 +107,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     },
     progress: { enabled: false, edit_throttle_ms: 3000, recent_buffer: 10, session_ttl_ms: 600000 },
     task_mirror: { enabled: false, edit_throttle_ms: 3000, session_ttl_ms: 600000, collapse_completed_after: 5 },
-    watcher: { enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
+    watcher: { agent_label: 'Агент', enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
     tmux_mirror: { enabled: false, pane_target: '', socket_name: '', poll_interval_ms: 5000, line_count: 50, hide_segments: [], mode: 'latest_inbound_only', max_lines: 14 },
     multichat: { enabled: false },
     ask_user_question: { enabled: false, timeout_ms: 300_000, max_preview_chars: 1000 },
@@ -206,7 +206,7 @@ describe('safe-telegram-api.sendRichMessage', () => {
     const safe = createSafeTelegramApi(inner, silentLog, undefined, latch)
 
     const res = await safe.sendRichMessage(
-      PRINCE_DM,
+      OWNER_DM,
       'token sk-abcdefghijklmnopqrstuvwxyz0123456789',
       {},
     )
@@ -226,13 +226,13 @@ describe('safe-telegram-api.sendRichMessage', () => {
     })
     const safe = createSafeTelegramApi(inner, silentLog, undefined, latch)
 
-    const first = await safe.sendRichMessage(PRINCE_DM, 'hi', {})
+    const first = await safe.sendRichMessage(OWNER_DM, 'hi', {})
     expect(first).toEqual({ fallback: true })
     expect(latch.sendDisabled).toBe(true)
     expect(recorder.sendRich).toHaveLength(1)
 
     // Second call must short-circuit WITHOUT touching the raw layer again.
-    const second = await safe.sendRichMessage(PRINCE_DM, 'hi again', {})
+    const second = await safe.sendRichMessage(OWNER_DM, 'hi again', {})
     expect(second).toEqual({ fallback: true })
     expect(recorder.sendRich).toHaveLength(1) // unchanged — short-circuited
   })
@@ -245,7 +245,7 @@ describe('safe-telegram-api.sendRichMessage', () => {
     })
     const safe = createSafeTelegramApi(inner, silentLog, undefined, latch)
 
-    const res = await safe.sendRichMessage(PRINCE_DM, 'oops', {})
+    const res = await safe.sendRichMessage(OWNER_DM, 'oops', {})
     expect(res).toEqual({ fallback: true })
     expect(latch.sendDisabled).toBe(false) // one-off; not latched
   })
@@ -258,7 +258,7 @@ describe('safe-telegram-api.sendRichMessage', () => {
     })
     const safe = createSafeTelegramApi(inner, silentLog, undefined, latch)
 
-    await expect(safe.sendRichMessage(PRINCE_DM, 'x', {})).rejects.toBeDefined()
+    await expect(safe.sendRichMessage(OWNER_DM, 'x', {})).rejects.toBeDefined()
     expect(latch.sendDisabled).toBe(false)
   })
 
@@ -267,7 +267,7 @@ describe('safe-telegram-api.sendRichMessage', () => {
     const inner = makeInnerApi(recorder, async () => ({ message_id: 1 }))
     const safe = createSafeTelegramApi(inner, silentLog, undefined, undefined)
 
-    const res = await safe.sendRichMessage(PRINCE_DM, 'x', {})
+    const res = await safe.sendRichMessage(OWNER_DM, 'x', {})
     expect(res).toEqual({ fallback: true })
     expect(recorder.sendRich).toHaveLength(0)
   })
@@ -278,7 +278,7 @@ describe('safe-telegram-api.sendRichMessage', () => {
 describe("callTool('reply') rich gate", () => {
   test('happy path: one sendRichMessage, returns id, NO chunked sendMessage', async () => {
     const h = makeHarness({ richBehaviour: async () => ({ message_id: 4242 }) })
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: '# Hi\n\n| a | b |' }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: '# Hi\n\n| a | b |' }), h.deps)
 
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(1)
@@ -289,7 +289,7 @@ describe("callTool('reply') rich gate", () => {
 
   test('rich fallback → exactly ONE HTML send, no duplicate', async () => {
     const h = makeHarness({ richBehaviour: async () => ({ fallback: true }) })
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: 'plain body' }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: 'plain body' }), h.deps)
 
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(1) // attempted …
@@ -305,7 +305,7 @@ describe("callTool('reply') rich gate", () => {
         throw { error_code: 503, description: 'Service Unavailable' }
       },
     })
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: 'body' }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: 'body' }), h.deps)
 
     // The outer try in callTool turns the thrown transient into a tool error.
     expect(result.isError).toBe(true)
@@ -317,7 +317,7 @@ describe("callTool('reply') rich gate", () => {
   test("format 'text' → rich NOT attempted, plain send", async () => {
     const h = makeHarness({})
     const result = await callTool(
-      replyReq({ chat_id: PRINCE_DM, text: 'verbatim', format: 'text' }),
+      replyReq({ chat_id: OWNER_DM, text: 'verbatim', format: 'text' }),
       h.deps,
     )
     expect(result.isError).toBeUndefined()
@@ -330,7 +330,7 @@ describe("callTool('reply') rich gate", () => {
   test("format 'markdownv2' → rich NOT attempted", async () => {
     const h = makeHarness({})
     const result = await callTool(
-      replyReq({ chat_id: PRINCE_DM, text: '*md*', format: 'markdownv2' }),
+      replyReq({ chat_id: OWNER_DM, text: '*md*', format: 'markdownv2' }),
       h.deps,
     )
     expect(result.isError).toBeUndefined()
@@ -343,7 +343,7 @@ describe("callTool('reply') rich gate", () => {
   test('rich body is the HARDENED markdown (soft breaks promoted before send)', async () => {
     const h = makeHarness({ richBehaviour: async () => ({ message_id: 4242 }) })
     const result = await callTool(
-      replyReq({ chat_id: PRINCE_DM, text: 'M1 — a\nM2 — b' }),
+      replyReq({ chat_id: OWNER_DM, text: 'M1 — a\nM2 — b' }),
       h.deps,
     )
     expect(result.isError).toBeUndefined()
@@ -362,7 +362,7 @@ describe("callTool('reply') rich gate", () => {
     // hardening adds 1023 backslashes → 33790 > 32768 (over the cap).
     const text = Array.from({ length: 1024 }, () => 'a'.repeat(31)).join('\n')
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(32768)
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text }), h.deps)
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(0) // gate measured the sent body
     expect(h.recorder.sendMessage.length).toBeGreaterThanOrEqual(1) // HTML path
@@ -372,7 +372,7 @@ describe("callTool('reply') rich gate", () => {
   test('> 32768 bytes → rich skipped, HTML path used', async () => {
     const h = makeHarness({})
     const huge = 'a'.repeat(32769)
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: huge }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: huge }), h.deps)
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(0)
     expect(h.recorder.sendMessage.length).toBeGreaterThanOrEqual(1) // chunked HTML
@@ -380,8 +380,8 @@ describe("callTool('reply') rich gate", () => {
   })
 
   test('perChatOptOut chat → rich skipped', async () => {
-    const h = makeHarness({ config: { richMessages: { enabled: true, perChatOptOut: [PRINCE_DM] } } })
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: 'hi' }), h.deps)
+    const h = makeHarness({ config: { richMessages: { enabled: true, perChatOptOut: [OWNER_DM] } } })
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: 'hi' }), h.deps)
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(0)
     expect(h.recorder.sendMessage).toHaveLength(1)
@@ -390,7 +390,7 @@ describe("callTool('reply') rich gate", () => {
 
   test('richMessages.enabled=false → rich skipped', async () => {
     const h = makeHarness({ config: { richMessages: { enabled: false, perChatOptOut: [] } } })
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: 'hi' }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: 'hi' }), h.deps)
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(0)
     expect(h.recorder.sendMessage).toHaveLength(1)
@@ -400,7 +400,7 @@ describe("callTool('reply') rich gate", () => {
   test('latch already disabled → rich skipped (no raw call)', async () => {
     const h = makeHarness({})
     h.latch.sendDisabled = true
-    const result = await callTool(replyReq({ chat_id: PRINCE_DM, text: 'hi' }), h.deps)
+    const result = await callTool(replyReq({ chat_id: OWNER_DM, text: 'hi' }), h.deps)
     expect(result.isError).toBeUndefined()
     expect(h.recorder.sendRich).toHaveLength(0)
     expect(h.recorder.sendMessage).toHaveLength(1)
@@ -416,7 +416,7 @@ describe("callTool('reply') rich gate", () => {
     writeFileSync(join(workspace, 'report.txt'), 'attachment body')
     const h = makeHarness({ config: { workspace_root: workspace } })
     const result = await callTool(
-      replyReq({ chat_id: PRINCE_DM, text: 'with file', files: [join(workspace, 'report.txt')] }),
+      replyReq({ chat_id: OWNER_DM, text: 'with file', files: [join(workspace, 'report.txt')] }),
       h.deps,
     )
     expect(result.isError).toBeUndefined()
@@ -438,7 +438,7 @@ describe("callTool('reply') rich gate", () => {
 
   test('reply_to threads the rich message via reply_to_message_id', async () => {
     const h = makeHarness({ richBehaviour: async () => ({ message_id: 11 }) })
-    await callTool(replyReq({ chat_id: PRINCE_DM, text: 'hi', reply_to: '321' }), h.deps)
+    await callTool(replyReq({ chat_id: OWNER_DM, text: 'hi', reply_to: '321' }), h.deps)
     expect(h.recorder.sendRich).toHaveLength(1)
     expect(h.recorder.sendRich[0]?.opts.reply_to_message_id).toBe(321)
     h.cleanup()
@@ -447,7 +447,7 @@ describe("callTool('reply') rich gate", () => {
   test('redaction end-to-end: secret in reply text never reaches raw rich call', async () => {
     const h = makeHarness({ richBehaviour: async () => ({ message_id: 1 }) })
     await callTool(
-      replyReq({ chat_id: PRINCE_DM, text: 'my key sk-abcdefghijklmnopqrstuvwxyz0123456789 ok' }),
+      replyReq({ chat_id: OWNER_DM, text: 'my key sk-abcdefghijklmnopqrstuvwxyz0123456789 ok' }),
       h.deps,
     )
     expect(h.recorder.sendRich).toHaveLength(1)

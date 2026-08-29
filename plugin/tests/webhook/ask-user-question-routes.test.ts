@@ -32,7 +32,7 @@ import { createAskUserQuestionRelay, type AskUserQuestionRelay } from '../../src
 
 const FAKE_TOKEN = '123456789:AAH-fake_test_token_with_at_least_thirty_chars'
 const WEBHOOK_TOKEN = 'wh_test_token_32_chars__________'
-const WARCHIEF_ID = 164795011
+const OWNER_ID = 123456789
 
 let stateDir: string
 let paths: StatePaths
@@ -56,11 +56,15 @@ beforeEach(() => {
   const env = {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   }
   baseConfig = loadConfig(env)
   paths = getStatePaths(baseConfig, {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   })
   // ensureStateDirs now creates the state directory tree (state/store.ts).
   // The audit writer also creates its parent dir on demand via
@@ -86,6 +90,7 @@ function enabledConfig(opts: { askEnabled?: boolean; askTimeoutMs?: number } = {
       enabled: opts.askEnabled ?? true,
       timeout_ms: opts.askTimeoutMs ?? 5000,
       max_preview_chars: 1000,
+      allowed_user_ids: [OWNER_ID],
     },
   }
 }
@@ -273,7 +278,7 @@ describe('POST /hooks/ask-user-question/request', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 0,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(answerResp.status).toBe(200)
@@ -344,7 +349,7 @@ describe('POST /hooks/ask-user-question/request', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 1,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     await reqPromise
@@ -380,7 +385,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 0,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(resp.status).toBe(200)
@@ -473,7 +478,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 0,
         // selected_option_index intentionally omitted.
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(resp.status).toBe(400)
@@ -518,7 +523,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'other',
         question_index: 0,
         selected_label: 'Svelte',
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(answerResp.status).toBe(200)
@@ -543,7 +548,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 0,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(resp.status).toBe(400)
@@ -566,7 +571,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 4,
         selected_option_index: 0,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(resp.status).toBe(400)
@@ -588,7 +593,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 4,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
       }),
     })
     expect(resp.status).toBe(400)
@@ -603,7 +608,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { handle: h, relay } = await startWithRelay(enabledConfig())
     // Kick off a pending request so the /answer route has a record
-    // bound to the warchief's chat_id.
+    // bound to the operator's chat_id.
     const reqPromise = fetch(url(h, '/hooks/ask-user-question/request'), {
       method: 'POST',
       headers: {
@@ -624,9 +629,9 @@ describe('POST /hooks/ask-user-question/answer', () => {
     expect(requestId).toBeDefined()
 
     // Answer with a chat_id that doesn't match the pending request's
-    // bound chat_id (we resolved the bound chat_id from warchief's
-    // user_id = WARCHIEF_ID, so the pending record's chatId is
-    // String(WARCHIEF_ID)). Use 999_000_000 as a deliberate mismatch.
+    // bound chat_id (we resolved the bound chat_id from operator's
+    // user_id = OWNER_ID, so the pending record's chatId is
+    // String(OWNER_ID)). Use 999_000_000 as a deliberate mismatch.
     const resp = await fetch(url(h, '/hooks/ask-user-question/answer'), {
       method: 'POST',
       headers: {
@@ -638,7 +643,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 0,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
         chat_id: '999000000',
       }),
     })
@@ -655,7 +660,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
     )
     expect(mismatch).toBeDefined()
     expect(mismatch?.chat_id_attempted).toBe('999000000')
-    expect(mismatch?.chat_id_expected).toBe(String(WARCHIEF_ID))
+    expect(mismatch?.chat_id_expected).toBe(String(OWNER_ID))
 
     // Cleanup the still-pending request.
     relay.expire(requestId!, 'test cleanup')
@@ -697,7 +702,7 @@ describe('POST /hooks/ask-user-question/answer', () => {
         action: 'choose',
         question_index: 0,
         selected_option_index: 0,
-        user_id: WARCHIEF_ID,
+        user_id: OWNER_ID,
         // chat_id intentionally omitted
       }),
     })

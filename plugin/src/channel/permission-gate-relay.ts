@@ -7,7 +7,7 @@
 // (telegram/permission-gate-ui.ts):
 //
 //   hook POST /hooks/permission/request → relay.submit() → Promise
-//     → UI sends Allow/Deny keyboard → warchief taps → callback → relay.answer()
+//     → UI sends Allow/Deny keyboard → operator taps → callback → relay.answer()
 //     → Promise resolves {status:'allow'|'deny'} → webhook responds → hook emits
 //       the matching PreToolUse decision.
 //
@@ -21,7 +21,7 @@
 // for the UI to stash render state.
 //
 // Fail-closed posture: the relay only ever resolves to allow on an explicit
-// warchief tap. Timeout, expire, and any non-allow transition resolve to deny
+// operator tap. Timeout, expire, and any non-allow transition resolve to deny
 // (the hook maps `timeout` → deny too, but we keep the status distinct for
 // audit). One Promise per submit(); first transition wins.
 
@@ -82,7 +82,7 @@ export interface PermissionGateRelayDeps {
 
 export interface PermissionGateRelay {
   submit(input: PermissionGateSubmitInput): PermissionGateSubmitted
-  /** Resolve a pending request with the warchief's tap. First tap wins;
+  /** Resolve a pending request with the operator's tap. First tap wins;
    *  a later tap on the same request returns idempotent (no-op). */
   answer(requestId: string, behavior: 'allow' | 'deny'): PermissionGateStatus
   /** External give-up → resolves deny with reason. */

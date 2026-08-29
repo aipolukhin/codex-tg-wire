@@ -25,7 +25,7 @@
 ## Зависимости
 
 - `bun >= 1.0`
-- Запущенный экземпляр dashi-channel плагина (например через `channel-thrall.service` systemd unit)
+- Запущенный экземпляр dashi-channel плагина (например через `channel-agent-one.service` systemd unit)
 - `TELEGRAM_WEBHOOK_TOKEN`, `TELEGRAM_WEBHOOK_HOST`, `TELEGRAM_WEBHOOK_PORT`, `TELEGRAM_BOT_TOKEN` в env плагина (обычно в `channel.env`)
 - В конфиге плагина (`<state_dir>/config.json`) — блок `"webhook": { "enabled": true, "host": "127.0.0.1", "port": <port> }`
 

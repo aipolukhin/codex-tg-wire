@@ -1,6 +1,6 @@
 // /keys — deterministic keystrokes from Telegram into the agent's tmux pane.
 //
-// Problem (warchief, 2026-06-12): Claude Code's NATIVE interactive dialogs
+// Problem (operator, 2026-06-12): Claude Code's NATIVE interactive dialogs
 // (permission rules like `Bash(rm:*) requires confirmation`, model switch
 // prompts, trust dialogs) render in the terminal. The tmux mirror SHOWS them
 // in Telegram, but there was no way to ANSWER one remotely — the session sat
@@ -303,7 +303,7 @@ async function sendNamedKeyInner(
 // ─────────────────────────────────────────────────────────────────────
 // /clear, /compact & friends — RELIABLE control-command injection.
 //
-// Problem (warchief, 2026-07-01, verified empirically): the 3-shot
+// Problem (operator, 2026-07-01, verified empirically): the 3-shot
 // `sendSlashCommand` above (C-u / -l '/cmd' / Enter) is correct ONLY when the
 // pane is IDLE. It fails in two states:
 //   - BUSY: Claude Code QUEUES text typed while it is working; the command

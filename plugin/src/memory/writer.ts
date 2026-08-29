@@ -28,7 +28,7 @@ export interface MemoryConfig {
   // default when config.memory.logs_path is unset).
   logsPath: string
   sourceTag: string
-  // Human-friendly capitalised name (e.g. 'Silvana', 'Kaelthas').
+  // Human-friendly capitalised name (e.g. 'ExampleAgent', 'ExamplePeer').
   agentLabel: string
   maxHotBytes: number
   trimKeepLines: number

@@ -76,7 +76,7 @@ describe('createSafeTelegramApi — secret redaction', () => {
     const { api, calls } = makeStubApi()
     const { log } = makeLog()
     const safe = createSafeTelegramApi(api, log)
-    const token = '8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
+    const token = '987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
     await safe.sendMessage('123', `oops token ${token} leaked`, {})
     expect(calls).toHaveLength(1)
     expect(calls[0]!.text).not.toContain(token)
@@ -159,7 +159,7 @@ describe('createSafeTelegramApi — HTML validation', () => {
     const { api, calls } = makeStubApi()
     const { log } = makeLog()
     const safe = createSafeTelegramApi(api, log)
-    const token = '8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
+    const token = '987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
     await safe.sendMessage('1', `<script>${token}</script>`, { parse_mode: 'HTML' })
     // Downgraded body must still have the token removed.
     expect(calls[0]!.text).not.toContain(token)
@@ -253,7 +253,7 @@ describe('createSafeTelegramApi — inline keyboard redaction', () => {
     const { api, calls } = makeStubApi()
     const { log } = makeLog()
     const safe = createSafeTelegramApi(api, log)
-    const tok = '8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
+    const tok = '987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
     const reply_markup = {
       inline_keyboard: [[{ text: `leaked ${tok} oops` }]],
     }
@@ -360,7 +360,7 @@ describe('createSafeTelegramApi — editMessageText reply_markup propagation (F2
     const { api, calls } = makeStubApi()
     const { log } = makeLog()
     const safe = createSafeTelegramApi(api, log)
-    const tok = '8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
+    const tok = '987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
     await safe.editMessageText('1', 42, 'body', {
       reply_markup: {
         inline_keyboard: [[{ text: `tap ${tok}`, callback_data: 'cb' }]],

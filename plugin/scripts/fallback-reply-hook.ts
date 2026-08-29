@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
 // fallback-reply-hook.ts — Claude Code Stop hook → DM fallback reply.
 //
-// feature/dm-fallback-reply-hook (2026-06-03). The warchief's Telegram DM
+// feature/dm-fallback-reply-hook (2026-06-03). The operator's Telegram DM
 // (the main/launcher session) answers him through the
 // `mcp__dashi-channel__reply` MCP tool — that send is what actually reaches
 // his chat; the session transcript never does. If a turn ends WITHOUT having
-// called reply()/edit_message(), the warchief gets silence even though the
+// called reply()/edit_message(), the operator gets silence even though the
 // turn produced a final answer. This Stop hook closes that gap: on turn-end it
 // reads the session transcript, and IF the turn was answering a Telegram
 // message AND did not send an MCP reply this turn, it forwards the turn's
 // final assistant text to the plugin's POST /hooks/fallback-reply route, which
-// sends it to the warchief's Telegram via the single bot.
+// sends it to the operator's Telegram via the single bot.
 //
 // This mirrors the multichat per-chat auto-forward (src/chats/hooks/
 // stop-to-outbox.py) but for the DM, where sends go through the MCP reply tool
@@ -18,7 +18,7 @@
 // that Python hook; the route/env-file resolution + dedup-log layout are
 // reused from read-receipt-hook.ts.
 //
-// Suppression invariants (no duplicate to the warchief):
+// Suppression invariants (no duplicate to the operator):
 //   * If the turn called mcp__dashi-channel__reply OR
 //     mcp__dashi-channel__edit_message AND that call SUCCEEDED → a reply already
 //     reached him → silent. fix-loop #7 / fix-loop-2: ONLY a reply whose
@@ -89,8 +89,8 @@ export { loadChannelEnvFile, parseEnvFile }
 // reach a previous turn's text; dedup is the secondary guard.
 const TAIL_BYTES = 1024 * 1024
 
-// The two MCP tools that deliver a reply to the warchief's Telegram. If either
-// was called this turn, the warchief already saw the answer → no fallback.
+// The two MCP tools that deliver a reply to the operator's Telegram. If either
+// was called this turn, the operator already saw the answer → no fallback.
 const REPLY_TOOL_NAMES = new Set<string>([
   'mcp__dashi-channel__reply',
   'mcp__dashi-channel__edit_message',
@@ -149,8 +149,8 @@ export interface TurnResult {
  * (it could be injected by a message author or echoed transcript content), so
  * we read ONLY the leading tag.
  *
- * Tolerant of both the JSON-escaped transcript form (`chat_id=\"164795011\"`)
- * and the raw form. Only telegram envelopes match (orgrimmar-inbox events carry
+ * Tolerant of both the JSON-escaped transcript form (`chat_id=\"123456789\"`)
+ * and the raw form. Only telegram envelopes match (agent-inbox events carry
  * no telegram source). Returns undefined when the trimmed text does NOT start
  * with a telegram channel envelope → no trusted destination → no forward.
  *
@@ -483,7 +483,7 @@ export function resolveStatePath(
  * identifies the turn → use it alone. Without a uuid (legacy transcripts) the
  * assistant text alone is NOT a turn discriminator: two DIFFERENT turns in the
  * same session with identical assistant text would collide and the second
- * would be suppressed, losing the warchief an answer (FIX 6). So we fold the
+ * would be suppressed, losing the operator an answer (FIX 6). So we fold the
  * boundary user-prompt's text into the hash — different prompts → different
  * tokens even when the assistant text matches.
  */
@@ -604,7 +604,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * FIX 1: the route returns HTTP 200 for BOTH a real send AND a fail-soft send
  * failure ({status:'send_failed'}). Treating any 200 as success would persist
  * dedup on a transient send failure → a repeat Stop fire for the same turn is
- * suppressed → the warchief never gets the answer. So we parse the body and
+ * suppressed → the operator never gets the answer. So we parse the body and
  * succeed only on `{status:'sent'}`. For `{status:'send_failed'}`, an
  * unparseable body, or any non-200 → return false (dedup NOT written → a repeat
  * Stop fire retries the send).
@@ -699,7 +699,7 @@ async function main(): Promise<void> {
       continue
     }
     turn = analyzeCurrentTurn(transcript)
-    // A reply already reached the warchief this turn → never fall back.
+    // A reply already reached the operator this turn → never fall back.
     if (turn.replied) return
     if (turn.text !== undefined && turn.text.trim().length > 0) break
     if (attempt < attempts - 1 && delayMs > 0 && sleptMs < SLEEP_BUDGET_MS) {

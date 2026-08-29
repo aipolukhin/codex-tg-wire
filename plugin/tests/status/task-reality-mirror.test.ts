@@ -115,7 +115,7 @@ function makeSink(): { sink: ReconciledViewSink; views: ReconciledView[] } {
   return { sink, views }
 }
 
-const CHAT = '164795011'
+const CHAT = '123456789'
 
 function makeMirror(exec: TmuxExec, clock: FakeClock, sink: ReconciledViewSink) {
   return new TaskRealityMirror({

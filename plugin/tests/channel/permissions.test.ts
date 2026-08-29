@@ -52,12 +52,12 @@ function mkStatePaths(): StatePaths {
   }
 }
 
-function mkConfig(allowedIds: number[] = [164795011]): AppConfig {
+function mkConfig(allowedIds: number[] = [123456789]): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
@@ -85,6 +85,7 @@ function mkConfig(allowedIds: number[] = [164795011]): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -191,14 +192,14 @@ describe('parsePermissionTextReply', () => {
 
 describe('isPermissionApprover', () => {
   test('matches user_id from config', () => {
-    const cfg = mkConfig([164795011, 99])
-    expect(isPermissionApprover(164795011, cfg)).toBe(true)
-    expect(isPermissionApprover('164795011', cfg)).toBe(true)
+    const cfg = mkConfig([123456789, 99])
+    expect(isPermissionApprover(123456789, cfg)).toBe(true)
+    expect(isPermissionApprover('123456789', cfg)).toBe(true)
     expect(isPermissionApprover(99, cfg)).toBe(true)
   })
 
   test('rejects non-approver', () => {
-    const cfg = mkConfig([164795011])
+    const cfg = mkConfig([123456789])
     expect(isPermissionApprover(42, cfg)).toBe(false)
     expect(isPermissionApprover('42', cfg)).toBe(false)
     expect(isPermissionApprover('not-a-number', cfg)).toBe(false)
@@ -322,8 +323,8 @@ describe('handlePermissionCallback', () => {
   }
 
   test('unknown callback data is silently ignored (no auth error)', async () => {
-    const cfg = mkConfig([164795011])
-    const { ctx, calls } = mkCtx('garbage:payload', 164795011)
+    const cfg = mkConfig([123456789])
+    const { ctx, calls } = mkCtx('garbage:payload', 123456789)
     const { deps, emitted } = mkDeps(cfg, createPendingMap())
     await handlePermissionCallback(ctx, deps)
     expect(calls.answerCallbackQuery).toEqual([undefined])
@@ -332,7 +333,7 @@ describe('handlePermissionCallback', () => {
   })
 
   test('non-approver press answered "Not authorized."', async () => {
-    const cfg = mkConfig([164795011])
+    const cfg = mkConfig([123456789])
     const pending = createPendingMap()
     pending.set('abcde', { toolName: 'Bash', description: 'd', inputPreview: '{}' })
     const { ctx, calls } = mkCtx('perm:allow:abcde', 9999)
@@ -346,10 +347,10 @@ describe('handlePermissionCallback', () => {
   })
 
   test('approver "allow" press emits verdict and edits message', async () => {
-    const cfg = mkConfig([164795011])
+    const cfg = mkConfig([123456789])
     const pending = createPendingMap()
     pending.set('abcde', { toolName: 'Bash', description: 'd', inputPreview: '{}' })
-    const { ctx, calls } = mkCtx('perm:allow:abcde', 164795011)
+    const { ctx, calls } = mkCtx('perm:allow:abcde', 123456789)
     const { deps, emitted } = mkDeps(cfg, pending)
     await handlePermissionCallback(ctx, deps)
     expect(emitted).toEqual([{ behavior: 'allow', requestId: 'abcde' }])
@@ -360,10 +361,10 @@ describe('handlePermissionCallback', () => {
   })
 
   test('approver "deny" press emits deny and edits message', async () => {
-    const cfg = mkConfig([164795011])
+    const cfg = mkConfig([123456789])
     const pending = createPendingMap()
     pending.set('abcde', { toolName: 'Bash', description: 'd', inputPreview: '{}' })
-    const { ctx, calls } = mkCtx('perm:deny:abcde', 164795011)
+    const { ctx, calls } = mkCtx('perm:deny:abcde', 123456789)
     const { deps, emitted } = mkDeps(cfg, pending)
     await handlePermissionCallback(ctx, deps)
     expect(emitted).toEqual([{ behavior: 'deny', requestId: 'abcde' }])
@@ -372,14 +373,14 @@ describe('handlePermissionCallback', () => {
   })
 
   test('"more" press expands details with Allow/Deny keyboard', async () => {
-    const cfg = mkConfig([164795011])
+    const cfg = mkConfig([123456789])
     const pending = createPendingMap()
     pending.set('abcde', {
       toolName: 'Bash',
       description: 'run ls',
       inputPreview: '{"cmd":"ls"}',
     })
-    const { ctx, calls } = mkCtx('perm:more:abcde', 164795011)
+    const { ctx, calls } = mkCtx('perm:more:abcde', 123456789)
     const { deps, emitted } = mkDeps(cfg, pending)
     await handlePermissionCallback(ctx, deps)
     expect(emitted).toEqual([])
@@ -394,8 +395,8 @@ describe('handlePermissionCallback', () => {
   })
 
   test('"more" press without pending answers "Details no longer available."', async () => {
-    const cfg = mkConfig([164795011])
-    const { ctx, calls } = mkCtx('perm:more:abcde', 164795011)
+    const cfg = mkConfig([123456789])
+    const { ctx, calls } = mkCtx('perm:more:abcde', 123456789)
     const { deps, emitted } = mkDeps(cfg, createPendingMap())
     await handlePermissionCallback(ctx, deps)
     expect(calls.answerCallbackQuery).toEqual([{ text: 'Details no longer available.' }])

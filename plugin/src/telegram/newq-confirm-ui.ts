@@ -149,7 +149,7 @@ export function buildNewConfirmCard(): { text: string; inlineKeyboard: InlineKey
 // ─────────────────────────────────────────────────────────────────────
 // Callback handler. Mirrors handleCcmdCallback's fail-closed shape:
 // auth FIRST → parse → act. Edits the card message to the real outcome so the
-// warchief sees whether the clear actually fired.
+// operator sees whether the clear actually fired.
 // ─────────────────────────────────────────────────────────────────────
 
 export interface NewqCallbackContext {

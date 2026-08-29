@@ -19,7 +19,7 @@ describe('redactSecrets — Telegram bot tokens', () => {
   })
 
   test('masks Telegram token embedded in a URL', () => {
-    const token = '8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
+    const token = '987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR'
     const out = redactSecrets(`https://api.telegram.org/bot${token}/getMe`)
     expect(out).not.toContain(token)
   })
@@ -133,11 +133,11 @@ describe('redactSecrets — Firebase service-account JSON', () => {
   })
 
   test('masks client_email value', () => {
-    const json = '{"client_email":"sa-thrall@orgrimmar.iam.gserviceaccount.com"}'
+    const json = '{"client_email":"service-account@example.invalid"}'
     const out = redactSecrets(json)
     expect(out).toContain('"client_email"')
     expect(out).toContain('"[REDACTED]"')
-    expect(out).not.toContain('sa-thrall@orgrimmar')
+    expect(out).not.toContain('service-account@example.invalid')
   })
 })
 
@@ -166,7 +166,7 @@ describe('redactSecrets — generic long token + extras', () => {
 describe('redactSecrets — URL exemption for the generic long-token rule', () => {
   // 2026-06-05: the generic rule masked repo slugs inside GitHub links
   // (`dashi-plugin-claude-code` → `dash***code`), producing dead URLs the
-  // warchief could not open. Long path segments inside http(s) URLs are
+  // operator could not open. Long path segments inside http(s) URLs are
   // exempt from the GENERIC rule only — every specific rule still fires.
 
   test('GitHub PR link with a long repo slug survives intact', () => {
@@ -209,7 +209,7 @@ describe('redactSecrets — URL exemption for the generic long-token rule', () =
 
   test('Telegram bot token inside a URL is STILL redacted', () => {
     const out = redactSecrets(
-      'https://api.telegram.org/bot8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR/sendMessage',
+      'https://api.telegram.org/bot987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR/sendMessage',
     )
     expect(out).not.toContain('AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR')
   })
@@ -342,7 +342,7 @@ describe('redactSecrets — no false positives', () => {
 describe('redactSecrets — idempotency', () => {
   test('applying twice yields the same result for a mix of secrets', () => {
     const input = [
-      'token=8507713167:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR',
+      'token=987654321:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRR',
       'GROQ=gsk_' + 'X'.repeat(45),
       'Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234',
       'ip 8.8.8.8',

@@ -76,7 +76,7 @@ describe('redact — no secret survives the report', () => {
     expect(redact('gsk_abcdefghijklmnopqrstuvwxyz0123')).toContain('<groq-key>')
     expect(redact('sk-proj-abcdefghijklmnopqrst')).toContain('<api-key>')
     expect(redact('Authorization: Bearer abcdef.ghijk-lmnop')).toContain('Bearer <redacted>')
-    expect(redact('listening on 100.104.191.127')).toContain('<ip>')
+    expect(redact('listening on 192.0.2.11')).toContain('<ip>')
   })
   test('masks quoted secret values with spaces/commas/newlines (review P1)', () => {
     expect(redact('PASSWORD="abc def"')).not.toContain('abc def')
@@ -206,7 +206,7 @@ describe('checkSettingsHooks', () => {
               {
                 type: 'command',
                 command:
-                  "TELEGRAM_HOOK_CHAT_ID='164795011' TELEGRAM_HOOK_AGENT_ID='arthas' TELEGRAM_WEBHOOK_URL='http://127.0.0.1:8103/hooks/agent' bun '/srv/agent/.claude/jarvis-channel/plugin/scripts/post-hook.ts'",
+                  "TELEGRAM_HOOK_CHAT_ID='123456789' TELEGRAM_HOOK_AGENT_ID='agent-two' TELEGRAM_WEBHOOK_URL='http://127.0.0.1:8103/hooks/agent' bun '/srv/agent/.claude/dashi-plugin-claude-code/plugin/scripts/post-hook.ts'",
               },
             ],
           },
@@ -247,7 +247,7 @@ describe('checkPermissionGate', () => {
   const gateEntry = {
     marker: 'dashi-permission-gate-hook',
     matcher: '.*',
-    hooks: [{ type: 'command', command: "CHAT_ID='164795011' TELEGRAM_WEBHOOK_URL='http://127.0.0.1:8093' bun '/p/scripts/permission-gate-hook.ts'" }],
+    hooks: [{ type: 'command', command: "CHAT_ID='123456789' TELEGRAM_WEBHOOK_URL='http://127.0.0.1:8093' bun '/p/scripts/permission-gate-hook.ts'" }],
   }
 
   test('no gate hook → skip (optional feature off)', () => {
@@ -339,11 +339,11 @@ describe('parseEnvList — tolerates real .env noise', () => {
 
 describe('checkAllowlist (user AND chat)', () => {
   test('user present → pass', () => {
-    const c = checkAllowlist('TELEGRAM_ALLOWED_USER_IDS=164795011,42', '42')
+    const c = checkAllowlist('TELEGRAM_ALLOWED_USER_IDS=123456789,42', '42')
     expect(c.find((x) => x.id === 'allowlist-user')?.status).toBe('pass')
   })
   test('user absent → fail with inline-comment value still parsed', () => {
-    const c = checkAllowlist('TELEGRAM_ALLOWED_USER_IDS=164795011 # chief', '42')
+    const c = checkAllowlist('TELEGRAM_ALLOWED_USER_IDS=123456789 # chief', '42')
     const user = c.find((x) => x.id === 'allowlist-user')
     expect(user?.status).toBe('fail')
     expect(user?.detail).toContain('silently dropped')
@@ -421,11 +421,11 @@ describe('report aggregation', () => {
     expect(r).toContain('1 WARN')
   })
   test('redactCheck scrubs detail and fix (the --json output path)', () => {
-    const c = redactCheck({ id: 'x', title: 'token 100.104.191.127', status: 'fail', detail: 'leak 8338508613:AAH1234567890abcdefghijklmnopqrstuvw', fix: 'GROQ_API_KEY=gsk_abcdefghijklmnopqrstuvwxyz0123' })
+    const c = redactCheck({ id: 'x', title: 'token 192.0.2.11', status: 'fail', detail: 'leak 8338508613:AAH1234567890abcdefghijklmnopqrstuvw', fix: 'GROQ_API_KEY=gsk_abcdefghijklmnopqrstuvwxyz0123' })
     const json = JSON.stringify(c)
     expect(json).not.toContain('AAH1234567890')
     expect(json).not.toContain('gsk_abcdefghijklmnopqrstuvwxyz0123')
-    expect(json).not.toContain('100.104.191.127')
+    expect(json).not.toContain('192.0.2.11')
   })
   test('redact masks secret-key assignments regardless of value shape', () => {
     expect(redact('TELEGRAM_WEBHOOK_TOKEN=super-secret-xyz')).not.toContain('super-secret-xyz')
@@ -459,20 +459,20 @@ describe('fleet (multi-agent) checks', () => {
   test('parseUnitFile extracts EnvironmentFile and per-Exec-line sockets', () => {
     const unit = [
       '[Service]',
-      'EnvironmentFile=/etc/dashi-plugin/arthas/channel.env',
-      "ExecStart=/usr/bin/tmux -L channel-arthas new-session -d -s channel-arthas 'claude ...'",
+      'EnvironmentFile=/etc/dashi-plugin/agent-two/channel.env',
+      "ExecStart=/usr/bin/tmux -L channel-agent-two new-session -d -s channel-agent-two 'claude ...'",
       'ExecStartPost=/usr/local/bin/confirm.sh',
-      'ExecStop=/usr/bin/tmux -L channel-arthas kill-session -t channel-arthas',
+      'ExecStop=/usr/bin/tmux -L channel-agent-two kill-session -t channel-agent-two',
     ].join('\n')
     const parsed = parseUnitFile(unit)
-    expect(parsed.envPath).toBe('/etc/dashi-plugin/arthas/channel.env')
-    expect(parsed.sockets).toEqual(['channel-arthas'])
+    expect(parsed.envPath).toBe('/etc/dashi-plugin/agent-two/channel.env')
+    expect(parsed.sockets).toEqual(['channel-agent-two'])
   })
 
   test('parseUnitFile: default socket registers as empty string; mixed sockets both appear', () => {
     const unit = [
-      'ExecStart=/usr/bin/tmux new-session -d -s channel-thrall claude',
-      'ExecStop=/usr/bin/tmux -L other kill-session -t channel-thrall',
+      'ExecStart=/usr/bin/tmux new-session -d -s channel-agent-one claude',
+      'ExecStop=/usr/bin/tmux -L other kill-session -t channel-agent-one',
     ].join('\n')
     const parsed = parseUnitFile(unit)
     expect(parsed.sockets.sort()).toEqual(['', 'other'])
@@ -491,8 +491,8 @@ describe('fleet (multi-agent) checks', () => {
 
   test('healthy two-agent fleet passes everything', () => {
     const checks = byId(checkFleet([
-      agent({ name: 'thrall', sockets: [''], port: '8093', tokenDigest: 'd1', stateDir: '/s/1', workspaceRoot: '/w/1', hookPorts: ['8093'] }),
-      agent({ name: 'arthas', sockets: ['channel-arthas'], port: '8103', tokenDigest: 'd2', stateDir: '/s/2', workspaceRoot: '/w/2', hookPorts: ['8103'] }),
+      agent({ name: 'agent-one', sockets: [''], port: '8093', tokenDigest: 'd1', stateDir: '/s/1', workspaceRoot: '/w/1', hookPorts: ['8093'] }),
+      agent({ name: 'agent-two', sockets: ['channel-agent-two'], port: '8103', tokenDigest: 'd2', stateDir: '/s/2', workspaceRoot: '/w/2', hookPorts: ['8103'] }),
     ], '{"hooks":{}}'))
     expect(checks['fleet-size']?.status).toBe('pass')
     expect(checks['fleet-ports-unique']?.status).toBe('pass')
@@ -546,7 +546,7 @@ describe('fleet (multi-agent) checks', () => {
   })
 
   test('hooks pointing at a foreign port = fail (the last-install-wins disaster)', () => {
-    const checks = byId(checkFleet([agent({ name: 'arthas', port: '8103', hookPorts: ['8093'] })], null))
+    const checks = byId(checkFleet([agent({ name: 'agent-two', port: '8103', hookPorts: ['8093'] })], null))
     expect(checks['fleet-hook-ports']?.status).toBe('fail')
     expect(checks['fleet-hook-ports']?.detail).toContain('8093')
   })
@@ -610,7 +610,7 @@ describe('fleet checks — review fixes (Codex HOLD round)', () => {
   })
 
   test('foreign port NEXT TO the own port still fails (stale last-install hook)', () => {
-    const checks = byId(checkFleet([agent({ name: 'arthas', port: '8103', hookPorts: ['8103', '8093'] })], null))
+    const checks = byId(checkFleet([agent({ name: 'agent-two', port: '8103', hookPorts: ['8103', '8093'] })], null))
     expect(checks['fleet-hook-ports']?.status).toBe('fail')
     expect(checks['fleet-hook-ports']?.detail).toContain('8093')
     expect(checks['fleet-hook-ports']?.detail).not.toContain('8103,')
@@ -744,21 +744,21 @@ describe('findMatchingRuntime — fleet host, match by CWD not by first PID', ()
   test('first candidate foreign, second matches → pass with others counted', () => {
     const r = findMatchingRuntime(
       [
-        { pid: '100', cwd: '/srv/arthas/.claude/jc/plugin' },
-        { pid: '200', cwd: '/srv/thrall/.claude/jc/plugin' },
+        { pid: '100', cwd: '/srv/agent-two/.claude/jc/plugin' },
+        { pid: '200', cwd: '/srv/agent-one/.claude/jc/plugin' },
       ],
-      '/srv/thrall/.claude/jc/plugin',
+      '/srv/agent-one/.claude/jc/plugin',
     )
     expect(r.match?.pid).toBe('200')
     expect(r.others).toBe(1)
   })
   test('no candidate matches → null match', () => {
-    const r = findMatchingRuntime([{ pid: '100', cwd: '/srv/other/plugin' }], '/srv/thrall/plugin')
+    const r = findMatchingRuntime([{ pid: '100', cwd: '/srv/other/plugin' }], '/srv/agent-one/plugin')
     expect(r.match).toBeNull()
     expect(r.others).toBe(1)
   })
   test('empty cwd (unreadable /proc) never matches', () => {
-    const r = findMatchingRuntime([{ pid: '100', cwd: '' }], '/srv/thrall/plugin')
+    const r = findMatchingRuntime([{ pid: '100', cwd: '' }], '/srv/agent-one/plugin')
     expect(r.match).toBeNull()
   })
 })
@@ -884,7 +884,7 @@ describe('permission policy lint', () => {
     expect(c?.status).toBe('warn')
   })
   test('lifting sudo / rm -rf → WARN (ultra-autonomy, deliberate); lifting only git push → pass', () => {
-    // 2026-06-10: warchief ultra-autonomy order downgraded this from FAIL to
+    // 2026-06-10: operator ultra-autonomy order downgraded this from FAIL to
     // WARN — sudo/rm-rf are overridable BUILTIN_CONFIRM rules (not hard-deny),
     // so lifting them is an eyes-open owner choice, still surfaced as a WARN.
     const bad = 'confirm_overrides:\n  builtin_rules:\n    - "sudo "\n'
@@ -914,9 +914,9 @@ describe('multichat lint', () => {
     'version: 1',
     'allowlist:',
     '  chats:',
-    '    - "164795011"',
+    '    - "123456789"',
     'chats:',
-    '  "164795011":',
+    '  "123456789":',
     '    mode: private',
     '    tmux_mirror: true',
     '  "-1003784643974":',
@@ -926,7 +926,7 @@ describe('multichat lint', () => {
   test('extractChatPolicies reads mode and tmux_mirror per chat', () => {
     const p = extractChatPolicies(policy)
     expect(p).toHaveLength(2)
-    expect(p[0]).toEqual({ id: '164795011', mode: 'private', tmuxMirror: true })
+    expect(p[0]).toEqual({ id: '123456789', mode: 'private', tmuxMirror: true })
     expect(p[1]).toEqual({ id: '-1003784643974', mode: 'public', tmuxMirror: false })
   })
   test('DM mirror + public no-mirror → pass', () => {
@@ -939,12 +939,12 @@ describe('multichat lint', () => {
     expect(c.detail).toContain('-1003784643974')
   })
   test('chat dir without a policy entry → warn', () => {
-    const c = checkMultichatDirs(['164795011'], ['164795011', '-2000'])
+    const c = checkMultichatDirs(['123456789'], ['123456789', '-2000'])
     expect(c.status).toBe('warn')
     expect(c.detail).toContain('-2000')
   })
   test('all dirs covered → pass', () => {
-    expect(checkMultichatDirs(['164795011', '-2000'], ['164795011']).status).toBe('pass')
+    expect(checkMultichatDirs(['123456789', '-2000'], ['123456789']).status).toBe('pass')
   })
   test('spawn-chat-shell: TMUX_PANE forwarded → pass, absent → FAIL, missing file → skip', () => {
     expect(checkSpawnChatShell('env -i TMUX_PANE="${TMUX_PANE:-}" bash').status).toBe('pass')
@@ -956,17 +956,17 @@ describe('multichat lint', () => {
 describe('parseUnitFile — autodetect fields', () => {
   const unit = [
     '[Service]',
-    'EnvironmentFile=/srv/thrall/private/channel.env',
-    'WorkingDirectory=/srv/thrall/.claude/jc/plugin',
-    `ExecStart=/usr/bin/tmux -L channel-thrall new-session -d -s channel-thrall 'claude --model fable --permission-mode bypassPermissions server:dashi-channel'`,
-    `ExecStop=/usr/bin/tmux -L channel-thrall kill-session -t channel-thrall`,
+    'EnvironmentFile=/srv/agent-one/private/channel.env',
+    'WorkingDirectory=/srv/agent-one/.claude/jc/plugin',
+    `ExecStart=/usr/bin/tmux -L channel-agent-one new-session -d -s channel-agent-one 'claude --model fable --permission-mode bypassPermissions server:dashi-channel'`,
+    `ExecStop=/usr/bin/tmux -L channel-agent-one kill-session -t channel-agent-one`,
   ].join('\n')
   test('reads WorkingDirectory, session name and bypassPermissions', () => {
     const p = parseUnitFile(unit)
-    expect(p.workingDirectory).toBe('/srv/thrall/.claude/jc/plugin')
-    expect(p.sessionName).toBe('channel-thrall')
+    expect(p.workingDirectory).toBe('/srv/agent-one/.claude/jc/plugin')
+    expect(p.sessionName).toBe('channel-agent-one')
     expect(p.bypassPermissions).toBe(true)
-    expect(p.sockets).toEqual(['channel-thrall'])
+    expect(p.sockets).toEqual(['channel-agent-one'])
   })
   test('no bypass flag → false; no -s → null session', () => {
     const p = parseUnitFile("ExecStart=/usr/bin/tmux new-session -d 'claude server:x'")
@@ -1000,15 +1000,15 @@ describe('matchAgentForPlugin', () => {
     gateHookRegistered: false,
   })
   test('matches by WorkingDirectory first', () => {
-    const a = matchAgentForPlugin([agent('arthas', '/srv/a/plugin', null), agent('thrall', '/srv/t/plugin', null)], '/srv/t/plugin')
-    expect(a?.name).toBe('thrall')
+    const a = matchAgentForPlugin([agent('agent-two', '/srv/a/plugin', null), agent('agent-one', '/srv/t/plugin', null)], '/srv/t/plugin')
+    expect(a?.name).toBe('agent-one')
   })
   test('falls back to workspace root containment', () => {
-    const a = matchAgentForPlugin([agent('thrall', null, '/srv/t/.claude')], '/srv/t/.claude/jc/plugin')
-    expect(a?.name).toBe('thrall')
+    const a = matchAgentForPlugin([agent('agent-one', null, '/srv/t/.claude')], '/srv/t/.claude/jc/plugin')
+    expect(a?.name).toBe('agent-one')
   })
   test('no match → null (no cross-agent false positive)', () => {
-    expect(matchAgentForPlugin([agent('arthas', '/srv/a/plugin', '/srv/a/.claude')], '/srv/t/plugin')).toBeNull()
+    expect(matchAgentForPlugin([agent('agent-two', '/srv/a/plugin', '/srv/a/.claude')], '/srv/t/plugin')).toBeNull()
   })
 })
 
@@ -1049,7 +1049,7 @@ describe('review fixes — bind, env mode, mirror, stop hook, envValue, redact',
   test('group chat (negative id) with mirror and NO explicit private mode → FAIL (Codex M)', () => {
     expect(checkMultichatMirror([{ id: '-100123', mode: null, tmuxMirror: true }]).status).toBe('fail')
     expect(checkMultichatMirror([{ id: '-100123', mode: 'privte', tmuxMirror: true }]).status).toBe('fail') // typo ≠ private
-    expect(checkMultichatMirror([{ id: '164795011', mode: null, tmuxMirror: true }]).status).toBe('pass') // positive id = DM
+    expect(checkMultichatMirror([{ id: '123456789', mode: null, tmuxMirror: true }]).status).toBe('pass') // positive id = DM
   })
   test('mirror profile: fallback-only Stop does NOT satisfy the primary Stop hook (Codex M)', () => {
     const fallbackOnly = { hooks: { Stop: [hookEntry('dashi-channel-fallback-reply')] } }
@@ -1064,7 +1064,7 @@ describe('review fixes — bind, env mode, mirror, stop hook, envValue, redact',
   test('redact keeps 0.0.0.0 and 127.0.0.1 visible (interface literals, review L3)', () => {
     expect(redact('port 8091 bound to 0.0.0.0')).toContain('0.0.0.0')
     expect(redact('bound to 127.0.0.1')).toContain('127.0.0.1')
-    expect(redact('server at 100.104.191.127')).toContain('<ip>')
+    expect(redact('server at 192.0.2.11')).toContain('<ip>')
   })
   test('shared-settings markers: generic post-hook.ts alone no longer FAILS (review L2)', () => {
     expect(checkSharedSettingsClean('{"hooks":{"Stop":[{"command":"bun my-post-hook.ts"}]}}', false).status).toBe('pass')
@@ -1111,7 +1111,7 @@ describe('extractChatPolicies — bleed hardening (review M2)', () => {
 
 // ---------------------------------------------------------------------------
 // Permission-gate HARDENING (2026-06-10). The gate is the SOLE confirm path
-// under bypassPermissions; the Silvana incident shipped a bypass session with
+// under bypassPermissions; the ExampleAgent incident shipped a bypass session with
 // NO gate hook and the doctor only SKIPPED. These tests lock the class of
 // failure so it can never ship undetected again.
 // ---------------------------------------------------------------------------
@@ -1119,7 +1119,7 @@ describe('extractChatPolicies — bleed hardening (review M2)', () => {
 describe('checkPermissionGate — incident lock (no gate under bypass = FAIL, not skip)', () => {
   const settingsNoGate = { hooks: { PreToolUse: [hookEntry('dashi-channel-hook')] } }
 
-  test('no gate hook BUT unit runs bypassPermissions → FAIL (the Silvana incident)', () => {
+  test('no gate hook BUT unit runs bypassPermissions → FAIL (the ExampleAgent incident)', () => {
     const checks = checkPermissionGate(settingsNoGate, existsSync0, /*unitBypass*/ true)
     const gate = checks.find((c) => c.id === 'permission-gate')
     expect(gate?.status).toBe('fail')
@@ -1227,13 +1227,13 @@ describe('checkPermissionEndpoint — SAFE liveness probe (never POSTs the real 
   })
 })
 
-describe('fleet — Arthas-style bypass unit is detected as bypassPermissions:true', () => {
-  test('an Arthas-style ExecStart yields bypassPermissions:true', () => {
+describe('fleet — ExamplePeer-style bypass unit is detected as bypassPermissions:true', () => {
+  test('an ExamplePeer-style ExecStart yields bypassPermissions:true', () => {
     const unit = [
       '[Service]',
-      'EnvironmentFile=/srv/arthas/private/channel.env',
-      'WorkingDirectory=/srv/arthas/.claude/jc/plugin',
-      `ExecStart=/usr/bin/tmux -L channel-arthas new-session -d -s channel-arthas 'claude --model sonnet --permission-mode bypassPermissions server:dashi-channel'`,
+      'EnvironmentFile=/srv/agent-two/private/channel.env',
+      'WorkingDirectory=/srv/agent-two/.claude/jc/plugin',
+      `ExecStart=/usr/bin/tmux -L channel-agent-two new-session -d -s channel-agent-two 'claude --model sonnet --permission-mode bypassPermissions server:dashi-channel'`,
     ].join('\n')
     expect(parseUnitFile(unit).bypassPermissions).toBe(true)
   })
@@ -1246,7 +1246,7 @@ describe('checkFleet — every bypass agent has the gate enabled + hook register
     sockets: [`channel-${name}`],
     envPath: `/srv/${name}/channel.env`,
     envReadable: true,
-    port: name === 'thrall' ? '8093' : '8103',
+    port: name === 'agent-one' ? '8093' : '8103',
     tokenDigest: `digest-${name}`,
     stateDir: `/srv/${name}/state`,
     workspaceRoot: `/srv/${name}/ws`,
@@ -1261,45 +1261,45 @@ describe('checkFleet — every bypass agent has the gate enabled + hook register
   })
 
   test('all bypass agents gate-enabled + hook-registered → fleet-gate pass', () => {
-    const checks = checkFleet([base('thrall'), base('arthas')], null)
+    const checks = checkFleet([base('agent-one'), base('agent-two')], null)
     expect(checks.find((c) => c.id === 'fleet-gate')?.status).toBe('pass')
   })
 
-  test('a bypass agent missing the gate hook → fleet-gate FAIL (the Silvana incident, fleet-wide)', () => {
-    const bad = { ...base('silvana'), gateHookRegistered: false }
-    const checks = checkFleet([base('thrall'), bad], null)
+  test('a bypass agent missing the gate hook → fleet-gate FAIL (the ExampleAgent incident, fleet-wide)', () => {
+    const bad = { ...base('agent-one'), gateHookRegistered: false }
+    const checks = checkFleet([base('agent-one'), bad], null)
     const fg = checks.find((c) => c.id === 'fleet-gate')
     expect(fg?.status).toBe('fail')
-    expect(fg?.detail).toContain('silvana')
+    expect(fg?.detail).toContain('agent-one')
   })
 
   test('a bypass agent with gate hook but permission_gate.enabled=false → fleet-gate FAIL', () => {
-    const bad = { ...base('silvana'), gateEnabled: false }
-    const checks = checkFleet([base('thrall'), bad], null)
+    const bad = { ...base('agent-one'), gateEnabled: false }
+    const checks = checkFleet([base('agent-one'), bad], null)
     expect(checks.find((c) => c.id === 'fleet-gate')?.status).toBe('fail')
   })
 
   test('non-bypass agents are exempt from the gate requirement', () => {
-    const nonBypass = { ...base('garrosh'), bypassPermissions: false, gateEnabled: false, gateHookRegistered: false }
-    const checks = checkFleet([base('thrall'), nonBypass], null)
+    const nonBypass = { ...base('agent-three'), bypassPermissions: false, gateEnabled: false, gateHookRegistered: false }
+    const checks = checkFleet([base('agent-one'), nonBypass], null)
     expect(checks.find((c) => c.id === 'fleet-gate')?.status).toBe('pass')
   })
 
   test('a bypass agent with gate hook but UNREADABLE config (gateEnabled=null) → fleet-gate WARN, not PASS (Codex review 2026-06-10)', () => {
     // Emitting PASS here would claim "enabled=true" for an agent whose config
     // we never read — against the incident-lock goal.
-    const unknown = { ...base('silvana'), gateEnabled: null }
-    const checks = checkFleet([base('thrall'), unknown], null)
+    const unknown = { ...base('agent-one'), gateEnabled: null }
+    const checks = checkFleet([base('agent-one'), unknown], null)
     const fg = checks.find((c) => c.id === 'fleet-gate')
     expect(fg?.status).toBe('warn')
-    expect(fg?.detail).toContain('silvana')
+    expect(fg?.detail).toContain('agent-one')
     expect(fg?.detail).toContain('unverified')
   })
 
   test('a known FAIL outranks an unverified config (fail beats warn)', () => {
-    const unknown = { ...base('silvana'), gateEnabled: null }
-    const missing = { ...base('kaelthas'), gateHookRegistered: false }
-    const checks = checkFleet([base('thrall'), unknown, missing], null)
+    const unknown = { ...base('agent-one'), gateEnabled: null }
+    const missing = { ...base('agent-two'), gateHookRegistered: false }
+    const checks = checkFleet([base('agent-one'), unknown, missing], null)
     expect(checks.find((c) => c.id === 'fleet-gate')?.status).toBe('fail')
   })
 })

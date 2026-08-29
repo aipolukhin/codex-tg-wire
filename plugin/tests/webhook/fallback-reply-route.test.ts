@@ -19,7 +19,7 @@ import { startWebhookServer, type WebhookDeps, type WebhookServerHandle } from '
 
 const FAKE_TOKEN = '123456789:AAH-fake_test_token_with_at_least_thirty_chars'
 const WEBHOOK_TOKEN = 'wh_test_token_32_chars__________'
-const WARCHIEF_ID = '164795011'
+const OWNER_ID = '123456789'
 const GROUP_ID = '-1003784643974'
 
 let stateDir: string
@@ -54,7 +54,8 @@ beforeEach(() => {
   const env = {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
-    TELEGRAM_ALLOWED_CHAT_IDS: `${WARCHIEF_ID},${GROUP_ID}`,
+    TELEGRAM_ALLOWED_USER_IDS: '123456789',
+    TELEGRAM_ALLOWED_CHAT_IDS: `${OWNER_ID},${GROUP_ID}`,
   }
   baseConfig = loadConfig(env)
   paths = getStatePaths(baseConfig, { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir })
@@ -121,10 +122,10 @@ describe('POST /hooks/fallback-reply', () => {
   test('happy path sends the DM fallback text', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'final answer' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'final answer' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
-    expect(calls).toEqual([{ chatId: WARCHIEF_ID, text: 'final answer' }])
+    expect(calls).toEqual([{ chatId: OWNER_ID, text: 'final answer' }])
   })
 
   test('supports a negative group chat_id', async () => {
@@ -142,7 +143,7 @@ describe('POST /hooks/fallback-reply', () => {
         throw new Error('429 Too Many Requests')
       },
     })
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'x' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'x' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'send_failed' })
   })
@@ -150,7 +151,7 @@ describe('POST /hooks/fallback-reply', () => {
   test('503 when send capability is not wired', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h } = await start({ omitSend: true })
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'x' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'x' })
     expect(resp.status).toBe(503)
     expect(await resp.json()).toEqual({ status: 'fallback_reply_unavailable' })
   })
@@ -166,7 +167,7 @@ describe('POST /hooks/fallback-reply', () => {
   test('401 without bearer', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'x' }, null)
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'x' }, null)
     expect(resp.status).toBe(401)
     expect(calls).toEqual([])
   })
@@ -174,7 +175,7 @@ describe('POST /hooks/fallback-reply', () => {
   test('400 on malformed body (missing text)', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID })
+    const resp = await post(h, { chat_id: OWNER_ID })
     expect(resp.status).toBe(400)
   })
 
@@ -188,7 +189,7 @@ describe('POST /hooks/fallback-reply', () => {
   test('400 on empty text', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: '' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: '' })
     expect(resp.status).toBe(400)
   })
 
@@ -198,7 +199,7 @@ describe('POST /hooks/fallback-reply', () => {
     // > FALLBACK_REPLY_BODY_LIMIT_BYTES (32 KB after FIX 5). Schema would also
     // reject text > 4096 chars, but the body cap rejects earlier with 413.
     const huge = 'a'.repeat(40 * 1024)
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: huge })
+    const resp = await post(h, { chat_id: OWNER_ID, text: huge })
     expect(resp.status).toBe(413)
     expect(calls).toEqual([])
   })
@@ -210,10 +211,10 @@ describe('POST /hooks/fallback-reply', () => {
     // OLD 16 KB cap and prove the 32 KB cap admits it. The hook truncates to
     // ≤4096 chars before posting, so the schema's .max(4096) is satisfied.
     const cjk = '中'.repeat(4096) // 3 bytes each → ~12 KB; under both caps but exercises multibyte
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: cjk })
+    const resp = await post(h, { chat_id: OWNER_ID, text: cjk })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
-    expect(calls).toEqual([{ chatId: WARCHIEF_ID, text: cjk }])
+    expect(calls).toEqual([{ chatId: OWNER_ID, text: cjk }])
   })
 })
 
@@ -224,9 +225,9 @@ describe('POST /hooks/fallback-reply — ask-guard', () => {
   test('block mode + active lease + self-gate → NOT forwarded, status ask_guard_blocked', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     process.env.ASK_GUARD_MODE = 'block'
-    seedActiveLease(WARCHIEF_ID)
+    seedActiveLease(OWNER_ID)
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'жду го, мой вождь' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'жду го, мой владелец' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'ask_guard_blocked' })
     expect(calls).toEqual([]) // nothing sent to the owner
@@ -235,20 +236,20 @@ describe('POST /hooks/fallback-reply — ask-guard', () => {
   test('block mode + active lease + BENIGN status text → forwarded (rephrased status goes out)', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     process.env.ASK_GUARD_MODE = 'block'
-    seedActiveLease(WARCHIEF_ID)
+    seedActiveLease(OWNER_ID)
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'Готово, мой вождь. Задеплоил.' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'Готово, мой владелец. Задеплоил.' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
-    expect(calls).toEqual([{ chatId: WARCHIEF_ID, text: 'Готово, мой вождь. Задеплоил.' }])
+    expect(calls).toEqual([{ chatId: OWNER_ID, text: 'Готово, мой владелец. Задеплоил.' }])
   })
 
   test('block mode + active lease + hard-gate self-gate → forwarded (hard-gate exempt)', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     process.env.ASK_GUARD_MODE = 'block'
-    seedActiveLease(WARCHIEF_ID)
+    seedActiveLease(OWNER_ID)
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'жду го на списание денег' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'жду го на списание денег' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
     expect(calls.length).toBe(1)
@@ -261,26 +262,26 @@ describe('POST /hooks/fallback-reply — ask-guard', () => {
   test('block mode + active lease + CI-status wait → forwarded (not discarded)', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     process.env.ASK_GUARD_MODE = 'block'
-    seedActiveLease(WARCHIEF_ID)
+    seedActiveLease(OWNER_ID)
     const { h, calls } = await start()
     const resp = await post(h, {
-      chat_id: WARCHIEF_ID,
+      chat_id: OWNER_ID,
       text: 'жду подтверждения, что CI завершился',
     })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
-    expect(calls).toEqual([{ chatId: WARCHIEF_ID, text: 'жду подтверждения, что CI завершился' }])
+    expect(calls).toEqual([{ chatId: OWNER_ID, text: 'жду подтверждения, что CI завершился' }])
   })
 
   test('advisory mode + active lease + self-gate → forwarded unchanged', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     process.env.ASK_GUARD_MODE = 'advisory'
-    seedActiveLease(WARCHIEF_ID)
+    seedActiveLease(OWNER_ID)
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'жду го' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'жду го' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
-    expect(calls).toEqual([{ chatId: WARCHIEF_ID, text: 'жду го' }])
+    expect(calls).toEqual([{ chatId: OWNER_ID, text: 'жду го' }])
   })
 
   test('block mode but NO active lease → forwarded (guard inert)', async () => {
@@ -288,7 +289,7 @@ describe('POST /hooks/fallback-reply — ask-guard', () => {
     process.env.ASK_GUARD_MODE = 'block'
     // no lease seeded
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'жду го' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'жду го' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
     expect(calls.length).toBe(1)
@@ -297,9 +298,9 @@ describe('POST /hooks/fallback-reply — ask-guard', () => {
   test('kill-switch off + active lease + self-gate → forwarded (guard disabled)', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     process.env.ASK_GUARD_MODE = 'off'
-    seedActiveLease(WARCHIEF_ID)
+    seedActiveLease(OWNER_ID)
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, text: 'жду го' })
+    const resp = await post(h, { chat_id: OWNER_ID, text: 'жду го' })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'sent' })
     expect(calls.length).toBe(1)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code SessionStart hook for multichat-thrall.
+# Claude Code SessionStart hook for a multichat child session.
 #
 # Reads $CHAT_ID (set by tmux-session-pool when spawning the session),
 # loads {WORKSPACE}/chats/{CHAT_ID}/persona.md and the chat's
@@ -26,7 +26,7 @@ set -euo pipefail
 
 # Sentinel: this hook is multichat-specific. If MULTICHAT_STATE_DIR is unset
 # the hook is running outside a per-chat tmux session (e.g. accidentally
-# registered into the master Thrall workspace). Exit cleanly without emitting
+# registered into the host workspace). Exit cleanly without emitting
 # any additionalContext so the master session is not polluted with a chat
 # persona it never asked for.
 if [[ -z "${MULTICHAT_STATE_DIR:-}" ]]; then
@@ -38,7 +38,11 @@ if [[ -z "${CHAT_ID:-}" ]]; then
   exit 0
 fi
 
-WORKSPACE="${CLAUDE_WORKSPACE_DIR:-${HOME}/.claude-lab/thrall/.claude}"
+WORKSPACE="${CLAUDE_WORKSPACE_DIR:-${TELEGRAM_WORKSPACE_ROOT:-}}"
+if [[ -z "${WORKSPACE}" ]]; then
+  echo "session-start: CLAUDE_WORKSPACE_DIR not set, skipping persona injection" >&2
+  exit 0
+fi
 POLICY_PATH="${WORKSPACE}/chats/policy.yaml"
 PERSONA_PATH="${WORKSPACE}/chats/${CHAT_ID}/persona.md"
 

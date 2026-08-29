@@ -88,8 +88,8 @@ const TIER1: ReadonlyArray<AskPattern> = [
   //   (B) no owner prefix «жду подтверждения …» + one of:
   //         • TERMINAL: optional non-comma sentence punctuation then end-of-line
   //           (a bare owner-wait that ENDS the clause), OR
-  //         • COMMA + owner ref («жду подтверждения, вождь / твоё / от тебя»), OR
-  //         • SPACE + owner ref («жду подтверждения от тебя / твоё / вождь»).
+  //         • COMMA + owner ref («жду подтверждения, владелец / твоё / от тебя»), OR
+  //         • SPACE + owner ref («жду подтверждения от тебя / твоё / владелец»).
   // fix-loop #6 (Codex round-2): the OLD terminal branch accepted ANY comma
   // regardless of the following words, so a STATUS wait «жду подтверждения, что
   // CI завершился» self-gated by mistake. The comma now only satisfies the
@@ -106,8 +106,8 @@ const TIER1: ReadonlyArray<AskPattern> = [
         // (B) no prefix — needs a terminal-at-EOL / comma-owner / space-owner tail
         `подтвержден(?:и[еяю]|ья)(?=` +
           `\\s*[.!?…)]?\\s*$` +
-          `|\\s*,\\s*(?:от\\s+тебя|тво[её]${LETTER}*|вожд${LETTER}*)` +
-          `|\\s+(?:от\\s+тебя|тво[её]${LETTER}*|вожд${LETTER}*)(?!${LETTER})` +
+          `|\\s*,\\s*(?:от\\s+тебя|тво[её]${LETTER}*|владелец|владельц${LETTER}*)` +
+          `|\\s+(?:от\\s+тебя|тво[её]${LETTER}*|владелец|владельц${LETTER}*)(?!${LETTER})` +
         `)` +
       `)`,
       'i',

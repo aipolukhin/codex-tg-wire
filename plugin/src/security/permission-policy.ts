@@ -421,7 +421,7 @@ function bashReferencesSecret(command: string): boolean {
 // -c …`). The detection is now POSITIONAL and command-anchored: split the
 // pipeline into segments, tokenize each git-bearing segment quote-aware, and a
 // global `-c` seen before the first non-option token is the surface (option B,
-// warchief 2026-07-08). The long forms (`--config`/`--config-env`,
+// operator 2026-07-08). The long forms (`--config`/`--config-env`,
 // `--upload-pack`/`--receive-pack`/`--exec`) never collide with benign
 // subcommand flags, so they keep their original position-independent semantics.
 //
@@ -1044,10 +1044,10 @@ function systemctlMutation(commandLower: string): boolean {
 
 // ── own comms channel — the ONE systemctl mutation that stays a hard brake ──
 //
-// Warchief 2026-06-14: zero confirm cards (he drives the session via send-keys),
+// Operator 2026-06-14: zero confirm cards (he drives the session via send-keys),
 // so a mutating systemctl on a NORMAL service runs silently. The single
 // exception is the agent's OWN comms channel: stopping/restarting it severs the
-// warchief's Telegram link to the agent mid-task. That is irreversible-in-the-
+// operator's Telegram link to the agent mid-task. That is irreversible-in-the-
 // moment, so it stays a HARD-DENY (it never showed a card anyway — it's a brake,
 // not a prompt). Matches the channel systemd units and the gateway daemon by
 // name, anywhere in a mutating systemctl invocation. The bare `gateway`
@@ -2114,13 +2114,13 @@ export function classifyToolCall(input: ClassifyInput): PermissionVerdict {
       return { tier: 'deny', reason: 'secret/credential reference in Bash command blocked', matchedRule: 'builtin:deny_bash_secret' }
     }
     // Non-overridable HARD-DENY: a mutating systemctl on the agent's OWN comms
-    // channel (channel-*/gateway) would sever the warchief's Telegram link to
-    // the agent — blocked outright (warchief 2026-06-14: this is the one brake
+    // channel (channel-*/gateway) would sever the operator's Telegram link to
+    // the agent — blocked outright (operator 2026-06-14: this is the one brake
     // kept; it never showed a card). Lives in the hard-deny pass (NOT step 4) so
     // a mixed command that also trips a confirm builtin (git-exec-surface, sudo,
     // pipe-interpreter) cannot downgrade this deny to confirm — Codex review HIGH.
     if (commandLower !== undefined && mutatesOwnChannel(commandLower)) {
-      return { tier: 'deny', reason: 'mutating the agent own comms channel (systemctl) would sever the warchief link', matchedRule: 'builtin:deny:own-channel' }
+      return { tier: 'deny', reason: 'mutating the agent own comms channel (systemctl) would sever the operator link', matchedRule: 'builtin:deny:own-channel' }
     }
   }
 

@@ -140,11 +140,11 @@ describe('FIX-G / M1 — album recovery awaits before poller.start', () => {
 
 const MINIMAL_POLICY_YAML = `version: 1
 allowlist:
-  chats: ['164795011']
-  users: ['164795011']
-mention_allowlist: ['164795011']
+  chats: ['123456789']
+  users: ['123456789']
+mention_allowlist: ['123456789']
 chats:
-  '164795011':
+  '123456789':
     mode: private
     streaming: progress
     tmux_mirror: true
@@ -163,7 +163,7 @@ describe('FIX-G / M3 — loadPolicyFromPath honours EXACT file path', () => {
 
     const policy = loadPolicyFromPath(customPath)
     expect(policy.version).toBe(1)
-    expect(Object.keys(policy.chats)).toContain('164795011')
+    expect(Object.keys(policy.chats)).toContain('123456789')
   })
 
   test('does NOT fall back to ./policy.yaml when custom filename used', () => {
@@ -184,8 +184,8 @@ describe('FIX-G / M3 — loadPolicyFromPath honours EXACT file path', () => {
     // Two policies side by side. Pre-fix both calls would have
     // returned the same chats — the loader rewrote filename to
     // policy.yaml. Post-fix each call returns its own file.
-    const policyA = MINIMAL_POLICY_YAML.replaceAll("'164795011'", "'111111111'")
-    const policyB = MINIMAL_POLICY_YAML.replaceAll("'164795011'", "'222222222'")
+    const policyA = MINIMAL_POLICY_YAML.replaceAll("'123456789'", "'111111111'")
+    const policyB = MINIMAL_POLICY_YAML.replaceAll("'123456789'", "'222222222'")
     const pathA = join(workDir, 'policy-a.yaml')
     const pathB = join(workDir, 'policy-b.yaml')
     writeFileSync(pathA, policyA, { mode: 0o600 })

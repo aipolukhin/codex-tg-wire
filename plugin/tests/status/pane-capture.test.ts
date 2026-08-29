@@ -36,13 +36,13 @@ describe('capturePaneText', () => {
   test('builds the capture-pane argv with socket + line count, strips ANSI', async () => {
     const { exec, argv } = recordingExec({ stdout: '\x1b[1m◼ Task\x1b[0m\n', stderr: '', exitCode: 0 })
     const res = await capturePaneText(exec, {
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       socketName: 'sock',
       lineCount: 200,
     })
     expect(res.ok).toBe(true)
     expect(res.text).toBe('◼ Task\n')
-    expect(argv[0]).toEqual(['-L', 'sock', 'capture-pane', '-p', '-t', 'channel-thrall:0.0', '-S', '-200'])
+    expect(argv[0]).toEqual(['-L', 'sock', 'capture-pane', '-p', '-t', 'channel-agent-one:0.0', '-S', '-200'])
   })
 
   test('omits the -L flag when no socket name', async () => {

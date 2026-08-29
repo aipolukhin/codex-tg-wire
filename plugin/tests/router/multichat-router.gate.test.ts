@@ -253,21 +253,21 @@ describe('dispatch() policy gate (TASK-5 bug 1)', () => {
     // inbox dir + file on disk.
     const policy = makePolicy({
       chats: {}, // empty
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
       allowlist_chats: [],
     })
     const router = makeRouter(fx, policy)
 
     await router.dispatch({
       text: 'hi',
-      chat_id: '164795011',
-      user_id: '164795011',
+      chat_id: '123456789',
+      user_id: '123456789',
       user: 'dashi',
       timestamp: '2026-05-27T00:00:00Z',
     })
 
     // No FS side effects.
-    expect(existsSync(join(fx.stateDir, 'chats', '164795011'))).toBe(false)
+    expect(existsSync(join(fx.stateDir, 'chats', '123456789'))).toBe(false)
     // No spawn attempt.
     expect(fx.pool.spawned).toEqual([])
     // Deny log emitted with both signals visible.
@@ -276,42 +276,42 @@ describe('dispatch() policy gate (TASK-5 bug 1)', () => {
     )
     expect(denies.length).toBe(1)
     expect(denies[0]?.ctx).toMatchObject({
-      chat_id: '164795011',
-      user_id: '164795011',
+      chat_id: '123456789',
+      user_id: '123456789',
       has_chat_policy: false,
     })
   })
 
   test('DM present in policy.chats: dirs created, inbox written, spawn called', async () => {
     const policy = makePolicy({
-      chats: { '164795011': makeChatPolicy() },
-      allowlist_users: ['164795011'],
-      allowlist_chats: ['164795011'],
+      chats: { '123456789': makeChatPolicy() },
+      allowlist_users: ['123456789'],
+      allowlist_chats: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 
     await router.dispatch({
       text: 'hi',
-      chat_id: '164795011',
-      user_id: '164795011',
+      chat_id: '123456789',
+      user_id: '123456789',
       user: 'dashi',
       timestamp: '2026-05-27T00:00:00Z',
     })
 
     // Inbox dir + at least one .json file present.
-    const inboxDir = join(fx.stateDir, 'chats', '164795011', 'inbox')
+    const inboxDir = join(fx.stateDir, 'chats', '123456789', 'inbox')
     expect(existsSync(inboxDir)).toBe(true)
     const inboxFiles = readdirSync(inboxDir).filter((n) => n.endsWith('.json'))
     expect(inboxFiles.length).toBe(1)
     // Spawn happened with the correct chat id.
-    expect(fx.pool.spawned).toEqual(['164795011'])
-    expect(fx.pool.touched).toEqual(['164795011'])
+    expect(fx.pool.spawned).toEqual(['123456789'])
+    expect(fx.pool.touched).toEqual(['123456789'])
   })
 
   test('Group present but user not in allowlist: denied, no FS', async () => {
     const policy = makePolicy({
       chats: { '-1003784643974': makeChatPolicy({ mode: 'public' }) },
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
       allowlist_chats: ['-1003784643974'],
     })
     const router = makeRouter(fx, policy)
@@ -339,15 +339,15 @@ describe('dispatch() policy gate (TASK-5 bug 1)', () => {
   test('Group present and user allowlisted: flow proceeds', async () => {
     const policy = makePolicy({
       chats: { '-1003784643974': makeChatPolicy({ mode: 'public' }) },
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
       allowlist_chats: ['-1003784643974'],
     })
     const router = makeRouter(fx, policy)
 
     await router.dispatch({
-      text: '@thrall ping',
+      text: '@agent-one ping',
       chat_id: '-1003784643974',
-      user_id: '164795011',
+      user_id: '123456789',
       user: 'dashi',
       timestamp: '2026-05-27T00:00:00Z',
     })
@@ -374,15 +374,15 @@ describe('dispatch() chat_id validation (TASK-5 bug 4)', () => {
 
   test('chat_id "abc" — drop, no FS, no crash', async () => {
     const policy = makePolicy({
-      chats: { '164795011': makeChatPolicy() },
-      allowlist_users: ['164795011'],
+      chats: { '123456789': makeChatPolicy() },
+      allowlist_users: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 
     await router.dispatch({
       text: 'x',
       chat_id: 'abc',
-      user_id: '164795011',
+      user_id: '123456789',
       user: 'dashi',
       timestamp: '2026-05-27T00:00:00Z',
     })
@@ -398,15 +398,15 @@ describe('dispatch() chat_id validation (TASK-5 bug 4)', () => {
 
   test('chat_id "../x" — drop, no path traversal, no crash', async () => {
     const policy = makePolicy({
-      chats: { '164795011': makeChatPolicy() },
-      allowlist_users: ['164795011'],
+      chats: { '123456789': makeChatPolicy() },
+      allowlist_users: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 
     await router.dispatch({
       text: 'x',
       chat_id: '../x',
-      user_id: '164795011',
+      user_id: '123456789',
       user: 'dashi',
       timestamp: '2026-05-27T00:00:00Z',
     })
@@ -419,15 +419,15 @@ describe('dispatch() chat_id validation (TASK-5 bug 4)', () => {
 
   test('chat_id "1; rm" — drop', async () => {
     const policy = makePolicy({
-      chats: { '164795011': makeChatPolicy() },
-      allowlist_users: ['164795011'],
+      chats: { '123456789': makeChatPolicy() },
+      allowlist_users: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 
     await router.dispatch({
       text: 'x',
       chat_id: '1; rm',
-      user_id: '164795011',
+      user_id: '123456789',
       user: 'dashi',
       timestamp: '2026-05-27T00:00:00Z',
     })
@@ -462,15 +462,15 @@ describe('dispatch() chat_id validation (TASK-5 bug 4)', () => {
   for (const { name, chatId } of MED_B_INVALID_CHAT_IDS) {
     test(`MED-B #20: chat_id ${name} — drop, no FS, structured log`, async () => {
       const policy = makePolicy({
-        chats: { '164795011': makeChatPolicy() },
-        allowlist_users: ['164795011'],
+        chats: { '123456789': makeChatPolicy() },
+        allowlist_users: ['123456789'],
       })
       const router = makeRouter(fx, policy)
 
       await router.dispatch({
         text: 'x',
         chat_id: chatId,
-        user_id: '164795011',
+        user_id: '123456789',
         user: 'dashi',
         timestamp: '2026-05-27T00:00:00Z',
       })
@@ -505,10 +505,10 @@ describe('deliverClaim chat_id mismatch (TASK-5 bug 2)', () => {
   })
 
   test('claim.message.chat_id !== owning chatId → quarantined, never sent', async () => {
-    const ownerChat = '164795011'
+    const ownerChat = '123456789'
     const policy = makePolicy({
       chats: { [ownerChat]: makeChatPolicy() },
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 
@@ -566,10 +566,10 @@ describe('deliverClaim chat_id mismatch (TASK-5 bug 2)', () => {
   }, 5_000)
 
   test('claim.message.chat_id === owning chatId → flows through to sendMessage', async () => {
-    const ownerChat = '164795011'
+    const ownerChat = '123456789'
     const policy = makePolicy({
       chats: { [ownerChat]: makeChatPolicy() },
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 
@@ -630,10 +630,10 @@ describe('outbox drain concurrency guard (TASK-5 bug 3)', () => {
     // explicitly awaited the previous tick's work to settle (or
     // confirmed it is still in-flight). Real I/O completes naturally
     // between awaits; no wall-clock waits are required.
-    const ownerChat = '164795011'
+    const ownerChat = '123456789'
     const policy = makePolicy({
       chats: { [ownerChat]: makeChatPolicy() },
-      allowlist_users: ['164795011'],
+      allowlist_users: ['123456789'],
     })
     const router = makeRouter(fx, policy)
 

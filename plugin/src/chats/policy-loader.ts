@@ -83,7 +83,7 @@ export type MultichatPolicy = z.infer<typeof MultichatPolicySchema>
  * for the default-derive case (workspace_dir → `<dir>/policy.yaml`).
  *
  * @param basePath directory containing `policy.yaml` (typically
- *   `~/.claude-lab/thrall/.claude/chats`)
+ *   `<workspace>/chats`)
  * @returns validated, fully-typed multichat policy
  */
 export function loadPolicy(basePath: string): MultichatPolicy {
@@ -311,7 +311,7 @@ export function getChatPolicyOrDeny(
  * Semantics:
  *   * `policy === null` (legacy single-DM mode, multichat disabled):
  *     return `true`. Preserves the pre-multichat behaviour where the
- *     warchief's DM always streams progress.
+ *     operator's DM always streams progress.
  *   * `policy` loaded but chat absent from `policy.chats[…]`:
  *     return `false`. No fallback to a global default — an unlisted
  *     chat MUST NOT receive interim "Печатает.../tool" edits even if
@@ -345,7 +345,7 @@ export function shouldStreamForChat(
  * driven by the `tmux_mirror` boolean rather than `streaming`. Public
  * group chats with no entry in policy get `false` — the pane mirror
  * leaks tool calls, file paths, and reasoning chunks that must never
- * surface outside the warchief's DM.
+ * surface outside the operator's DM.
  *
  * Used by tmux-mirror.ts (in TASK-2).
  *

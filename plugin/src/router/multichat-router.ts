@@ -105,7 +105,7 @@ function parseMessageId(raw: string): number | undefined {
   return n
 }
 
-// The ONLY hard limit on multichat attachments (warchief 2026-06-10: «только
+// The ONLY hard limit on multichat attachments (operator 2026-06-10: «только
 // секреты не слать, всё остальное можно» — deny secrets by path, allow every
 // other file; NO workspace confinement). This is the exfil gate for a session
 // that may live in a PUBLIC group: a group member's prompt injection must not be
@@ -938,7 +938,7 @@ export class MultichatRouter {
    * file is validated (NOT a secret, exists, regular file, ≤ MAX_ATTACHMENT_BYTES)
    * then sent through the token-holding safe API; a rejected/failed file is
    * logged and skipped so it never undoes an already-sent text reply. Per the
-   * warchief the ONLY hard limit is the secret denylist — any other file (any
+   * operator the ONLY hard limit is the secret denylist — any other file (any
    * path) is allowed. Photos go via sendPhoto (inline preview), the rest via
    * sendDocument.
    */

@@ -216,7 +216,7 @@ function stashSafeTags(input: string, store: Placeholder[]): string {
   // Why balance-aware: a lone `<pre>` mentioned in prose («два сообщения
   // с <pre>») used to survive verbatim, reach Telegram as an unclosed tag,
   // and trip the pre-send validator's whole-message plain-text downgrade —
-  // the warchief saw literal &lt;b&gt; soup instead of formatting
+  // the operator saw literal &lt;b&gt; soup instead of formatting
   // (2026-06-05). Escaping the unpaired tag keeps the rest of the message
   // valid HTML so formatting ships.
   const tokens: SafeTagToken[] = []

@@ -35,7 +35,7 @@ import type {
 import type { InboundMessage } from '../../src/router/inbox-bridge.js'
 
 const GROUP = '-1001234567890'
-const USER = '164795011'
+const USER = '123456789'
 
 function silentLogger(): Logger {
   const noop = (): void => {}
@@ -109,7 +109,7 @@ function inbound(overrides: Partial<InboundMessage> = {}): InboundMessage {
     text: 'привет',
     chat_id: GROUP,
     user_id: USER,
-    user: 'dashieshiev',
+    user: 'example_owner',
     timestamp: new Date().toISOString(),
     ...overrides,
   }

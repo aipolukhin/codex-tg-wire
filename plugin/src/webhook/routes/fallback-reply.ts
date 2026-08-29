@@ -18,7 +18,7 @@ import { authGate, chatIdAllowed, readJsonBody, reply } from './shared.js'
 const FALLBACK_REPLY_BODY_LIMIT_BYTES = 32 * 1024
 
 // 2026-06-03 (feature/dm-fallback-reply-hook): POST /hooks/fallback-reply —
-// forward the DM turn's final assistant text to the warchief's Telegram when
+// forward the DM turn's final assistant text to the operator's Telegram when
 // the turn ended WITHOUT an MCP reply()/edit_message() call. Auth: loopback
 // origin + bearer (same fence as the react route). Defence in depth: chatId
 // must be in the allowlist, so a leaked token still can't make the bot post

@@ -1,7 +1,7 @@
 // AskUserQuestion Telegram UX (PRX-1 TASK-2, 2026-05-27).
 //
 // Renders one question at a time as a Telegram message + inline keyboard,
-// dispatches `ask:*` callback_query payloads, and feeds the warchief's
+// dispatches `ask:*` callback_query payloads, and feeds the operator's
 // answers back into the AskUserQuestion relay (TASK-1).
 //
 // Scope:
@@ -26,16 +26,16 @@
 // Same applies to question count: `MAX_QUESTIONS_PER_REQUEST = 99`.
 //
 // «Other» text-entry flow (FIX-T1 F4, PRX-1 Phase 5, 2026-05-27):
-//   1. Warchief taps «Другое» → we send «Введи ответ текстом» with
+//   1. Operator taps «Другое» → we send «Введи ответ текстом» with
 //      `force_reply: true, selective: true` (Telegram clients auto-quote
-//      the prompt for the warchief). The returned message_id is stored
+//      the prompt for the operator). The returned message_id is stored
 //      in `awaitingOtherFor[chatId] = {requestId, questionIndex,
 //      promptMessageId, expiresAt}`.
 //   2. tryHandleOtherText consumes the next text ONLY when its
 //      `reply_to_message_id` matches `promptMessageId`. Without this
 //      gate ANY text typed in the chat would be eaten — a `yes <id>`
 //      permission reply, a normal channel message, even a stray emoji —
-//      blocking the warchief's intent and silently consuming sensitive
+//      blocking the operator's intent and silently consuming sensitive
 //      input into the Other slot. Texts without the matching reply_to
 //      fall through to the normal handlers (permission, OOB, channel
 //      forward).
@@ -173,7 +173,7 @@ const MAX_OPTION_DESCRIPTION_CHARS = 500
 // Self-contained HTML — no open tags, never sliced.
 const OVERFLOW_MARKER = '\n<i>… (обрезано)</i>'
 
-// ── Card-close copy (2026-07-02, warchief UX feedback) ────────────────
+// ── Card-close copy (2026-07-02, operator UX feedback) ────────────────
 // When a question is answered / times out we STRIP the keyboard and edit
 // the message so it no longer looks tappable, keeping the question text
 // for context and appending a one-line outcome. Tone matches the
@@ -182,7 +182,7 @@ const OVERFLOW_MARKER = '\n<i>… (обрезано)</i>'
 // Raw cap for the chosen-answer echo. «Другое» free-text can be long —
 // truncate so the closed card stays compact.
 const MAX_ANSWER_CHARS = 100
-// Outcome line shown once the warchief has answered a question.
+// Outcome line shown once the operator has answered a question.
 function formatChosenLine(rawAnswer: string): string {
   return `✅ Ответ: <b>${escapeHtml(clipRaw(rawAnswer, MAX_ANSWER_CHARS))}</b>`
 }
@@ -279,7 +279,7 @@ export interface AskUserQuestionUi {
    * for forwarding non-`ask:` payloads to the permission relay.
    *
    * Always answers the callback (Telegram spinner) even on errors so
-   * the warchief's UI doesn't appear stuck.
+   * the operator's UI doesn't appear stuck.
    */
   handleAskCallback(ctx: AskCallbackContext): Promise<void>
 
@@ -635,7 +635,7 @@ export function createAskUserQuestionUi(
 
   // FIX-T2 F1 (PRX-1 Phase 5): per-request «recovered once» marker for the
   // message_gone path in rerenderCurrent. The first time Telegram tells us
-  // the anchor message no longer exists (warchief deleted it, 48h edit
+  // the anchor message no longer exists (operator deleted it, 48h edit
   // window expired, etc.) we re-anchor by calling startQuestion. If a
   // SECOND message_gone arrives for the same request, repeated re-anchor
   // would loop until timeout — so we hard-expire the relay instead. The
@@ -918,7 +918,7 @@ export function createAskUserQuestionUi(
           })
           return
         case 'message_gone':
-          // Warchief deleted the keyboard message, or it aged out of the
+          // Operator deleted the keyboard message, or it aged out of the
           // 48h edit window. Re-anchor ONCE: drop the stale message id and
           // call startQuestion, which sends a fresh keyboard. A SECOND
           // message_gone for the same request means re-anchor didn't help
@@ -1038,7 +1038,7 @@ export function createAskUserQuestionUi(
   }
 
   // One-shot «Ответы приняты» confirmation after the final question. New
-  // message (not an edit) so the warchief's device pings. Best-effort.
+  // message (not an edit) so the operator's device pings. Best-effort.
   async function sendCompletion(chatId: string): Promise<void> {
     try {
       await telegramApi.sendMessage(chatId, COMPLETION_TEXT, { parse_mode: 'HTML' })
@@ -1538,7 +1538,7 @@ export function createAskUserQuestionUi(
       const targetChatId = prevChatId ?? ctx.chatId
       await ctx.answerCallbackQuery().catch(() => {})
       // FIX-T1 F4 (PRX-1 Phase 5, 2026-05-27): send with force_reply so
-      // Telegram clients auto-quote the prompt — the warchief's next
+      // Telegram clients auto-quote the prompt — the operator's next
       // message will carry `reply_to_message_id === sent.message_id`,
       // which tryHandleOtherText then validates. The reply_markup shape
       // is widened via cast: the structural `InlineKeyboardLike` only
@@ -1589,7 +1589,7 @@ export function createAskUserQuestionUi(
         kind: parsed.kind,
         error: err instanceof Error ? err.message : String(err),
       })
-      // Best-effort spinner ack so the warchief's UI doesn't hang.
+      // Best-effort spinner ack so the operator's UI doesn't hang.
       await ctx.answerCallbackQuery().catch(() => {})
     }
   }
@@ -1611,7 +1611,7 @@ export function createAskUserQuestionUi(
     //
     // Both branches return false (NOT true) so the caller falls through
     // to the permission/OOB/channel-forward path — the slot stays open
-    // and the warchief can still answer by tapping the reply UI.
+    // and the operator can still answer by tapping the reply UI.
     if (entry.promptMessageId === undefined) {
       // Send failed earlier — no anchor to validate against. Refuse to
       // consume on principle so a stray reply is never silently eaten.
@@ -1628,7 +1628,7 @@ export function createAskUserQuestionUi(
       })
       return false
     }
-    // Only the warchief (or an allowed approver) can complete the
+    // Only the operator (or an allowed approver) can complete the
     // «Other» prompt. If a different sender types in the chat while we
     // wait, ignore — their message flows through normal handlers.
     if (!isAuthorized(input.fromUserId)) {

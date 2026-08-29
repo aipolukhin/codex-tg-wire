@@ -475,7 +475,7 @@ export class TelegramPoller {
       await bot.init()
     }
     const me = bot.botInfo
-    if (me.id !== config.bot_id) {
+    if (config.bot_id !== undefined && me.id !== config.bot_id) {
       throw new Error(
         `telegram bot_id mismatch: token belongs to ${me.id}, config expects ${config.bot_id}`,
       )

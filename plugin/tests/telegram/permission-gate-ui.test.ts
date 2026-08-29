@@ -9,8 +9,8 @@ const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
 
 // Minimal config — UI only reads permission_gate + permission_relay allowlists.
 const config = {
-  permission_gate: { enabled: true, timeout_ms: 120_000, allowed_user_ids: [164795011] },
-  permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+  permission_gate: { enabled: true, timeout_ms: 120_000, allowed_user_ids: [123456789] },
+  permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
 } as unknown as AppConfig
 
 function makeTelegramApi() {
@@ -42,7 +42,7 @@ function makeFakeRelay(initial?: Partial<PendingPermissionGate>) {
         reason: 'risky',
         createdAt: 0,
         expiresAt: 0,
-        chatId: '164795011',
+        chatId: '123456789',
         telegramMessageId: undefined,
         _settled: false,
         _timer: null,
@@ -109,7 +109,7 @@ describe('permission-gate UI', () => {
     let toast: string | undefined
     const handled = await ui.handlePgateCallback({
       callbackQuery: { data: 'pgate:allow:abcde', messageId: 5 },
-      from: { id: 164795011 },
+      from: { id: 123456789 },
       answerCallbackQuery: async (arg) => { toast = arg?.text },
     })
     expect(handled).toBe(true)
@@ -125,7 +125,7 @@ describe('permission-gate UI', () => {
     let toast: string | undefined
     await ui.handlePgateCallback({
       callbackQuery: { data: 'pgate:allow:abcde', messageId: 999 }, // != 5
-      from: { id: 164795011 },
+      from: { id: 123456789 },
       answerCallbackQuery: async (arg) => { toast = arg?.text },
     })
     expect(answered).toHaveLength(0)
@@ -138,7 +138,7 @@ describe('permission-gate UI', () => {
     const ui = createPermissionGateUi({ config, log, telegramApi: api, relay })
     await ui.handlePgateCallback({
       callbackQuery: { data: 'pgate:allow:abcde', messageId: 5 },
-      from: { id: 164795011 },
+      from: { id: 123456789 },
       answerCallbackQuery: async () => {},
     })
     expect(answered).toEqual([{ id: 'abcde', behavior: 'allow' }])
@@ -164,7 +164,7 @@ describe('permission-gate UI', () => {
     const ui = createPermissionGateUi({ config, log, telegramApi: api, relay })
     await ui.handlePgateCallback({
       callbackQuery: { data: 'pgate:allow:abcde' }, // no messageId
-      from: { id: 164795011 },
+      from: { id: 123456789 },
       answerCallbackQuery: async () => {},
     })
     expect(answered).toHaveLength(0)
@@ -176,7 +176,7 @@ describe('permission-gate UI', () => {
     const ui = createPermissionGateUi({ config, log, telegramApi: api, relay })
     const handled = await ui.handlePgateCallback({
       callbackQuery: { data: 'ask:choose:abcde:0:1' },
-      from: { id: 164795011 },
+      from: { id: 123456789 },
       answerCallbackQuery: async () => {},
     })
     expect(handled).toBe(false)

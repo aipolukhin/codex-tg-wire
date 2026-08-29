@@ -38,7 +38,7 @@ import type { Logger } from '../../src/log.js'
 
 const silentLog = createLogger('test', { stream: { write: () => true } as unknown as NodeJS.WritableStream })
 
-const CHAT = '164795011'
+const CHAT = '123456789'
 const HOUR = 3_600_000
 
 interface SentRecord {
@@ -69,15 +69,15 @@ function makeRecordingApi(sent: SentRecord[]): TelegramApi {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: false, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -89,7 +89,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     },
     progress: { enabled: false, edit_throttle_ms: 3000, recent_buffer: 10, session_ttl_ms: 600000 },
     task_mirror: { enabled: false, edit_throttle_ms: 3000, session_ttl_ms: 600000, collapse_completed_after: 5 },
-    watcher: { enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
+    watcher: { agent_label: 'Агент', enabled: false, debounce_ms: 10_000, busy_threshold_ms: 30_000 },
     tmux_mirror: { enabled: false, pane_target: '', socket_name: '', poll_interval_ms: 5000, line_count: 50, hide_segments: [], mode: 'latest_inbound_only', max_lines: 14 },
     multichat: { enabled: false },
     ask_user_question: { enabled: false, timeout_ms: 300_000, max_preview_chars: 1000 },
@@ -165,7 +165,7 @@ function seedRevokedLease(paths: StatePaths, chatId: string, nowMs: number): voi
     nowMs,
   )
   const leaseId = added.state.leases[0]!.id
-  const { state } = revokeLease(added.state, leaseId, nowMs, 'вождь', 'test')
+  const { state } = revokeLease(added.state, leaseId, nowMs, 'владелец', 'test')
   saveAutonomyState(paths, chatId, state)
 }
 
@@ -229,7 +229,7 @@ describe('ask-guard reply choke point — block mode', () => {
   test('blocks a self-gating ask when a lease is active: nothing sent, isError', async () => {
     process.env.ASK_GUARD_MODE = 'block'
     seedActiveLease(statePaths, CHAT, Date.now())
-    const res = await callTool(replyReq('Всё собрано. Жду го, мой вождь.'), deps)
+    const res = await callTool(replyReq('Всё собрано. Жду го, мой владелец.'), deps)
     expect(res.isError).toBe(true)
     expect(sent.length).toBe(0)
     expect(resultText(res)).toContain('ASK_GUARD')
@@ -257,7 +257,7 @@ describe('ask-guard reply choke point — block mode', () => {
   test('block does NOT fire for benign prose — reply ships unchanged', async () => {
     process.env.ASK_GUARD_MODE = 'block'
     seedActiveLease(statePaths, CHAT, Date.now())
-    const res = await callTool(replyReq('Готово, мой вождь. Код чист.'), deps)
+    const res = await callTool(replyReq('Готово, мой владелец. Код чист.'), deps)
     expect(res.isError).toBeUndefined()
     expect(sent.length).toBe(1)
     expect(resultText(res)).not.toContain('ask_guard_hint')

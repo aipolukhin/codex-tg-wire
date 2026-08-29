@@ -22,14 +22,14 @@ import {
 describe('parseChannelRefs', () => {
   test('extracts telegram chat_id + message_id from raw form', () => {
     const text =
-      '<channel source="dashi-channel" source="telegram" chat_id="164795011" user_id="164795011" ts="x" message_id="28045">hi</channel>'
-    expect(parseChannelRefs(text)).toEqual([{ chat_id: '164795011', message_id: 28045 }])
+      '<channel source="dashi-channel" source="telegram" chat_id="123456789" user_id="123456789" ts="x" message_id="28045">hi</channel>'
+    expect(parseChannelRefs(text)).toEqual([{ chat_id: '123456789', message_id: 28045 }])
   })
 
   test('extracts from JSON-escaped transcript form', () => {
     const line =
-      '{"type":"user","message":{"content":"<channel source=\\"dashi-channel\\" source=\\"telegram\\" chat_id=\\"164795011\\" message_id=\\"28049\\">voice</channel>"}}'
-    expect(parseChannelRefs(line)).toEqual([{ chat_id: '164795011', message_id: 28049 }])
+      '{"type":"user","message":{"content":"<channel source=\\"dashi-channel\\" source=\\"telegram\\" chat_id=\\"123456789\\" message_id=\\"28049\\">voice</channel>"}}'
+    expect(parseChannelRefs(line)).toEqual([{ chat_id: '123456789', message_id: 28049 }])
   })
 
   test('supports negative chat_id (multichat group / supergroup)', () => {
@@ -37,13 +37,13 @@ describe('parseChannelRefs', () => {
     expect(parseChannelRefs(text)).toEqual([{ chat_id: '-1003784643974', message_id: 42 }])
   })
 
-  test('ignores non-telegram channel blocks (orgrimmar-inbox)', () => {
-    const text = '<channel source="orgrimmar-inbox" from="sa-silvana" type="task">body</channel>'
+  test('ignores non-telegram channel blocks (agent-inbox)', () => {
+    const text = '<channel source="agent-inbox" from="external-agent" type="task">body</channel>'
     expect(parseChannelRefs(text)).toEqual([])
   })
 
   test('skips a block missing message_id', () => {
-    const text = '<channel source="telegram" chat_id="164795011">no id</channel>'
+    const text = '<channel source="telegram" chat_id="123456789">no id</channel>'
     expect(parseChannelRefs(text)).toEqual([])
   })
 

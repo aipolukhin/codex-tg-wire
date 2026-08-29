@@ -12,7 +12,7 @@ import {
 import type { Logger } from '../../src/log.js'
 
 const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger
-const ALLOWED = [164795011]
+const ALLOWED = [123456789]
 const PANE = { paneTarget: '%1', socketPath: '/tmp/s' }
 
 // A minimal idle composer — IT2-1 now probes the pane before the sendSlashCommand
@@ -244,12 +244,12 @@ describe('handleCcmdCallback control routing', () => {
     const ctx: CcmdCallbackContext = {
       callbackQuery: { data: `${CCMD_PREFIX}clear` },
       from: { id: ALLOWED[0]! },
-      chatId: '164795011',
+      chatId: '123456789',
       answerCallbackQuery: async () => {},
     }
     await handleCcmdCallback(ctx, deps)
     expect(cards.length).toBe(1)
-    expect(cards[0]!.chatId).toBe('164795011')
+    expect(cards[0]!.chatId).toBe('123456789')
     expect(cards[0]!.text).toContain('Новый диалог')
     // Not a single keystroke typed into the pane.
     expect(sends.length).toBe(0)

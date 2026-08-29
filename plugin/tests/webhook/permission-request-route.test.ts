@@ -27,7 +27,7 @@ let handle: WebhookServerHandle | null
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), 'dashi-channel-pgate-routes-'))
   process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
-  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir }
+  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir, TELEGRAM_ALLOWED_USER_IDS: '123456789', TELEGRAM_ALLOWED_CHAT_IDS: '123456789' }
   baseConfig = loadConfig(env)
   paths = getStatePaths(baseConfig, env)
   ensureStateDirs(paths)
@@ -47,7 +47,7 @@ function cfg(opts: { enabled?: boolean; timeoutMs?: number; allowed?: number[] }
     permission_gate: {
       enabled: opts.enabled ?? true,
       timeout_ms: opts.timeoutMs ?? 5000,
-      ...(opts.allowed !== undefined ? { allowed_user_ids: opts.allowed } : {}),
+      allowed_user_ids: opts.allowed ?? [123456789],
     },
   }
 }
@@ -113,7 +113,7 @@ describe('POST /hooks/permission/request', () => {
 
   test('allow round-trip: tap allow → {status:allow}', async () => {
     const { h } = await start(cfg(), (relay, requestId) => {
-      // Simulate the warchief tapping Allow right after the keyboard is sent.
+      // Simulate the operator tapping Allow right after the keyboard is sent.
       relay.answer(requestId, 'allow')
     })
     const res = await fetch(url(h, '/hooks/permission/request'), { method: 'POST', headers: AUTH, body: body() })

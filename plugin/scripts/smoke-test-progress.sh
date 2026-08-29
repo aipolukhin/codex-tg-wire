@@ -20,7 +20,7 @@
 #   2 -- usage / config error
 #
 # Usage examples:
-#   TELEGRAM_HOOK_CHAT_ID=164795011 \
+#   TELEGRAM_HOOK_CHAT_ID=123456789 \
 #   TELEGRAM_WEBHOOK_URL=http://127.0.0.1:8093/hooks/agent \
 #   TELEGRAM_WEBHOOK_TOKEN=... \
 #   bash scripts/smoke-test-progress.sh
@@ -198,8 +198,14 @@ fi
 # 4. Per-agent settings.json sanity (does NOT require live session)
 # ─────────────────────────────────────────────────────────────────────
 
-SETTINGS="${CLAUDE_SETTINGS_FILE:-$HOME/.claude-lab/thrall/.claude/settings.json}"
-if [ -f "$SETTINGS" ]; then
+SETTINGS="${CLAUDE_SETTINGS_FILE:-}"
+if [ -z "$SETTINGS" ] && [ -n "${CLAUDE_WORKSPACE_DIR:-}" ]; then
+  SETTINGS="${CLAUDE_WORKSPACE_DIR%/}/settings.json"
+fi
+if [ -z "$SETTINGS" ] && [ -n "${TELEGRAM_WORKSPACE_ROOT:-}" ]; then
+  SETTINGS="${TELEGRAM_WORKSPACE_ROOT%/}/settings.json"
+fi
+if [ -n "$SETTINGS" ] && [ -f "$SETTINGS" ]; then
   has_marker=$(grep -c '"marker": "dashi-channel-hook"' "$SETTINGS" 2>/dev/null || echo 0)
   if [ "$has_marker" -ge 5 ]; then
     record "settings.json hooks installed" "ok" "$has_marker entries"
@@ -208,8 +214,10 @@ if [ -f "$SETTINGS" ]; then
   else
     record "settings.json hooks installed" "fail" "no dashi-channel-hook marker -- run install-hooks.sh"
   fi
-else
+elif [ -n "$SETTINGS" ]; then
   record "settings.json hooks installed" "skip" "$SETTINGS not found"
+else
+  record "settings.json hooks installed" "skip" "set CLAUDE_SETTINGS_FILE or CLAUDE_WORKSPACE_DIR"
 fi
 
 # ─────────────────────────────────────────────────────────────────────

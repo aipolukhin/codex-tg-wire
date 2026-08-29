@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -24,24 +24,39 @@ afterEach(() => {
 const FAKE_TOKEN = '123456789:AAH-fake_test_token_with_at_least_thirty_chars'
 
 function env(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return {
+  const configPath = join(stateDir, 'config.json')
+  const fileConfig = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+    : {}
+  const base: NodeJS.ProcessEnv = {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
-    ...overrides,
   }
+  if (!Object.hasOwn(fileConfig, 'allowed_user_ids')) {
+    base.TELEGRAM_ALLOWED_USER_IDS = '123456789'
+  }
+  if (!Object.hasOwn(fileConfig, 'allowed_chat_ids')) {
+    base.TELEGRAM_ALLOWED_CHAT_IDS = '123456789'
+  }
+  return { ...base, ...overrides }
 }
 
 describe('loadConfig', () => {
-  test('loads default config when no file and no env overrides except token', () => {
+  test('loads safe defaults around explicitly configured access lists', () => {
     const cfg = loadConfig(env())
-    expect(cfg.bot_id).toBe(8507713167)
-    expect(cfg.allowed_user_ids).toEqual([164795011])
+    expect(cfg.bot_id).toBeUndefined()
+    expect(cfg.allowed_user_ids).toEqual([123456789])
     expect(cfg.dm_only).toBe(true)
     expect(cfg.status.interval_ms).toBe(700)
     expect(cfg.album.flush_ms).toBe(2000)
     expect(cfg.voice.provider).toBe('groq')
     expect(cfg.webhook.enabled).toBe(false)
-    expect(cfg.permission_relay.bash_only_proof).toBe(true)
+    expect(cfg.watcher.agent_label).toBe('Агент')
+    expect(cfg.permission_relay).toEqual({
+      enabled: false,
+      allowed_user_ids: [],
+      bash_only_proof: true,
+    })
   })
 
   test('parses CSV TELEGRAM_ALLOWED_USER_IDS into number array', () => {
@@ -98,7 +113,13 @@ describe('loadConfig', () => {
     writeFileSync(join(stateDir, 'config.json'), JSON.stringify({
       allowed_user_ids: [],
     }))
-    expect(() => loadConfig(env())).toThrow(/allowed_user_ids|too_small|at least 1/i)
+    expect(() =>
+      loadConfig({
+        TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
+        TELEGRAM_STATE_DIR: stateDir,
+        TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
+      }),
+    ).toThrow(/allowed_user_ids|too_small|at least 1|required/i)
   })
 
   test('coerces string PORT env to number', () => {
@@ -184,7 +205,7 @@ describe('loadConfig', () => {
 
   test('loadConfig accepts TELEGRAM_ACCESS_MODE=static', () => {
     const cfg = loadConfig(env({ TELEGRAM_ACCESS_MODE: 'static' }))
-    expect(cfg.bot_id).toBe(8507713167)
+    expect(cfg.bot_id).toBeUndefined()
   })
 
   test('loadConfig reads config.json values when no env override', () => {
@@ -242,13 +263,13 @@ describe('loadConfig', () => {
       TELEGRAM_MEMORY_WORKSPACE: '/tmp/from-env',
       TELEGRAM_MEMORY_LOGS_PATH: '/tmp/from-env-logs',
       TELEGRAM_MEMORY_SOURCE_TAG: 'tg',
-      TELEGRAM_MEMORY_AGENT_LABEL: 'Silvana',
+      TELEGRAM_MEMORY_AGENT_LABEL: 'ExampleAgent',
     }))
     expect(cfg.memory.enabled).toBe(true)
     expect(cfg.memory.workspace_path).toBe('/tmp/from-env')
     expect(cfg.memory.logs_path).toBe('/tmp/from-env-logs')
     expect(cfg.memory.source_tag).toBe('tg')
-    expect(cfg.memory.agent_label).toBe('Silvana')
+    expect(cfg.memory.agent_label).toBe('ExampleAgent')
   })
 
   test('memory: TELEGRAM_MEMORY_ENABLED accepts 1/true/yes/on (case-insensitive); other values → false', () => {
@@ -263,6 +284,11 @@ describe('loadConfig', () => {
       const cfg = loadConfig(env({ TELEGRAM_MEMORY_ENABLED: falsy }))
       expect(cfg.memory.enabled).toBe(false)
     }
+  })
+
+  test('watcher: TELEGRAM_WATCHER_AGENT_LABEL overrides the generic label', () => {
+    const cfg = loadConfig(env({ TELEGRAM_WATCHER_AGENT_LABEL: 'Codex Main' }))
+    expect(cfg.watcher.agent_label).toBe('Codex Main')
   })
 
   // ─── tmux_mirror schema (added 2026-05-22) ─────────────────────────
@@ -340,8 +366,8 @@ describe('loadConfig', () => {
   })
 
   test('ask_user_question: TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS parses CSV into number array', () => {
-    const cfg = loadConfig(env({ TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: '164795011, 99999 ,42' }))
-    expect(cfg.ask_user_question.allowed_user_ids).toEqual([164795011, 99999, 42])
+    const cfg = loadConfig(env({ TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: '123456789, 99999 ,42' }))
+    expect(cfg.ask_user_question.allowed_user_ids).toEqual([123456789, 99999, 42])
   })
 
   test('ask_user_question: TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS overrides default', () => {
@@ -367,7 +393,7 @@ describe('loadConfig', () => {
   test('ask_user_question: non-integer user id in CSV throws clear error', () => {
     let caught: unknown
     try {
-      loadConfig(env({ TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: '164795011,abc' }))
+      loadConfig(env({ TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: '123456789,abc' }))
     } catch (e) {
       caught = e
     }
@@ -398,10 +424,12 @@ describe('loadConfig', () => {
     const cfg = loadConfig(env({
       TELEGRAM_ASK_USER_QUESTION_ENABLED: 'true',
       TELEGRAM_ASK_USER_QUESTION_TIMEOUT_MS: '120000',
+      TELEGRAM_ASK_USER_QUESTION_CHAT_ID: '-100555666777',
       TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS: '1500',
     }))
     expect(cfg.ask_user_question.enabled).toBe(true)
     expect(cfg.ask_user_question.timeout_ms).toBe(120_000)
+    expect(cfg.ask_user_question.chat_id).toBe(-100555666777)
     expect(cfg.ask_user_question.max_preview_chars).toBe(1500)
   })
 
@@ -411,6 +439,7 @@ describe('loadConfig', () => {
         enabled: true,
         timeout_ms: 600_000,
         allowed_user_ids: [42, 43],
+        chat_id: '@example_channel',
         max_preview_chars: 2000,
       },
     }))
@@ -418,7 +447,13 @@ describe('loadConfig', () => {
     expect(cfg.ask_user_question.enabled).toBe(true)
     expect(cfg.ask_user_question.timeout_ms).toBe(600_000)
     expect(cfg.ask_user_question.allowed_user_ids).toEqual([42, 43])
+    expect(cfg.ask_user_question.chat_id).toBe('@example_channel')
     expect(cfg.ask_user_question.max_preview_chars).toBe(2000)
+  })
+
+  test('ask_user_question: destination env rejects a CSV list', () => {
+    expect(() => loadConfig(env({ TELEGRAM_ASK_USER_QUESTION_CHAT_ID: '111,222' })))
+      .toThrow(/exactly one chat id/i)
   })
 
   test('resolveAskUserQuestionAllowedUserIds: undefined → falls back to permission_relay.allowed_user_ids', () => {
@@ -476,11 +511,11 @@ describe('richMessages config (M1, 2026-06-14)', () => {
   test('config.json values are loaded when no env override', () => {
     writeFileSync(
       join(stateDir, 'config.json'),
-      JSON.stringify({ richMessages: { enabled: false, perChatOptOut: ['164795011'] } }),
+      JSON.stringify({ richMessages: { enabled: false, perChatOptOut: ['123456789'] } }),
     )
     const cfg = loadConfig(env())
     expect(cfg.richMessages.enabled).toBe(false)
-    expect(cfg.richMessages.perChatOptOut).toEqual(['164795011'])
+    expect(cfg.richMessages.perChatOptOut).toEqual(['123456789'])
   })
 
   test('TELEGRAM_RICH_MESSAGES=0 kill-switch forces enabled=false', () => {
@@ -513,9 +548,9 @@ describe('richMessages config (M1, 2026-06-14)', () => {
 
   test('TELEGRAM_RICH_MESSAGES_PER_CHAT_OPT_OUT CSV parses to string ids', () => {
     const cfg = loadConfig(
-      env({ TELEGRAM_RICH_MESSAGES_PER_CHAT_OPT_OUT: '164795011, -100123' }),
+      env({ TELEGRAM_RICH_MESSAGES_PER_CHAT_OPT_OUT: '123456789, -100123' }),
     )
-    expect(cfg.richMessages.perChatOptOut).toEqual(['164795011', '-100123'])
+    expect(cfg.richMessages.perChatOptOut).toEqual(['123456789', '-100123'])
   })
 })
 

@@ -70,17 +70,17 @@ describe('emptyAutonomyState', () => {
 describe('round-trip persistence', () => {
   test('save then load returns identical content (revision bumped by the save)', () => {
     const state = seedState()
-    saveAutonomyState(paths(), '164795011', state)
-    const loaded = loadAutonomyState(paths(), '164795011')
+    saveAutonomyState(paths(), '123456789', state)
+    const loaded = loadAutonomyState(paths(), '123456789')
     expect(loaded.leases).toEqual(state.leases)
     expect(loaded.questions).toEqual(state.questions)
     expect(loaded.revision).toBe(state.revision + 1)
   })
 
   test('file lives at autonomy-<chatId>.json in the state root', () => {
-    saveAutonomyState(paths(), '164795011', seedState())
-    expect(autonomyStatePath(paths(), '164795011')).toBe(join(root, 'autonomy-164795011.json'))
-    expect(readdirSync(root)).toContain('autonomy-164795011.json')
+    saveAutonomyState(paths(), '123456789', seedState())
+    expect(autonomyStatePath(paths(), '123456789')).toBe(join(root, 'autonomy-123456789.json'))
+    expect(readdirSync(root)).toContain('autonomy-123456789.json')
   })
 
   test('negative (supergroup) chat id is sanitized in the filename', () => {
@@ -91,8 +91,8 @@ describe('round-trip persistence', () => {
   })
 
   test('atomic write leaves no tmp strays', () => {
-    saveAutonomyState(paths(), '164795011', seedState())
-    saveAutonomyState(paths(), '164795011', seedState())
+    saveAutonomyState(paths(), '123456789', seedState())
+    saveAutonomyState(paths(), '123456789', seedState())
     const strays = readdirSync(root).filter((f) => f.includes('.tmp.'))
     expect(strays).toEqual([])
   })
@@ -414,7 +414,7 @@ describe('buildAutonomyReminderBlock', () => {
     expect(block).toContain('Активный мандат L-20260710-aaaa')
     expect(block).toContain('истекает через 4ч')
     expect(block).toContain('Act-with-veto')
-    expect(block).toContain('Открытый вопрос вождю Q-20260710-bbbb')
+    expect(block).toContain('Открытый вопрос владельцу Q-20260710-bbbb')
     expect(block).toContain('дефолт: wait')
     expect(block).toContain('бери дефолт')
   })

@@ -41,7 +41,7 @@ import {
  *   ONLY — any caller still wired to it would otherwise re-introduce
  *   the fail-OPEN regression CRITICAL #1 / HIGH #9 (codex review
  *   2026-05-27) eliminated: pre-fix this function returned `true` for
- *   chats absent from `policy.chats`, leaking warchief streaming into
+ *   chats absent from `policy.chats`, leaking operator streaming into
  *   misconfigured public groups. Re-implemented as a thin shim around
  *   the fail-CLOSED primitive so legacy imports get the correct
  *   semantics automatically (FIX-C bug #4, codex status #4).
@@ -154,7 +154,7 @@ export interface StatusManagerDeps {
   //
   // Semantics (delegated to {@link shouldStreamForChat}):
   //   * `null` / omitted — legacy single-DM mode. Every chat streams
-  //     (preserves pre-multichat behaviour where only the warchief's
+  //     (preserves pre-multichat behaviour where only the operator's
   //     DM existed).
   //   * `MultichatPolicy` loaded — chat must be present with
   //     `streaming: 'progress'`. Missing entries OR `streaming: 'off'`
@@ -163,7 +163,7 @@ export interface StatusManagerDeps {
   // The gate is consulted per call rather than memoised at construction
   // because StatusManager is a singleton across all chats — a
   // construction-time boolean (legacy `streamingEnabled` option) leaked
-  // warchief DM behaviour into public groups when the chosen anchor
+  // operator DM behaviour into public groups when the chosen anchor
   // chat had `streaming: 'progress'` (codex review 2026-05-27,
   // CRITICAL #1 / HIGH #9).
   policy?: MultichatPolicy | null
@@ -606,7 +606,7 @@ export class StatusManager {
     // Fire-and-forget initial chat action so the Telegram header shows
     // `typing…` immediately, not on the first pulse 4 s in. Keeps firing
     // even when the message bubble is suppressed — the native indicator
-    // is what the warchief still wants to see.
+    // is what the operator still wants to see.
     void this.pulseChatAction(entry)
     entry.chatActionHandle = this.setTimer(
       () => this.chatActionTick(chatId, generation),
@@ -758,7 +758,7 @@ export class StatusManager {
         })
         // MED-A #6 (Codex status #5): retry must preserve
         // `reply_to_message_id` so the recovered bubble stays in the
-        // same reply thread the warchief expects. Pre-fix retried
+        // same reply thread the operator expects. Pre-fix retried
         // with `{}`, dropping the entire sendOpts including the
         // reply target — the rolling status then appeared at the
         // bottom of the chat unconnected to the originating message.
@@ -1104,7 +1104,7 @@ export class StatusManager {
         const cls = classifyEditError(err)
         if (cls.kind === 'benign') return
         if (cls.kind === 'message_gone') {
-          // Cancel race: message already deleted (warchief tapped delete,
+          // Cancel race: message already deleted (operator tapped delete,
           // or it scrolled past Telegram's 48h edit window). Nothing to
           // do — the entry is already gone from our map.
           this.log.debug('status cancel target missing (ignored)', {

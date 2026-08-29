@@ -21,7 +21,7 @@ const LEASE = true as const
 
 describe('analyzeAsk — no-lease short-circuit', () => {
   test('returns empty when no active lease, even for a blatant ask', () => {
-    expect(analyzeAsk('жду го, мой вождь', { hasActiveLease: false })).toEqual([])
+    expect(analyzeAsk('жду го, мой владелец', { hasActiveLease: false })).toEqual([])
   })
 
   test('returns empty for empty text (with lease)', () => {
@@ -29,7 +29,7 @@ describe('analyzeAsk — no-lease short-circuit', () => {
   })
 
   test('returns empty for benign prose (with lease)', () => {
-    expect(analyzeAsk('Готово, мой вождь. Код чист.', { hasActiveLease: LEASE })).toEqual([])
+    expect(analyzeAsk('Готово, мой владелец. Код чист.', { hasActiveLease: LEASE })).toEqual([])
   })
 })
 
@@ -55,7 +55,7 @@ describe('analyzeAsk — tier-1 pattern hits', () => {
   })
 
   test('«жду команды» fires ASK_WAIT_GO', () => {
-    const f = analyzeAsk('жду команды, вождь', { hasActiveLease: LEASE })
+    const f = analyzeAsk('жду команды, владелец', { hasActiveLease: LEASE })
     expect(f.map((x) => x.code)).toContain('ASK_WAIT_GO')
   })
 
@@ -251,7 +251,7 @@ describe('analyzeAsk — hard-gate vocabulary (fix-loop #1, table-driven)', () =
 // the broadened vocabulary must not swallow the guard entirely.
 describe('analyzeAsk — self-gates still fire without a hard-gate marker (fix-loop #1)', () => {
   const FIRES: ReadonlyArray<[string, string, string]> = [
-    ['ASK_WAIT_GO', 'жду го', 'жду го, мой вождь'],
+    ['ASK_WAIT_GO', 'жду го', 'жду го, мой владелец'],
     ['ASK_GIVE_GO', 'дай добро', 'дай добро — и я задеплою лендинг'],
     ['ASK_SAY_YES', 'скажи да', 'скажи да — и я запущу сборку'],
     ['ASK_CONFIRM_THEN', 'подтверди, и', 'подтверди, и начну'],
@@ -318,8 +318,8 @@ describe('analyzeAsk — «жду подтверждения» false-positive na
     expect(f.map((x) => x.code)).toContain('ASK_WAIT_GO')
   })
 
-  test('«жду подтверждение, вождь» fires (owner-directed)', () => {
-    const f = analyzeAsk('жду подтверждение, вождь', { hasActiveLease: LEASE })
+  test('«жду подтверждение, владелец» fires (owner-directed)', () => {
+    const f = analyzeAsk('жду подтверждение, владелец', { hasActiveLease: LEASE })
     expect(f.map((x) => x.code)).toContain('ASK_WAIT_GO')
   })
 
@@ -379,9 +379,9 @@ describe('analyzeAsk — «жду подтверждения» fix-loop-2 defect
     expect(f.map((x) => x.code)).toContain('ASK_WAIT_GO')
   })
 
-  // «жду подтверждения, вождь» — comma+owner ref DOES still fire.
-  test('«жду подтверждения, вождь» fires (comma+owner)', () => {
-    const f = analyzeAsk('жду подтверждения, вождь', { hasActiveLease: LEASE })
+  // «жду подтверждения, владелец» — comma+owner ref DOES still fire.
+  test('«жду подтверждения, владелец» fires (comma+owner)', () => {
+    const f = analyzeAsk('жду подтверждения, владелец', { hasActiveLease: LEASE })
     expect(f.map((x) => x.code)).toContain('ASK_WAIT_GO')
   })
 })

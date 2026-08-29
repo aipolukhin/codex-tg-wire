@@ -734,10 +734,10 @@ export function buildAutonomyReminderBlock(
     const age = humanizeDurationMs(questionAgeMs(q, nowMs))
     const def = q.defaultAction !== undefined ? truncate(q.defaultAction, SUMMARY_MAX_CHARS) : '—'
     const stickyNote = q.sticky === true
-      ? ' Это sticky-вопрос — НЕ обходить дефолтом, дождись ответа вождя.'
+      ? ' Это sticky-вопрос — НЕ обходить дефолтом, дождись ответа владельца.'
       : ' >2ч без ответа — бери дефолт и сообщи (sticky-вопросы не обходить).'
     lines.push(
-      `Открытый вопрос вождю ${q.id}: «${truncate(q.summary, SUMMARY_MAX_CHARS)}» — без ответа ${age}; дефолт: ${def}.${stickyNote}`,
+      `Открытый вопрос владельцу ${q.id}: «${truncate(q.summary, SUMMARY_MAX_CHARS)}» — без ответа ${age}; дефолт: ${def}.${stickyNote}`,
     )
   }
   return lines.join('\n')

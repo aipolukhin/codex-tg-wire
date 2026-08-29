@@ -170,7 +170,7 @@ const TELEGRAM_TOKEN_PARTIAL_RE = /\b(\d{3})\d{7,}:(AA\w{2})\w+/g
 //
 // HYPHEN EXEMPTION (2026-06-09): the character class is [A-Za-z0-9_] — a
 // HYPHEN now BREAKS the run instead of extending it. Every false positive
-// the warchief hit was a kebab-case identifier: repo slugs
+// the operator hit was a kebab-case identifier: repo slugs
 // (`dashi-plugin-claude-code`), feature-branch names, multichat link slugs.
 // These are public, not secrets, and masking them ("validate only secrets")
 // produced dead links and noise. Opaque secrets that matter are caught by

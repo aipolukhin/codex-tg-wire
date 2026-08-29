@@ -6,7 +6,7 @@
 # Usage:
 #   scripts/install-hooks.sh \
 #     --settings /path/to/agent/settings.json \
-#     --chat-id 164795011 \
+#     --chat-id 123456789 \
 #     --webhook-url http://127.0.0.1:8089/hooks/agent \
 #     [--agent-id dashi-channel] \
 #     [--permission-gate] [--gate-helper /abs/permission-gate-hook.ts] \

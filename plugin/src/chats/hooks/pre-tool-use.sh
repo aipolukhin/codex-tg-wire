@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse hook for multichat-thrall.
+# Claude Code PreToolUse hook for a multichat child session.
 #
 # Reads the tool-call JSON from stdin, loads the chat's deny rules from
 # {WORKSPACE}/chats/policy.yaml (keyed by $CHAT_ID), and emits a
@@ -31,7 +31,7 @@ set -euo pipefail
 
 # Sentinel: this hook is multichat-specific. If MULTICHAT_STATE_DIR is unset
 # the hook is running outside a per-chat tmux session (e.g. accidentally
-# registered into the master Thrall workspace via a stray settings.json) and
+# registered into the host workspace via a stray settings.json) and
 # applying the strict gate would lock the master session out of every Bash /
 # Edit / Read call. Pass-through silently.
 if [[ -z "${MULTICHAT_STATE_DIR:-}" ]]; then
@@ -44,7 +44,11 @@ if [[ -z "${CHAT_ID:-}" ]]; then
   exit 2
 fi
 
-WORKSPACE="${CLAUDE_WORKSPACE_DIR:-${HOME}/.claude-lab/thrall/.claude}"
+WORKSPACE="${CLAUDE_WORKSPACE_DIR:-${TELEGRAM_WORKSPACE_ROOT:-}}"
+if [[ -z "${WORKSPACE}" ]]; then
+  printf '%s\n' '{"decision":"block","reason":"CLAUDE_WORKSPACE_DIR env var missing (fail-safe deny)"}'
+  exit 2
+fi
 POLICY_PATH="${WORKSPACE}/chats/policy.yaml"
 
 if [[ ! -f "$POLICY_PATH" ]]; then

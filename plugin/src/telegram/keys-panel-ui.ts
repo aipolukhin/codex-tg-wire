@@ -163,8 +163,8 @@ export interface KkeyCallbackDeps {
 
 // Dispatch a `kkey:*` callback. Always answers the callback query (so the
 // Telegram spinner clears) and returns true when it consumed the event.
-// NEVER injects a keystroke for a non-allowed user id (the warchief's hard
-// requirement). Does NOT mutate the keyboard message — the warchief taps it
+// NEVER injects a keystroke for a non-allowed user id (the operator's hard
+// requirement). Does NOT mutate the keyboard message — the operator taps it
 // repeatedly across a multi-step dialog.
 export async function handleKkeyCallback(
   ctx: KkeyCallbackContext,

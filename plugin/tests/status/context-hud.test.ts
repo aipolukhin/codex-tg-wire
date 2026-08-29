@@ -24,10 +24,10 @@ import type { EditOpts, InlineKeyboardLike, SendMessageOpts } from '../../src/ch
 import type { Logger } from '../../src/log.js'
 
 const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Logger
-const OWNER = '164795011'
+const OWNER = '123456789'
 const WINDOW = 200_000
 const PANE = { paneTarget: '%1', socketPath: '/tmp/s' }
-const ALLOWED = [164795011]
+const ALLOWED = [123456789]
 
 // Track temp dirs for cleanup.
 const tmpDirs: string[] = []
@@ -637,7 +637,7 @@ describe('handleHudCallback', () => {
       log,
       sendConfirmCard: send,
       sendControl: sender,
-      ownerChatIds: [164795011],
+      ownerChatIds: [123456789],
     }
     // Tap from a group chat (negative id), authorized user, but wrong chat.
     const answers: (string | undefined)[] = []

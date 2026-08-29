@@ -50,21 +50,21 @@ cat <<'HINT'
 
 Next step (operator, interactive):
 
-  1. Stop the Python canary:
-       tmux kill-session -t orgrimmar-canary 2>/dev/null || true
+  1. Stop the legacy canary, if one is running:
+       tmux kill-session -t dashi-canary 2>/dev/null || true
 
   2. Launch the channel plugin in a tmux session:
-       tmux new-session -d -s orgrimmar-canary-channel \
-         -c /Users/jasonqwwen/qwwiwi-channel-telegram-Claude-code/plugin \
-         'TELEGRAM_BOT_TOKEN=$(cat ~/.claude-lab/shared/channel-runtime/canary/secrets/telegram-bot-token) \
-          TELEGRAM_STATE_DIR=/Users/jasonqwwen/.claude-lab/shared/channel-runtime/canary/telegram \
+       tmux new-session -d -s dashi-canary-channel \
+         -c /absolute/path/to/dashi/plugin \
+         'TELEGRAM_BOT_TOKEN=<test-bot-token> \
+          TELEGRAM_STATE_DIR=/absolute/path/to/dashi-canary-state \
           TELEGRAM_WORKSPACE_ROOT=/tmp/dashi-channel-canary-workspace \
           claude --dangerously-load-development-channels server:dashi-channel'
 
   3. Walk the 15-row smoke matrix in docs/canary-smoke.md.
 
-Rollback: tmux kill-session -t orgrimmar-canary-channel, then restart the
-Python canary as documented.
+Rollback: tmux kill-session -t dashi-canary-channel, then restart the previous
+bridge if needed.
 
 Do NOT touch production bot tokens, gateway.py, or production tmux sessions.
 HINT

@@ -634,7 +634,7 @@ describe('isConnectionRefused — FIX-T2 F1', () => {
   test('returns FALSE for generic "Failed to fetch" with no structured code', () => {
     // Mid-flight failure: connection accepted, then dropped. The plugin
     // has likely already sent a TG prompt. Must NOT match — caller falls
-    // to the deny path so the warchief is not prompted twice.
+    // to the deny path so the operator is not prompted twice.
     const err = new TypeError('Failed to fetch')
     expect(isConnectionRefused(err)).toBe(false)
   })

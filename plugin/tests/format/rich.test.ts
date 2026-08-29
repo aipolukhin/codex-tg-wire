@@ -219,9 +219,9 @@ describe('contentFitsRichLimits', () => {
 
 describe('buildRichMessagePayload', () => {
   test('builds chat_id + markdown body without threading', () => {
-    const body = buildRichMessagePayload('# Title\n\n| a | b |', { chat_id: '164795011' })
+    const body = buildRichMessagePayload('# Title\n\n| a | b |', { chat_id: '123456789' })
     expect(body).toEqual({
-      chat_id: '164795011',
+      chat_id: '123456789',
       rich_message: { markdown: '# Title\n\n| a | b |' },
     })
     // No reply_parameters when reply_to_message_id is omitted.
@@ -230,11 +230,11 @@ describe('buildRichMessagePayload', () => {
 
   test('adds reply_parameters when reply_to_message_id is set', () => {
     const body = buildRichMessagePayload('hello', {
-      chat_id: '164795011',
+      chat_id: '123456789',
       reply_to_message_id: 777,
     })
     expect(body).toEqual({
-      chat_id: '164795011',
+      chat_id: '123456789',
       rich_message: { markdown: 'hello' },
       reply_parameters: { message_id: 777 },
     })

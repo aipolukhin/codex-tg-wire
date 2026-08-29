@@ -156,8 +156,8 @@ export interface HandlerDeps {
   // tests still compile — when absent, every media message goes through
   // the single-media path (no album merging).
   albumBuffer?: AlbumBuffer<AlbumEntry>
-  // PR-A3 (2026-05-20): InboundWatcher fires an auto-reply «Тралл занят»
-  // when the warchief sends plain text mid-tool. Optional so older tests
+  // PR-A3 (2026-05-20): InboundWatcher fires an auto-reply «Агент занят»
+  // when the operator sends plain text mid-tool. Optional so older tests
   // compile — when absent, the watcher branch is skipped and behaviour
   // matches the pre-A3 path. Insertion point in handleInboundText sits
   // AFTER OOB resolution and BEFORE gateAndNotify: OOB still wins, and
@@ -278,7 +278,7 @@ function watcherAllowed(
 // allowed sender's message would trigger auto-reply and tmux-mirror
 // bump even when the bot was not addressed. That leaks bot activity
 // (typing bubble, status edits, mirror re-anchor) on every normal
-// group message — the warchief and other speakers would see the bot
+// group message — the operator and other speakers would see the bot
 // "react" to traffic that wasn't directed at it.
 //
 // Composite gate: allowlist-pass (chat/sender) AND addressing-pass
@@ -304,7 +304,7 @@ function isSideEffectAllowed(
 // no-op when the watcher isn't configured — older tests stay compatible.
 //
 // Bug #3 (TASK-4): use `isSideEffectAllowed` (allowlist AND addressing)
-// so a non-addressed group message never triggers «Тралл занят».
+// so a non-addressed group message never triggers «Агент занят».
 function maybeTriggerWatcher(ctx: Context, deps: HandlerDeps): void {
   if (!deps.watcher) return
   if (!isSideEffectAllowed(ctx, deps.config, deps.policy)) return
@@ -323,7 +323,7 @@ function maybeTriggerWatcher(ctx: Context, deps: HandlerDeps): void {
 
 // Fire-and-forget mirror bump. Triggered by an inbound message from an
 // allowed sender so the rolling tmux-mirror message is re-anchored at
-// the bottom of the chat (warchief asked for this 2026-05-20: the mirror
+// the bottom of the chat (operator asked for this 2026-05-20: the mirror
 // was scrolling up out of view as the conversation progressed). Reuses
 // the same allowlist gate as the watcher so a non-allowed message never
 // disturbs the mirror. `bump` is optional on TmuxMirrorControl, so when
@@ -461,7 +461,7 @@ async function gateAndNotify(
   }
 
   // Group/supergroup addressing gate: only senders in `mention_allowlist`
-  // (typically just the warchief) may summon the bot via @-mention or
+  // (typically just the operator) may summon the bot via @-mention or
   // reply-to-bot. Silent drop — no reaction, no notify, no router dispatch.
   // DM passes through unchanged because isAddressedToBot returns true for
   // private chats regardless of the allowlist parameter.
@@ -516,7 +516,7 @@ async function gateAndNotify(
   // Router path: route GROUP/supergroup chats to their per-chat tmux
   // session via the file-based inbox. Private DMs deliberately fall
   // through to the legacy sendChannelNotification path below so they
-  // land in the master (channel-thrall) session — the warchief's main
+  // land in the master (channel-agent-one) session — the operator's main
   // Telegram channel lives there, not in a spawned per-chat session
   // (explicit requirement 2026-05-28; matches the long-standing comments
   // that "DMs use the legacy notify path even in multichat builds").
@@ -1123,7 +1123,7 @@ export async function sendAlbumNotification(
 
   // Router path: GROUP albums go to the per-chat session (merged caption
   // + every downloaded media path). Private-DM albums fall through to the
-  // legacy notify path below, landing in the master (channel-thrall)
+  // legacy notify path below, landing in the master (channel-agent-one)
   // session — symmetric with the single-message branch in gateAndNotify.
   // Reuse the `isGroup` local set above (isGroupChatId(ids.chatId)) — it
   // is the only group signal here since the original Context/chatType is
@@ -1214,7 +1214,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
 
   // fix/eyes-on-read (2026-05-28): the 👀 read receipt is NO LONGER set
   // here. Setting it at bot-receive time made 👀 mean "the bot saw the
-  // update", not "Thrall read it" — if a turn was busy, the message queued
+  // update", not "ExampleAgent read it" — if a turn was busy, the message queued
   // while the eyes already showed, so the signal lied. The reaction now
   // fires deterministically from the Stop hook (scripts/read-receipt-hook.ts
   // → POST /hooks/react) once the message has actually entered and been read
@@ -1226,7 +1226,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
   // priority over the AskUserQuestion «Other» text consumer. Previously the
   // Other-text path ran first and would swallow a perfectly-formed
   // `yes <id>` / `no <id>` reply — the permission relay timed out and the
-  // warchief's intent was lost. SECURITY gate: live permission verdict
+  // operator's intent was lost. SECURITY gate: live permission verdict
   // wins so the approve/deny channel cannot be hijacked by a parallel
   // AskUserQuestion prompt.
   //
@@ -1272,7 +1272,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
   // consumption. Runs AFTER the permission-reply gate so a live `yes <id>`
   // / `no <id>` verdict is never swallowed (FIX-T1 F3). The UI itself
   // enforces:
-  //   - approver allowlist (only the warchief may answer)
+  //   - approver allowlist (only the operator may answer)
   //   - reply_to_message_id matches the awaiting prompt (FIX-T1 F4 — narrow
   //     hijack surface; only an explicit reply to «Введи ответ» consumes
   //     the awaiting slot, freeform text falls through to channel forward)
@@ -1355,7 +1355,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
   }
 
   // PR-A3 watcher hook (after OOB resolution, before gate/notify): if Claude
-  // is mid-tool for this chat, auto-reply «Тралл занят». Gated on the
+  // is mid-tool for this chat, auto-reply «Агент занят». Gated on the
   // allowlist — only allowed senders in allowed chats can trigger it.
   // Fire-and-forget — channel-notification latency must NOT depend on the
   // auto-reply round-trip. Auto-reply does NOT replace the channel notification
@@ -1394,7 +1394,7 @@ function voiceTranscribeDeps(deps: HandlerDeps): VoiceTranscribeDeps {
 
 export async function handleInboundPhoto(ctx: Context, deps: HandlerDeps): Promise<void> {
   // PR-A3: same watcher hook as text. Media handlers must surface
-  // «Тралл занят» too — otherwise a busy-session photo/voice silently waits.
+  // «Агент занят» too — otherwise a busy-session photo/voice silently waits.
   maybeTriggerWatcher(ctx, deps)
   maybeBumpMirror(ctx, deps)
   const buildPhoto = (): Promise<MediaDescriptor[]> =>

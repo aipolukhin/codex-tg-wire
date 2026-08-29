@@ -31,7 +31,7 @@ describe('permission-gate relay', () => {
 
   test('allow tap resolves the promise with allow', async () => {
     const r = makeRelay()
-    const { requestId, result } = r.submit({ ...base, chatId: '164795011' })
+    const { requestId, result } = r.submit({ ...base, chatId: '123456789' })
     expect(requestId).toBeDefined()
     expect(r.pendingCount()).toBe(1)
     expect(r.answer(requestId!, 'allow')).toBe('allow')
@@ -42,14 +42,14 @@ describe('permission-gate relay', () => {
 
   test('deny tap resolves with deny', async () => {
     const r = makeRelay()
-    const { requestId, result } = r.submit({ ...base, chatId: '164795011' })
+    const { requestId, result } = r.submit({ ...base, chatId: '123456789' })
     r.answer(requestId!, 'deny')
     expect((await result).status).toBe('deny')
   })
 
   test('second tap on a settled request is idempotent (first wins)', async () => {
     const r = makeRelay()
-    const { requestId, result } = r.submit({ ...base, chatId: '164795011' })
+    const { requestId, result } = r.submit({ ...base, chatId: '123456789' })
     expect(r.answer(requestId!, 'allow')).toBe('allow')
     expect(r.answer(requestId!, 'deny')).toBe('idempotent')
     expect((await result).status).toBe('allow')
@@ -57,14 +57,14 @@ describe('permission-gate relay', () => {
 
   test('timeout resolves with timeout', async () => {
     const r = makeRelay(20)
-    const { result } = r.submit({ ...base, chatId: '164795011' })
+    const { result } = r.submit({ ...base, chatId: '123456789' })
     const v = await result
     expect(v.status).toBe('timeout')
   })
 
   test('expire resolves with deny (fail-closed)', async () => {
     const r = makeRelay()
-    const { requestId, result } = r.submit({ ...base, chatId: '164795011' })
+    const { requestId, result } = r.submit({ ...base, chatId: '123456789' })
     r.expire(requestId!, 'boom')
     const v = await result
     expect(v.status).toBe('deny')
@@ -73,8 +73,8 @@ describe('permission-gate relay', () => {
 
   test('toolUseId replay attaches to the live request (same promise)', async () => {
     const r = makeRelay()
-    const a = r.submit({ ...base, chatId: '164795011' })
-    const b = r.submit({ ...base, chatId: '164795011' })
+    const a = r.submit({ ...base, chatId: '123456789' })
+    const b = r.submit({ ...base, chatId: '123456789' })
     expect(b.requestId).toBe(a.requestId)
     r.answer(a.requestId!, 'allow')
     expect((await a.result).status).toBe('allow')
@@ -83,10 +83,10 @@ describe('permission-gate relay', () => {
 
   test('toolUseId replay after settle returns the cached verdict', async () => {
     const r = makeRelay()
-    const a = r.submit({ ...base, chatId: '164795011' })
+    const a = r.submit({ ...base, chatId: '123456789' })
     r.answer(a.requestId!, 'deny')
     await a.result
-    const b = r.submit({ ...base, chatId: '164795011' })
+    const b = r.submit({ ...base, chatId: '123456789' })
     expect(b.requestId).toBeUndefined()
     expect((await b.result).status).toBe('deny')
   })
@@ -98,7 +98,7 @@ describe('permission-gate relay', () => {
 
   test('setTelegramMessageId stashes the message id', () => {
     const r = makeRelay()
-    const { requestId } = r.submit({ ...base, chatId: '164795011' })
+    const { requestId } = r.submit({ ...base, chatId: '123456789' })
     r.setTelegramMessageId(requestId!, 42)
     expect(r.getPending(requestId!)?.telegramMessageId).toBe(42)
   })

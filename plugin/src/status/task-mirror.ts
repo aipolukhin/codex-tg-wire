@@ -696,7 +696,7 @@ export class TaskMirror {
   }
 
   // Reset on session change. If the old snapshot is fresh, finalize it
-  // gracefully (final «сессия завершена» edit) so the warchief sees the handoff;
+  // gracefully (final «сессия завершена» edit) so the operator sees the handoff;
   // if it is past the TTL it is a stale orphan and dropped silently.
   private async resetForNewSession(chatId: string, existing: ChatTaskEntry): Promise<void> {
     const idle = this.now() - existing.lastActivityMs
@@ -817,7 +817,7 @@ export class TaskMirror {
    *
    * Why the marker: without it, if the last snapshot was already rendered the
    * idempotency gate (`text === lastRenderedText`) skips the final edit — the
-   * warchief never sees a visual «session ended» signal. Appending a non-empty
+   * operator never sees a visual «session ended» signal. Appending a non-empty
    * marker line guarantees the final text differs.
    */
   private async finalize(chatId: string, entry: ChatTaskEntry): Promise<void> {
@@ -882,7 +882,7 @@ export class TaskMirror {
   /**
    * Final-edit body: current snapshot + «сессия завершена» marker. The
    * marker ALWAYS differs from any intermediate render so idempotency
-   * never skips this edit (otherwise the warchief might never see a
+   * never skips this edit (otherwise the operator might never see a
    * session-end signal). Same DEFAULT_MAX_CHARS budget applies — if the
    * snapshot already pushes against the cap, the marker still fits inside
    * the safety margin renderTodoList reserves.

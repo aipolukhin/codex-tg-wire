@@ -46,10 +46,10 @@ const silentLog = createLogger('test', {
 
 function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: {
       enabled: true,
       interval_ms: 700,
@@ -63,7 +63,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -86,6 +86,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -241,7 +242,7 @@ function makeManager(opts: { config?: AppConfig; clock?: FakeClock; api?: FakeAp
   return { mgr, clock, api, config }
 }
 
-const CHAT = '164795011'
+const CHAT = '123456789'
 
 // ─────────────────────────────────────────────────────────────────────
 // Bug 1 — per-chat lifecycle serialization (HIGH #3)
@@ -816,7 +817,7 @@ describe('StatusManager — FIX-C bug #2 (handle stays valid after lazy bubble)'
 // Pre-fix: the deprecated `shouldStream(chatId, policy)` symbol kept
 // its own fail-OPEN body: `policy?.chats[chatId] === undefined → true`.
 // Any caller still wired to it would re-introduce the CRITICAL #1 /
-// HIGH #9 leak (warchief streaming bleeds into public groups that
+// HIGH #9 leak (operator streaming bleeds into public groups that
 // were never declared in policy.yaml).
 //
 // Post-fix: the symbol exists but its body forwards to
@@ -851,7 +852,7 @@ function makeFullPolicy(chats: Record<string, ChatPolicy>): MultichatPolicy {
 describe('StatusManager — FIX-C bug #4 (shouldStream legacy export is fail-CLOSED)', () => {
   test('chat absent from policy.chats returns false (regression for HIGH #9)', () => {
     const policy = makeFullPolicy({
-      '164795011': makeChatPolicy({ streaming: 'progress' }),
+      '123456789': makeChatPolicy({ streaming: 'progress' }),
     })
     // Pre-fix this returned `true` (fail-OPEN) for any chat not in
     // policy.chats. Post-fix it must be false.
@@ -868,15 +869,15 @@ describe('StatusManager — FIX-C bug #4 (shouldStream legacy export is fail-CLO
 
   test('chat present with streaming:"progress" returns true', () => {
     const policy = makeFullPolicy({
-      '164795011': makeChatPolicy({ streaming: 'progress' }),
+      '123456789': makeChatPolicy({ streaming: 'progress' }),
     })
-    expect(shouldStream('164795011', policy)).toBe(true)
+    expect(shouldStream('123456789', policy)).toBe(true)
   })
 
   test('omitted policy (legacy single-DM) returns true', () => {
     // The legacy DM-only deployments pass no policy at all; the shim
     // must preserve the historical "every chat streams" behaviour.
-    expect(shouldStream('164795011')).toBe(true)
+    expect(shouldStream('123456789')).toBe(true)
     expect(shouldStream('-1003784643974')).toBe(true)
   })
 
@@ -885,7 +886,7 @@ describe('StatusManager — FIX-C bug #4 (shouldStream legacy export is fail-CLO
     // first; the shim inherits that hard-fail. Pre-fix the shim
     // accepted any string silently.
     const policy = makeFullPolicy({
-      '164795011': makeChatPolicy({ streaming: 'progress' }),
+      '123456789': makeChatPolicy({ streaming: 'progress' }),
     })
     expect(() => shouldStream('abc', policy)).toThrow(TypeError)
     expect(() => shouldStream('../etc/passwd', policy)).toThrow(TypeError)

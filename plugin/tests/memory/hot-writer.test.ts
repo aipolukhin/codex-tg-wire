@@ -23,7 +23,7 @@ function defaultInput(overrides: Partial<Parameters<typeof appendHotEntry>[0]> =
   return {
     path: hotPath,
     ts: '2026-05-15 12:00',
-    agentLabel: 'Silvana',
+    agentLabel: 'ExampleAgent',
     sourceTag: 'tg',
     userSnippet: 'hello',
     agentSnippet: 'hi there',
@@ -85,7 +85,7 @@ describe('appendHotEntry', () => {
     // First char is a leading newline (per gateway.py format spec).
     expect(text.startsWith('\n### 2026-05-15 12:00 [tg]\n')).toBe(true)
     expect(text).toContain('**User:** hello\n')
-    expect(text).toContain('**Silvana:** hi there\n')
+    expect(text).toContain('**ExampleAgent:** hi there\n')
   })
 
   test('mkdir -p creates core/hot/ on first write', async () => {
@@ -128,16 +128,16 @@ describe('appendHotEntry', () => {
     for (let i = 0; i < N; i++) {
       const id = i.toString().padStart(4, '0')
       expect(text).toContain(`**User:** u${id}\n`)
-      expect(text).toContain(`**Silvana:** a${id}\n`)
+      expect(text).toContain(`**ExampleAgent:** a${id}\n`)
     }
     // Cheap interleave check: every '**User:** uNNNN' must be followed
-    // by the matching '**Silvana:** aNNNN' on the next non-empty line.
+    // by the matching '**ExampleAgent:** aNNNN' on the next non-empty line.
     const lines = text.split('\n')
     for (let i = 0; i < lines.length; i++) {
       const m = /^\*\*User:\*\* u(\d{4})$/.exec(lines[i]!)
       if (!m) continue
       const next = lines[i + 1] ?? ''
-      expect(next).toBe(`**Silvana:** a${m[1]}`)
+      expect(next).toBe(`**ExampleAgent:** a${m[1]}`)
     }
   })
 
@@ -145,7 +145,7 @@ describe('appendHotEntry', () => {
     // Pre-seed ~30 KB so the first append triggers the >20 KB branch.
     const pre = '\n### 2026-05-15 11:00 [tg]\n' +
       '**User:** ' + 'a'.repeat(180) + '\n' +
-      '**Silvana:** ' + 'b'.repeat(180) + '\n'
+      '**ExampleAgent:** ' + 'b'.repeat(180) + '\n'
     // mkdir-p so we can pre-seed before the writer ever runs.
     const fs = await import('node:fs/promises')
     await fs.mkdir(dirname(hotPath), { recursive: true })
@@ -177,7 +177,7 @@ describe('appendHotEntry', () => {
     await fs.mkdir(dirname(hotPath), { recursive: true })
     const pre = '\n### 2026-05-15 11:00 [tg]\n' +
       '**User:** ' + 'a'.repeat(180) + '\n' +
-      '**Silvana:** ' + 'b'.repeat(180) + '\n'
+      '**ExampleAgent:** ' + 'b'.repeat(180) + '\n'
     let seed = ''
     while (seed.length < 30 * 1024) seed += pre
     writeFileSync(hotPath, seed, 'utf8')
@@ -200,7 +200,7 @@ describe('appendHotEntry', () => {
     await fs.mkdir(dirname(hotPath), { recursive: true })
     const pre = '\n### 2026-05-15 11:00 [tg]\n' +
       '**User:** ' + 'a'.repeat(180) + '\n' +
-      '**Silvana:** ' + 'b'.repeat(180) + '\n'
+      '**ExampleAgent:** ' + 'b'.repeat(180) + '\n'
     let seed = ''
     while (seed.length < 30 * 1024) seed += pre
     writeFileSync(hotPath, seed, 'utf8')

@@ -47,11 +47,15 @@ beforeEach(() => {
   const env = {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   }
   baseConfig = loadConfig(env)
   paths = getStatePaths(baseConfig, {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   })
   ensureStateDirs(paths)
   handle = null
@@ -103,11 +107,11 @@ function url(h: WebhookServerHandle, path: string): string {
 
 describe('validateWebhookPayload', () => {
   test('accepts {message, chatId} numeric', () => {
-    const p = validateWebhookPayload({ message: 'hi', chatId: 164795011 })
+    const p = validateWebhookPayload({ message: 'hi', chatId: 123456789 })
     expect(p.kind).toBe('message')
     if (p.kind !== 'message') throw new Error('unreachable')
     expect(p.message).toBe('hi')
-    expect(p.chatId).toBe('164795011')
+    expect(p.chatId).toBe('123456789')
     expect(p.agentId).toBeUndefined()
   })
 
@@ -146,7 +150,7 @@ describe('validateWebhookPayload', () => {
     // routes to the hook schema even when `message` is present.
     const p = validateWebhookPayload({
       message: 'this should NOT win',
-      chatId: 164795011,
+      chatId: 123456789,
       hook_event_name: 'PreToolUse',
       session_id: 's1',
       transcript_path: '/tmp/t.jsonl',
@@ -232,7 +236,7 @@ describe('POST /hooks/agent', () => {
     const resp = await fetch(url(h, '/hooks/agent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'x', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'x', chatId: 123456789 }),
     })
     expect(resp.status).toBe(401)
     const body = (await resp.json()) as Record<string, unknown>
@@ -248,7 +252,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': 'Bearer wrong_token_value',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'x', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'x', chatId: 123456789 }),
     })
     expect(resp.status).toBe(401)
   })
@@ -267,7 +271,7 @@ describe('POST /hooks/agent', () => {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: 'x', chatId: 164795011 }),
+        body: JSON.stringify({ message: 'x', chatId: 123456789 }),
       })
       expect(resp.status).toBe(401)
     }
@@ -282,7 +286,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': 'Bearer anything',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'x', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'x', chatId: 123456789 }),
     })
     expect(resp.status).toBe(503)
   })
@@ -296,7 +300,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'hello via webhook', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'hello via webhook', chatId: 123456789 }),
     })
     expect(resp.status).toBe(200)
     const body = (await resp.json()) as Record<string, unknown>
@@ -308,7 +312,7 @@ describe('POST /hooks/agent', () => {
     const params = call.params as { content: string; meta: Record<string, string> }
     expect(params.content).toBe('hello via webhook')
     expect(params.meta.source).toBe('webhook')
-    expect(params.meta.chat_id).toBe('164795011')
+    expect(params.meta.chat_id).toBe('123456789')
   })
 
   test('body > 256KB returns 413', async () => {
@@ -322,7 +326,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: huge, chatId: 164795011 }),
+      body: JSON.stringify({ message: huge, chatId: 123456789 }),
     })
     expect(resp.status).toBe(413)
   })
@@ -355,7 +359,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ chatId: 164795011 }),
+      body: JSON.stringify({ chatId: 123456789 }),
     })
     expect(resp.status).toBe(400)
     // Dead-letter records the rejected payload.
@@ -390,7 +394,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'x', chatId: 164795011, agentId: 'unknown-agent' }),
+      body: JSON.stringify({ message: 'x', chatId: 123456789, agentId: 'unknown-agent' }),
     })
     expect(resp.status).toBe(404)
     const body = (await resp.json()) as Record<string, unknown>
@@ -406,7 +410,7 @@ describe('POST /hooks/agent', () => {
         'Authorization': `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'hi', chatId: 164795011, agentId: 'dashi-channel' }),
+      body: JSON.stringify({ message: 'hi', chatId: 123456789, agentId: 'dashi-channel' }),
     })
     expect(resp.status).toBe(200)
     expect(mcp.calls.length).toBe(1)
@@ -437,7 +441,7 @@ describe('POST /hooks/agent', () => {
         'Content-Type': 'application/json',
         'Content-Length': String(1024 * 1024), // 1 MB declared
       },
-      body: JSON.stringify({ message: 'x', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'x', chatId: 123456789 }),
     })
     // Some runtimes will reset Content-Length, in which case the body is
     // small enough to succeed (200). Either reject path is acceptable: this
@@ -501,7 +505,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         agentId: 'dashi-channel',
         hook_event_name: 'PreToolUse',
         session_id: 's1',
@@ -518,7 +522,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
     expect(body.status).toBe('accepted')
     expect(mcp.calls).toEqual([])
     expect(status.calls.length).toBe(1)
-    expect(status.calls[0]!.chatId).toBe('164795011')
+    expect(status.calls[0]!.chatId).toBe('123456789')
     expect(status.calls[0]!.event.kind).toBe('tool_start')
   })
 
@@ -532,7 +536,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -553,7 +557,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'UserPromptSubmit',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -597,7 +601,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         agentId: 'someone-else',
         hook_event_name: 'Stop',
         session_id: 's1',
@@ -619,7 +623,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'PreToolUse',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -653,7 +657,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -688,7 +692,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -713,7 +717,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'PreToolUse',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -740,7 +744,7 @@ describe('POST /hooks/agent — Claude hook payload branch', () => {
         Authorization: `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'legacy hello', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'legacy hello', chatId: 123456789 }),
     })
     expect(resp.status).toBe(200)
     expect(mcp.calls.length).toBe(1)
@@ -813,7 +817,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'UserPromptSubmit',
         session_id: 'sid-1',
         transcript_path: '/tmp/t.jsonl',
@@ -824,7 +828,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
     expect(resp.status).toBe(200)
     expect(memory.calls.length).toBe(1)
     expect(memory.calls[0]!.hook).toBe('UserPromptSubmit')
-    expect(memory.calls[0]!.chatId).toBe('164795011')
+    expect(memory.calls[0]!.chatId).toBe('123456789')
     // Status STILL fires (it owns Telegram visibility) — memory is sibling, not replacement.
     expect(status.calls.length).toBe(1)
     expect(mcp.calls.length).toBe(0)
@@ -853,7 +857,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'sid-1',
         transcript_path: '/tmp/t.jsonl',
@@ -888,7 +892,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'sid-1',
         transcript_path: '/tmp/t.jsonl',
@@ -941,7 +945,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'sid-1',
         transcript_path: '/tmp/t.jsonl',
@@ -970,7 +974,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'sid-1',
         transcript_path: '/tmp/t.jsonl',
@@ -1006,7 +1010,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 'sid-1',
         transcript_path: '/tmp/t.jsonl',
@@ -1037,7 +1041,7 @@ describe('POST /hooks/agent — memoryWriter branch (Phase 8 T7)', () => {
         Authorization: `Bearer ${WEBHOOK_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: 'plain message', chatId: 164795011 }),
+      body: JSON.stringify({ message: 'plain message', chatId: 123456789 }),
     })
     expect(resp.status).toBe(200)
     expect(memory.calls.length).toBe(0)
@@ -1088,7 +1092,7 @@ describe('POST /hooks/agent — status-pin wiring', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          chatId: 164795011,
+          chatId: 123456789,
           session_id: 's1',
           transcript_path: '/tmp/t.jsonl',
           cwd: '/tmp',
@@ -1132,7 +1136,7 @@ describe('POST /hooks/agent — status-pin wiring', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'PostToolUse',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -1152,7 +1156,7 @@ describe('POST /hooks/agent — status-pin wiring', () => {
     // fire-and-forget dispatch — give the microtask queue one tick
     await new Promise((r) => setTimeout(r, 10))
     expect(todoEvents.length).toBe(1)
-    expect(todoEvents[0]!.chatId).toBe('164795011')
+    expect(todoEvents[0]!.chatId).toBe('123456789')
     expect(todoEvents[0]!.event.kind).toBe('todo_write')
   })
 
@@ -1182,7 +1186,7 @@ describe('POST /hooks/agent — status-pin wiring', () => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        chatId: 164795011,
+        chatId: 123456789,
         hook_event_name: 'Stop',
         session_id: 's1',
         transcript_path: '/tmp/t.jsonl',
@@ -1236,7 +1240,7 @@ describe('taskRealityMirror dispatch', () => {
     return resp.status
   }
 
-  const common = { chatId: 164795011, session_id: 's1', transcript_path: '/tmp/t.jsonl', cwd: '/repo' }
+  const common = { chatId: 123456789, session_id: 's1', transcript_path: '/tmp/t.jsonl', cwd: '/repo' }
 
   test('lifecycle hooks route to the reality mirror; mutations bypass taskMirror', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN

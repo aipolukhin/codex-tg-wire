@@ -7,7 +7,7 @@
 // Scope B (multichat): when a MultichatPolicy is passed in, groups and
 // supergroups become allowed if (a) chatId is in policy.allowlist.chats
 // and (b) senderId is in policy.allowlist.users. The mention_allowlist
-// check (only the warchief may summon the bot via @mention) is delegated
+// check (only the operator may summon the bot via @mention) is delegated
 // to `addressing.ts` — see `isAddressedToBot(..., mentionAllowlist)` —
 // because it needs full grammy Context for mention parsing.
 //

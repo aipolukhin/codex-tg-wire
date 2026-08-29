@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code Stop hook for multichat-thrall — bridge transcript → outbox.
+"""Claude Code Stop hook for a multichat child — bridge transcript → outbox.
 
 Role:
     In headless mode the router captures the SDK ``result`` event and writes

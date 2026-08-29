@@ -2,7 +2,7 @@
 //
 // Goal: make Telegram's per-chat / per-bot rate limits invisible to callers.
 // A burst of replies (e.g. a multi-part report) used to surface as a 429
-// from Bot API with retry_after ≈ 300s — long enough that the warchief lost
+// from Bot API with retry_after ≈ 300s — long enough that the operator lost
 // sight of what the agent was doing. This wrapper enforces pacing BEFORE
 // the request leaves the process and transparently retries on 429.
 //

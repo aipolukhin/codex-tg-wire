@@ -215,7 +215,7 @@ export interface TmuxSessionPoolOptions {
   stateDir: string
   // Workspace root used for persona-relative path resolution by hooks
   // and as the canonical CLAUDE_WORKSPACE_DIR exported into the tmux
-  // session. Typically `~/.claude-lab/thrall/.claude`.
+  // session. This is always supplied by the deployment config.
   workspaceDir: string
   // Working directory for the spawned claude process. When provided,
   // tmux runs `new-session -c {chatsBasePath}` so that claude picks up
@@ -286,7 +286,7 @@ export class TmuxSessionPool {
     // chatsBasePath is the cwd handed to tmux — claude's per-workspace
     // `.claude/settings.json` lookup is relative to cwd, so this MUST
     // point at the directory whose `.claude/` subdir contains our
-    // hooks registration. Default mirrors the canonical Thrall layout
+    // hooks registration. The default follows the documented workspace layout
     // (`{workspace}/chats/.claude/settings.json`).
     this.chatsBasePath = opts.chatsBasePath ?? join(opts.workspaceDir, 'chats')
     this.claudeBinary = opts.claudeBinary ?? 'claude'
@@ -652,7 +652,7 @@ export class TmuxSessionPool {
     // C3 fix (2026-05-23): refuse to spawn for a chat without an
     // explicit ChatPolicy entry, even if it sits in allowlist.chats.
     // A missing policy entry means SessionStart can't load persona +
-    // system_reminder, PreToolUse can't load deny rules — master Thrall
+    // system_reminder, PreToolUse can't load deny rules — the host agent
     // would launch without isolation. Hard error is better than a
     // silent persona-less spawn that leaks gbrain MCP into a public
     // group.

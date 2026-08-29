@@ -57,7 +57,7 @@ only then the Telegram queue (Problem 4 is the trap that skips this order).
   reaction and no reply, no error in the log.
 - **Cause**: `TELEGRAM_ALLOWED_USER_IDS`/`TELEGRAM_ALLOWED_CHAT_IDS` does not
   contain your id, so the plugin silently drops the update (by design). The code
-  default `[164795011]` applies only when the env is empty.
+  default `[123456789]` applies only when the env is empty.
 - **Fix**: get your id from `@userinfobot`; set
   `TELEGRAM_ALLOWED_USER_IDS=<your_id>` (group ids look like `-100123456789`);
   restart. Right after start, send `/help` — silence on an out-of-band command
@@ -89,12 +89,12 @@ only then the Telegram queue (Problem 4 is the trap that skips this order).
 - **Symptom**: bot suddenly dies; status `activating (auto-restart)`, exit
   `0/SUCCESS`, restarting every 15s; `tmux capture-pane` → `no server running`.
 - **Cause**: the agent used `sudo` to delete the directory holding its OAuth
-  state (`~/.openclaw/` or `~/.claude/`). Real incident 2026-05-20: a "cleanup"
+  state (`~/.agent-state/` or `~/.claude/`). Real incident 2026-05-20: a "cleanup"
   removed root-owned subdirs along with OAuth + `.secrets/`.
 - **Fix**: stop the service, run claude by hand with a TTY, `/login`, restore
   `.secrets` from a restic snapshot, restart.
 - **Prevent (critical)**: permission rules — destructive sudo
-  (`Bash(sudo rm:*)`, `Bash(sudo rm -rf:*)`, `Bash(rm -rf /home/*/.openclaw*)`,
+  (`Bash(sudo rm:*)`, `Bash(sudo rm -rf:*)`, `Bash(rm -rf /home/*/.agent-state*)`,
   `Bash(rm -rf /home/*/.claude*)`) always in **deny**; blanket `Bash(sudo:*)` on
   a host with OAuth/secrets is a catastrophe.
 
@@ -116,7 +116,7 @@ only then the Telegram queue (Problem 4 is the trap that skips this order).
 ## Problem 10 — sudo deny baseline (what must always be blocked)
 
 Even with broad sudo-allow, keep a baseline deny (deny beats allow):
-`Bash(rm -rf /)`, `Bash(rm -rf ~)`, `Bash(rm -rf /home/*/.openclaw*)`,
+`Bash(rm -rf /)`, `Bash(rm -rf ~)`, `Bash(rm -rf /home/*/.agent-state*)`,
 `Bash(rm -rf /home/*/.claude*)`, `Bash(rm -rf /home/*/.secrets*)`,
 `Bash(sudo rm -rf:*)`, `Bash(sudo userdel:*)`, `Bash(sudo chown -R:*)`,
 `Bash(curl * | bash)`, `Bash(git push --force:*)`, `Bash(git reset --hard:*)`.

@@ -32,7 +32,7 @@ const HOOK = join(
   'stop-to-outbox.py',
 )
 
-const CHAT_ID = '164795011'
+const CHAT_ID = '123456789'
 
 interface RunResult {
   code: number
@@ -690,7 +690,7 @@ describe('attachment markers ([[file: …]])', () => {
     const transcript = writeTranscript([
       userLine('скинь презентацию'),
       assistantLine([
-        { type: 'text', text: 'Вот файл. [[file: /home/openclaw/x/present.html]] Готово.' },
+        { type: 'text', text: 'Вот файл. [[file: /home/service-user/x/present.html]] Готово.' },
       ]),
     ])
     const r = run(baseEnv(), { transcript_path: transcript, session_id: 's1' })
@@ -698,7 +698,7 @@ describe('attachment markers ([[file: …]])', () => {
     const files = listOutboxJson()
     expect(files.length).toBe(1)
     const msg = readOutboxPayload(files[0] as string)
-    expect(msg.files).toEqual(['/home/openclaw/x/present.html'])
+    expect(msg.files).toEqual(['/home/service-user/x/present.html'])
     // marker removed from the visible text
     expect(String(msg.text)).not.toContain('[[file:')
     expect(String(msg.text)).toContain('Вот файл.')
@@ -735,12 +735,12 @@ describe('attachment markers ([[file: …]])', () => {
   test('no marker → no files key (unchanged text-only behaviour)', () => {
     const transcript = writeTranscript([
       userLine('привет'),
-      assistantLine([{ type: 'text', text: 'Здравствуй, вождь.' }]),
+      assistantLine([{ type: 'text', text: 'Здравствуй, владелец.' }]),
     ])
     const r = run(baseEnv(), { transcript_path: transcript, session_id: 's1' })
     expect(r.code).toBe(0)
     const msg = readOutboxPayload(listOutboxJson()[0] as string)
     expect(msg.files).toBeUndefined()
-    expect(msg.text).toBe('Здравствуй, вождь.')
+    expect(msg.text).toBe('Здравствуй, владелец.')
   })
 })

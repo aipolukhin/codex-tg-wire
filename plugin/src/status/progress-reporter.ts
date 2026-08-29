@@ -5,9 +5,9 @@
 // Why separate from StatusManager:
 //   * StatusManager owns a transient bubble that auto-cancels on every
 //     real reply (see status-manager.ts: «start() while active silently
-//     cancels»). Result: the warchief sees nothing.
+//     cancels»). Result: the operator sees nothing.
 //   * ProgressReporter owns a different message that persists through
-//     replies — a running log of «what Thrall is doing now». Both
+//     replies — a running log of «what ExampleAgent is doing now». Both
 //     coexist; the webhook fires them in parallel and independently.
 //
 // Design contract (from Codex GPT-5.5 plan 2026-05-18 + dual review fixes):
@@ -96,7 +96,7 @@ const HTML_OPTS = { parse_mode: 'HTML' as const }
 // Tools that should never appear in the rolling activity card. Reads, greps,
 // globs, and deferred-tool lookups are bookkeeping; the dashi-channel MCP
 // reply tools are the channel itself (mirroring them would recurse), and
-// gbrain-recall is background context fetching the warchief does not need to
+// gbrain-recall is background context fetching the operator does not need to
 // see. Bash/Edit/Write/WebFetch/WebSearch/Agent and gbrain mutations
 // (memory/swarm/tasks) keep flowing through.
 const NOISY_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -163,7 +163,7 @@ export class ProgressReporter {
   /**
    * Read-only: returns true if a Claude session is actively running tools
    * for this chat — used by InboundWatcher to decide whether to auto-reply
-   * «Тралл занят». Definition:
+   * «Агент занят». Definition:
    *   entry exists AND !entry.stopped AND (now - lastActivityMs) < threshold
    *
    * `thresholdMs` is REQUIRED — the watcher owns the threshold via its
@@ -194,7 +194,7 @@ export class ProgressReporter {
    *   accounts for the gap between `tool_end` and the next `tool_start`.
    *   Returning `undefined` here during that brief idle window would cause
    *   false-negative auto-replies (the watcher would see «not busy» and
-   *   suppress the «Тралл занят» message even though Claude is about to
+   *   suppress the «Агент занят» message even though Claude is about to
    *   call the next tool any millisecond now).
    *
    *   `tool_end` is render-only inside this module (see applyEvent) — it

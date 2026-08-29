@@ -10,9 +10,7 @@ TASK-11 owns these three files. Their content must satisfy:
   4. README.md states the v2.1.80+ requirement for Claude Code (matches the
      channels-reference docs).
 
-The test stays narrow on purpose: TASK-11 only edits the three markdown
-files above. Other docs (PLAN.md, docs/dev/*) carry historical paths that
-predate the rename and are out of scope here.
+The test stays narrow on purpose: it owns the three markdown files above.
 """
 
 from __future__ import annotations
@@ -40,16 +38,11 @@ INSTALL_LINKED_DOCS = (WHERE_TO_PLACE, HOW_CLAUDE_LOADS, *INSTALL_DOCS)
 
 OWNED_FILES = (ROOT_README, PLUGIN_README, DEPRECATION)
 
-# Files that TASK-12 archived. Any non-archive link to these paths from
-# tracked markdown is stale and must either be removed or redirected to
-# docs/archive/.
-ARCHIVED_PATHS = (
+# Internal plan files removed from the public tree. Any link to them is stale.
+REMOVED_PATHS = (
     "PLAN.md",
     "plugin/docs/PLAN-A2-A3.md",
 )
-
-# Warchief's Telegram user ID — must never leak into public-facing docs.
-WARCHIEF_USER_ID = "164795011"
 
 OLD_REPO_NAME = "qwwiwi-channel-telegram-Claude-code"
 
@@ -132,7 +125,7 @@ class OldRepoNameAbsentTest(unittest.TestCase):
 
 
 class RootReadmeContentRequirementsTest(unittest.TestCase):
-    """Spot-checks for key strings the warchief expects in README.md."""
+    """Spot-checks for key strings the operator expects in README.md."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -216,14 +209,8 @@ class PluginReadmeContentRequirementsTest(unittest.TestCase):
         )
 
 
-class ArchivedDocLinksTest(unittest.TestCase):
-    """TASK-12: stale plan docs are now under docs/archive/.
-
-    Any tracked markdown that still links to the pre-archive path of
-    `PLAN.md` or `plugin/docs/PLAN-A2-A3.md` must instead either
-    drop the link or point to `docs/archive/...`. Otherwise readers
-    follow a 404.
-    """
+class RemovedDocLinksTest(unittest.TestCase):
+    """Tracked Markdown must not link to removed internal plan files."""
 
     def _tracked_markdown_files(self) -> list[Path]:
         # Walk repo, exclude untracked dev artifacts (loop-coding-runs/),
@@ -245,7 +232,7 @@ class ArchivedDocLinksTest(unittest.TestCase):
             results.append(path)
         return results
 
-    def test_no_stale_links_to_archived_plans(self) -> None:
+    def test_no_stale_links_to_removed_plans(self) -> None:
         failures: list[str] = []
         for md_file in self._tracked_markdown_files():
             text = md_file.read_text(encoding="utf-8")
@@ -253,10 +240,7 @@ class ArchivedDocLinksTest(unittest.TestCase):
                 if _is_external(target):
                     continue
                 stripped = _strip_anchor(target).strip().lstrip("./")
-                # Permit links that already point to docs/archive/.
-                if "docs/archive/" in stripped:
-                    continue
-                for archived in ARCHIVED_PATHS:
+                for archived in REMOVED_PATHS:
                     # Treat both the bare basename and the full repo-relative
                     # path as stale. Example: link `../PLAN.md` from plugin/
                     # resolves up to repo-root PLAN.md.
@@ -264,29 +248,31 @@ class ArchivedDocLinksTest(unittest.TestCase):
                     if stripped.endswith(archived) or stripped.endswith(archived_basename):
                         failures.append(
                             f"{md_file.relative_to(REPO_ROOT)}: link `{target}` -> "
-                            f"archived path `{archived}` (move to docs/archive/...)"
+                            f"removed internal path `{archived}`"
                         )
                         break
         self.assertEqual(failures, [], "\n".join(failures))
 
 
 class TroubleshootingPublicSafetyTest(unittest.TestCase):
-    """TASK-12 + TASK-10 overlap: docs/05-troubleshooting.md is public-facing.
+    """Public troubleshooting must describe secure, user-supplied access lists."""
 
-    The warchief's personal Telegram user ID must NEVER appear there.
-    TASK-10 owns the broader public-safety doctrine; this test stays
-    narrow to the one file TASK-12 directly edits, so it can land first
-    without conflicting with TASK-10's coverage.
-    """
-
-    def test_no_warchief_user_id_in_troubleshooting(self) -> None:
+    def test_no_built_in_allowlist_claim(self) -> None:
         text = TROUBLESHOOTING.read_text(encoding="utf-8")
         self.assertNotIn(
-            WARCHIEF_USER_ID,
+            "Default allowlist в коде",
             text,
-            f"Warchief Telegram user ID `{WARCHIEF_USER_ID}` must NOT appear "
-            f"in {TROUBLESHOOTING.relative_to(REPO_ROOT)}. Replace with "
-            "`<your-telegram-user-id>` or generalise the example.",
+            f"{TROUBLESHOOTING.relative_to(REPO_ROOT)} must not claim that "
+            "the plugin ships a built-in Telegram allowlist.",
+        )
+
+    def test_requires_explicit_allowlists(self) -> None:
+        text = TROUBLESHOOTING.read_text(encoding="utf-8")
+        self.assertIn(
+            "обязательны",
+            text,
+            "Troubleshooting must tell fresh installers that both allowlists "
+            "are required and have no built-in identity defaults.",
         )
 
 
@@ -331,7 +317,7 @@ class DeprecationPathContentRequirementsTest(unittest.TestCase):
 
 # GitHub-style header → anchor slug. Mirrors the slugger used by
 # GitHub Pages / Kramdown / unified-rehype-slug closely enough to
-# catch the broken-anchor regressions the warchief flagged.
+# catch the broken-anchor regressions the operator flagged.
 #
 # Algorithm (proven against real repo headers — see slug_smoke test):
 #   1. Lowercase (including Cyrillic — Python's str.lower handles this).

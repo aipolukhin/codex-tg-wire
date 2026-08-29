@@ -19,11 +19,13 @@ const FAKE_TOKEN = '123456789:AAH-fake_test_token_with_at_least_thirty_chars'
 
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), 'dashi-channel-state-'))
-  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir }
+  const env = { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir, TELEGRAM_ALLOWED_USER_IDS: '123456789', TELEGRAM_ALLOWED_CHAT_IDS: '123456789' }
   const cfg = loadConfig(env)
   paths = getStatePaths(cfg, {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
+  TELEGRAM_ALLOWED_USER_IDS: '123456789',
+  TELEGRAM_ALLOWED_CHAT_IDS: '123456789',
   })
   ensureStateDirs(paths)
 })
@@ -88,14 +90,14 @@ describe('updateOffset', () => {
 describe('migrateLegacyAllowlist', () => {
   test('renames access.json to allowlist.json when target absent', () => {
     const legacy = join(dirname(paths.allowlist), 'access.json')
-    writeFileSync(legacy, JSON.stringify({ allowed: [164795011] }))
+    writeFileSync(legacy, JSON.stringify({ allowed: [123456789] }))
     expect(existsSync(legacy)).toBe(true)
     expect(existsSync(paths.allowlist)).toBe(false)
     const did = migrateLegacyAllowlist(paths)
     expect(did).toBe(true)
     expect(existsSync(legacy)).toBe(false)
     expect(existsSync(paths.allowlist)).toBe(true)
-    expect(JSON.parse(readFileSync(paths.allowlist, 'utf8'))).toEqual({ allowed: [164795011] })
+    expect(JSON.parse(readFileSync(paths.allowlist, 'utf8'))).toEqual({ allowed: [123456789] })
   })
 
   test('is a no-op when neither file exists', () => {

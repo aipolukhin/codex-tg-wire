@@ -3,7 +3,7 @@
 // Claude Code's canonical form: lowercase a-z minus `l` (visually
 // ambiguous with `1`/`i`). Keeping it identical lets the same regex set
 // in `permissions.ts` (`[a-km-z]{5}`) validate both surfaces uniformly,
-// and lets warchief grep audit logs with one pattern.
+// and lets operator grep audit logs with one pattern.
 //
 // 25^5 = ~9.7M IDs — plenty for low-QPS request flows. We do NOT attempt
 // uniqueness here (it's the caller's job to retry on collision against

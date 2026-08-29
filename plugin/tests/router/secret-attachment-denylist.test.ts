@@ -1,5 +1,5 @@
 // The ONLY hard limit on multichat attachments: secret material must never be
-// sendable to a (public) chat, while ordinary files are allowed (warchief
+// sendable to a (public) chat, while ordinary files are allowed (operator
 // 2026-06-10). Guards the file-exfil surface. The denylist was widened after
 // Codex + the automated commit review flagged missing credential stores.
 import { describe, expect, test } from 'bun:test'
@@ -8,9 +8,9 @@ import { isSecretAttachmentPath } from '../../src/router/multichat-router.js'
 describe('isSecretAttachmentPath', () => {
   test('BLOCKS secret material (path-based)', () => {
     for (const p of [
-      '/home/openclaw/.claude-lab/thrall/secrets/socialdata.env',
-      '/home/openclaw/app/.env',
-      '/home/openclaw/app/.env.production',
+      '/home/service-user/.claude-lab/agent-one/secrets/socialdata.env',
+      '/home/service-user/app/.env',
+      '/home/service-user/app/.env.production',
       '/home/x/prod.env',
       '/home/x/.envrc',
       '/etc/ssl/private/server.key',
@@ -33,7 +33,7 @@ describe('isSecretAttachmentPath', () => {
       '/home/x/.claude.json',
       '/home/x/.credentials.json',
       '/home/x/.cargo/credentials.toml',
-      '/home/openclaw/.secrets/firebase/sa-thrall.json',
+      '/home/service-user/.secrets/firebase/service-agent.json',
       '/var/run/sa-gbrain.json',
       '/home/x/service-account.json',
       '/home/x/firebase-adminsdk-abc.json',
@@ -48,7 +48,7 @@ describe('isSecretAttachmentPath', () => {
 
   test('ALLOWS ordinary files (any path, any common type)', () => {
     for (const p of [
-      '/home/openclaw/.claude-lab/thrall/.claude/skills/present/present-gbrain.html',
+      '/home/service-user/.claude-lab/agent-one/.claude/skills/present/present-gbrain.html',
       '/tmp/report.pdf',
       '/home/x/cover.png',
       '/home/x/cowork-1.txt',

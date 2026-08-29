@@ -16,11 +16,11 @@ function parse(value: unknown): WebhookPayload {
 
 describe('WebhookPayloadSchema — message variant unchanged', () => {
   test('accepts {message, chatId}', () => {
-    const p = parse({ message: 'hi', chatId: 164795011 })
+    const p = parse({ message: 'hi', chatId: 123456789 })
     expect(p.kind).toBe('message')
     if (p.kind !== 'message') throw new Error('unreachable')
     expect(p.message).toBe('hi')
-    expect(p.chatId).toBe('164795011')
+    expect(p.chatId).toBe('123456789')
     expect(p.agentId).toBeUndefined()
   })
 
@@ -41,7 +41,7 @@ describe('WebhookPayloadSchema — message variant unchanged', () => {
 
 describe('WebhookPayloadSchema — Claude hook variant', () => {
   const baseCommon = {
-    chatId: 164795011,
+    chatId: 123456789,
     session_id: 'abc123',
     transcript_path: '/Users/.../session.jsonl',
     cwd: '/Users/project',
@@ -59,7 +59,7 @@ describe('WebhookPayloadSchema — Claude hook variant', () => {
     expect(p.kind).toBe('claude_hook')
     if (p.kind !== 'claude_hook') throw new Error('unreachable')
     expect(p.hook_event_name).toBe('PreToolUse')
-    expect(p.chatId).toBe('164795011')
+    expect(p.chatId).toBe('123456789')
     if (p.hook_event_name !== 'PreToolUse') throw new Error('unreachable')
     expect(p.tool_name).toBe('Bash')
     expect(p.tool_use_id).toBe('toolu_01')
@@ -112,7 +112,7 @@ describe('WebhookPayloadSchema — Claude hook variant', () => {
 
   test('SessionStart accepts source/model and permission_mode optional', () => {
     const p = parse({
-      chatId: 164795011,
+      chatId: 123456789,
       session_id: 'abc',
       transcript_path: '/tmp/t.jsonl',
       cwd: '/tmp',

@@ -130,7 +130,7 @@ describe('TmuxMirror — lifecycle', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -156,8 +156,8 @@ describe('TmuxMirror — lifecycle', () => {
       api: makeStubApi().api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-arthas:0.0',
-      socketName: 'channel-arthas',
+      paneTarget: 'channel-agent-two:0.0',
+      socketName: 'channel-agent-two',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec: recordingExec,
@@ -167,7 +167,7 @@ describe('TmuxMirror — lifecycle', () => {
     await withSocket.stop()
     expect(calls.length).toBeGreaterThan(0)
     for (const args of calls.filter((a) => a.includes('capture-pane'))) {
-      expect(args.slice(0, 2)).toEqual(['-L', 'channel-arthas'])
+      expect(args.slice(0, 2)).toEqual(['-L', 'channel-agent-two'])
     }
 
     calls.length = 0
@@ -175,7 +175,7 @@ describe('TmuxMirror — lifecycle', () => {
       api: makeStubApi().api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec: recordingExec,
@@ -197,7 +197,7 @@ describe('TmuxMirror — lifecycle', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -217,7 +217,7 @@ describe('TmuxMirror — lifecycle', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -237,7 +237,7 @@ describe('TmuxMirror — lifecycle', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -257,7 +257,7 @@ describe('TmuxMirror — recreate on Telegram 400 (message not found)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -281,7 +281,7 @@ describe('TmuxMirror — recreate on Telegram 400 (message not found)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -309,7 +309,7 @@ describe('TmuxMirror — ANSI strip & secret redaction', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -330,7 +330,7 @@ describe('TmuxMirror — ANSI strip & secret redaction', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -348,14 +348,14 @@ describe('TmuxMirror — tmux unavailable', () => {
   test('failed tmux exec renders error state and keeps polling', async () => {
     const stub = makeStubApi()
     const exec = makeExec([
-      fail("can't find session: channel-thrall", 1),
+      fail("can't find session: channel-agent-one", 1),
       ok('alive now'),
     ])
     const mirror = new TmuxMirror({
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -384,7 +384,7 @@ describe('TmuxMirror — length cap', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -414,7 +414,7 @@ describe('TmuxMirror — length cap', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -437,14 +437,14 @@ describe('TmuxMirror — latest_inbound_only (default)', () => {
       '← dashi-channel: stale-voice-1',
       '● Reply to stale voice 1',
       '← dashi-channel: latest-voice',
-      '● Live agent activity after the warchief\'s last message',
+      '● Live agent activity after the operator\'s last message',
     ].join('\n')
     const exec = makeExec([ok(pane)])
     const mirror = new TmuxMirror({
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -473,7 +473,7 @@ describe('TmuxMirror — latest_inbound_only (default)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -496,7 +496,7 @@ describe('TmuxMirror — latest_inbound_only (default)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -524,7 +524,7 @@ describe('TmuxMirror — latest_inbound_only (default)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -563,7 +563,7 @@ describe('TmuxMirror — concurrency', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -594,7 +594,7 @@ describe('TmuxMirror — stop()-during-poll race', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec: slowExec,
@@ -623,7 +623,7 @@ describe('TmuxMirror — stop()-during-poll race', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -647,7 +647,7 @@ describe('TmuxMirror — bump (re-anchor after inbound)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000, // effectively disabled — drive manually
       lineCount: 50,
       exec,
@@ -661,7 +661,7 @@ describe('TmuxMirror — bump (re-anchor after inbound)', () => {
     await mirror.bump()
 
     // The bump sequence must produce: deleteMessage of the old id, then
-    // a fresh sendMessage. Edits are NOT acceptable — the warchief asked
+    // a fresh sendMessage. Edits are NOT acceptable — the operator asked
     // for a NEW message at the bottom of the chat, not an in-place edit.
     expect(stub.ops.filter((o) => o.method === 'deleteMessage').length).toBe(1)
     expect(stub.ops.filter((o) => o.method === 'sendMessage').length).toBe(2)
@@ -682,7 +682,7 @@ describe('TmuxMirror — bump (re-anchor after inbound)', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -712,7 +712,7 @@ describe('TmuxMirror — bump (re-anchor after inbound)', () => {
       api: flakyApi,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -735,7 +735,7 @@ describe('TmuxMirror — bump debounce + safety', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -762,7 +762,7 @@ describe('TmuxMirror — bump debounce + safety', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -785,7 +785,7 @@ describe('TmuxMirror — bump debounce + safety', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -806,7 +806,7 @@ describe('TmuxMirror — segment filter integration', () => {
     const pane = [
       '╭─── Claude Code v2.1.144 ─────────────────────────────────────────────────────╮',
       '│                 Welcome back Dashi!                │ Tips for getting        │',
-      '│       grenkalove@gmail.com\'s Organization          │ /release-notes for more │',
+      '│       user@example.com\'s Organization              │ /release-notes for more │',
       '╰──────────────────────────────────────────────────────────────────────────────╯',
       '',
       '> live conversation content',
@@ -816,7 +816,7 @@ describe('TmuxMirror — segment filter integration', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -826,7 +826,7 @@ describe('TmuxMirror — segment filter integration', () => {
     expect(sent).toBeDefined()
     expect(sent?.text).not.toContain('Claude Code v2.1.144')
     expect(sent?.text).not.toContain('Welcome back Dashi')
-    expect(sent?.text).not.toContain('grenkalove@gmail.com')
+    expect(sent?.text).not.toContain('user@example.com')
     expect(sent?.text).toContain('live conversation content')
     await mirror.stop()
   })
@@ -849,7 +849,7 @@ describe('TmuxMirror — segment filter integration', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -876,7 +876,7 @@ describe('TmuxMirror — segment filter integration', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -898,7 +898,7 @@ describe('TmuxMirror — status accessor', () => {
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,
@@ -918,7 +918,7 @@ describe('TmuxMirror — status accessor', () => {
 // Multichat policy gate (Codex review fix 2026-05-27, TASK-2 /
 // HIGH #9). The mirror must consult `shouldMirrorTmuxForChat(policy,
 // chatId)` per public entry point — pre-fix a single boolean was
-// computed at construction time from the warchief's chat id, leaking
+// computed at construction time from the operator's chat id, leaking
 // pane content into chats absent from policy (fail-open) or making
 // the wrong chat the source of truth for the wrong instance.
 // ─────────────────────────────────────────────────────────────────────
@@ -949,21 +949,21 @@ function makePolicy(chats: Record<string, ChatPolicy>): MultichatPolicy {
 }
 
 describe('TmuxMirror — multichat policy isolation', () => {
-  const WARCHIEF = '164795011'
+  const OWNER_CHAT_ID = '123456789'
   const PUBLIC_GROUP = '-1003784643974'
   const UNLISTED = '999'
 
   test('chat with tmux_mirror=true sends the initial pane message', async () => {
     const stub = makeStubApi()
-    const exec = makeExec([ok('warchief pane')])
+    const exec = makeExec([ok('operator pane')])
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ tmux_mirror: true }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ tmux_mirror: true }),
     })
     const mirror = new TmuxMirror({
       api: stub.api,
       log: stubLog,
-      chatId: WARCHIEF,
-      paneTarget: 'channel-thrall:0.0',
+      chatId: OWNER_CHAT_ID,
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -979,7 +979,7 @@ describe('TmuxMirror — multichat policy isolation', () => {
     const stub = makeStubApi()
     const exec = makeExec([ok('public pane should never appear')])
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ tmux_mirror: true }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ tmux_mirror: true }),
       [PUBLIC_GROUP]: makeChatPolicy({
         tmux_mirror: false,
         mode: 'public',
@@ -990,7 +990,7 @@ describe('TmuxMirror — multichat policy isolation', () => {
       api: stub.api,
       log: stubLog,
       chatId: PUBLIC_GROUP,
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -1015,13 +1015,13 @@ describe('TmuxMirror — multichat policy isolation', () => {
     const stub = makeStubApi()
     const exec = makeExec([ok('leak canary should not appear')])
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ tmux_mirror: true }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ tmux_mirror: true }),
     })
     const mirror = new TmuxMirror({
       api: stub.api,
       log: stubLog,
       chatId: UNLISTED,
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -1039,8 +1039,8 @@ describe('TmuxMirror — multichat policy isolation', () => {
     const mirror = new TmuxMirror({
       api: stub.api,
       log: stubLog,
-      chatId: WARCHIEF,
-      paneTarget: 'channel-thrall:0.0',
+      chatId: OWNER_CHAT_ID,
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -1060,8 +1060,8 @@ describe('TmuxMirror — multichat policy isolation', () => {
     const mirror = new TmuxMirror({
       api: stub.api,
       log: stubLog,
-      chatId: WARCHIEF,
-      paneTarget: 'channel-thrall:0.0',
+      chatId: OWNER_CHAT_ID,
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1_000_000,
       lineCount: 50,
       exec,
@@ -1087,7 +1087,7 @@ describe('TmuxMirror — terminal glyph sanitization (no emoji in the mirror)', 
       api: stub.api,
       log: stubLog,
       chatId: '100',
-      paneTarget: 'channel-thrall:0.0',
+      paneTarget: 'channel-agent-one:0.0',
       pollIntervalMs: 1000,
       lineCount: 50,
       exec,

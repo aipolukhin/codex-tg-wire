@@ -223,7 +223,7 @@ describe('buildKeysKeyboard', () => {
 // handleKkeyCallback — AUTH gate (the critical security test) + dispatch.
 // ─────────────────────────────────────────────────────────────────────
 
-const ALLOWED_ID = 164795011
+const ALLOWED_ID = 123456789
 const NON_ALLOWED_ID = 999999
 
 function makeCtx(data: string, fromId: number): {

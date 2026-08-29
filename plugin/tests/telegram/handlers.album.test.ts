@@ -66,10 +66,10 @@ const silentLog = createLogger('test', {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011, 164795012],
-    allowed_chat_ids: [164795011, 164795012],
+    allowed_user_ids: [123456789, 164795012],
+    allowed_chat_ids: [123456789, 164795012],
     status: {
       enabled: false,
       interval_ms: 700,
@@ -80,7 +80,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     album: { flush_ms: 50 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -103,6 +103,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: false,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -246,7 +247,7 @@ function makeDeps(opts: {
 }): { deps: HandlerDeps; statePaths: StatePaths; server: ServerSpy['server'] } {
   const config = opts.config ?? makeConfig()
   const statePaths = makeStatePaths()
-  const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+  const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
   const server = opts.server ?? makeServerSpy().server
   const deps: HandlerDeps = {
     server,
@@ -265,11 +266,11 @@ function makeDeps(opts: {
   return { deps, statePaths, server }
 }
 
-// Build a minimal multichat policy that allowlists the warchief user id
+// Build a minimal multichat policy that allowlists the operator user id
 // in both the private chat AND a group chat. mention_allowlist defaults
-// to just the warchief so unaddressed group fragments aggregate to
+// to just the operator so unaddressed group fragments aggregate to
 // `addressedAtPush=false` and the FIX-D B1 silent-drop branch kicks in.
-const ADDR_WARCHIEF = 164795011
+const ADDR_OWNER = 123456789
 const ADDR_GROUP_CHAT = -1003784643974
 function makeAlbumPolicy(overrides: { mention_allowlist?: string[] } = {}): MultichatPolicy {
   const dmPolicy: ChatPolicy = {
@@ -278,7 +279,7 @@ function makeAlbumPolicy(overrides: { mention_allowlist?: string[] } = {}): Mult
     tmux_mirror: true,
     edit_message_progress: true,
     delivery: 'streamed',
-    persona_file: 'thrall.md',
+    persona_file: 'agent-one.md',
     handoff_file: 'handoff.md',
     system_reminder: '',
     idle_ttl_ms: 1_800_000,
@@ -290,23 +291,23 @@ function makeAlbumPolicy(overrides: { mention_allowlist?: string[] } = {}): Mult
     tmux_mirror: false,
     edit_message_progress: false,
     delivery: 'final_only',
-    persona_file: 'thrall.md',
+    persona_file: 'agent-one.md',
     handoff_file: 'handoff.md',
     system_reminder: '',
     idle_ttl_ms: 1_800_000,
     max_queue_depth: 1,
   }
   const chats: Record<string, ChatPolicy> = {
-    [String(ADDR_WARCHIEF)]: dmPolicy,
+    [String(ADDR_OWNER)]: dmPolicy,
     [String(ADDR_GROUP_CHAT)]: groupPolicy,
   }
   return {
     version: 1,
     allowlist: {
       chats: Object.keys(chats),
-      users: [String(ADDR_WARCHIEF)],
+      users: [String(ADDR_OWNER)],
     },
-    mention_allowlist: overrides.mention_allowlist ?? [String(ADDR_WARCHIEF)],
+    mention_allowlist: overrides.mention_allowlist ?? [String(ADDR_OWNER)],
     chats,
   }
 }
@@ -335,7 +336,7 @@ function makeGroupAlbumCtx(opts: {
   return {
     chat: { id: opts.chatId, type: 'supergroup' as const },
     from: { id: opts.fromId, is_bot: false, first_name: 'x' },
-    me: { id: 8507713167, username: botUsername },
+    me: { id: 987654321, username: botUsername },
     message: {
       message_id: opts.messageId,
       date: 1700000000,
@@ -392,8 +393,8 @@ describe('AlbumBuffer chat isolation (Bug #1)', () => {
     // and does re-use mgids across chats — they are globally-scoped
     // only within a short time window per-uploader).
     const ctxA = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 1,
       mediaGroupId: 'shared-mgid',
       fileId: 'A-doc-1',
@@ -439,7 +440,7 @@ describe('AlbumBuffer chat isolation (Bug #1)', () => {
   })
 
   test('compositeAlbumKey is the documented format', () => {
-    expect(compositeAlbumKey('164795011', 'abc')).toBe('164795011:abc')
+    expect(compositeAlbumKey('123456789', 'abc')).toBe('123456789:abc')
     expect(compositeAlbumKey('-1003784643974', 'mg/with/slash')).toBe(
       '-1003784643974:mg_with_slash',
     )
@@ -457,8 +458,8 @@ describe('Album fragment persistence (Bug #2)', () => {
     const { deps, statePaths } = makeDeps({ albumBuffer: buffer })
 
     const ctx = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 1,
       mediaGroupId: 'durable-mgid',
       fileId: 'doc-1',
@@ -468,7 +469,7 @@ describe('Album fragment persistence (Bug #2)', () => {
     // BEFORE the silence window elapses, the on-disk album dir must
     // already exist with one fragment file. This is the "offset
     // advanced — survive crash" invariant.
-    const key = compositeAlbumKey('164795011', 'durable-mgid')
+    const key = compositeAlbumKey('123456789', 'durable-mgid')
     const albumDir = join(statePaths.root, 'albums', key)
     expect(existsSync(albumDir)).toBe(true)
     expect(existsSync(join(albumDir, 'meta.json'))).toBe(true)
@@ -501,15 +502,15 @@ describe('Album fragment persistence (Bug #2)', () => {
       server: failingServer,
     })
     const ctx = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 1,
       mediaGroupId: 'doomed-mgid',
       fileId: 'doc-1',
     })
     await handleInboundDocument(ctx, deps)
 
-    const key = compositeAlbumKey('164795011', 'doomed-mgid')
+    const key = compositeAlbumKey('123456789', 'doomed-mgid')
     expect(existsSync(join(statePaths.root, 'albums', key))).toBe(true)
 
     // Trigger flush. The dispatch throws inside sendAlbumNotification
@@ -530,16 +531,16 @@ describe('Album fragment persistence (Bug #2)', () => {
 
   test('crash recovery replays persisted fragments through the flush path', async () => {
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'recovered-mgid')
+    const key = compositeAlbumKey('123456789', 'recovered-mgid')
 
     // Simulate a process that received fragments and crashed before
     // the timer fired: meta + two fragment files are on disk, no
     // in-memory buffer exists.
     await ensureAlbumsDir(statePaths.root)
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'recovered-mgid',
       kind: 'document',
       // Far enough in the past that the grace window has elapsed.
@@ -595,12 +596,12 @@ describe('Album fragment persistence (Bug #2)', () => {
     // delayed-replay path. Without scheduleFlush we still skip so old
     // tests / minimal startups behave as before.
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'fresh-mgid')
+    const key = compositeAlbumKey('123456789', 'fresh-mgid')
     await ensureAlbumsDir(statePaths.root)
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'fresh-mgid',
       kind: 'document',
       firstAt: Date.now(), // just arrived
@@ -683,13 +684,13 @@ describe('Album fragment persistence (Bug #2)', () => {
 describe('MED-C — recovery dead-letters corrupt fragments without partial dispatch', () => {
   test('3 fragments, 1 truncated to 0 bytes → album dead-lettered, no flush', async () => {
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'med-c-zero')
+    const key = compositeAlbumKey('123456789', 'med-c-zero')
     await ensureAlbumsDir(statePaths.root)
 
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'med-c-zero',
       kind: 'document',
       firstAt: Date.now() - 60_000, // aged past graceMs
@@ -760,7 +761,7 @@ describe('MED-C — recovery dead-letters corrupt fragments without partial disp
       errorMessage: string
     }
     expect(sidecar.key).toBe(key)
-    expect(sidecar.chatId).toBe('164795011')
+    expect(sidecar.chatId).toBe('123456789')
     expect(sidecar.mediaGroupId).toBe('med-c-zero')
     expect(sidecar.fragmentCount).toBe(3)
     expect(sidecar.corruptFile).toBe(corruptName)
@@ -775,13 +776,13 @@ describe('MED-C — recovery dead-letters corrupt fragments without partial disp
 
   test('fragment with invalid JSON → album dead-lettered with errorType=parse', async () => {
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'med-c-parse')
+    const key = compositeAlbumKey('123456789', 'med-c-parse')
     await ensureAlbumsDir(statePaths.root)
 
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'med-c-parse',
       kind: 'document',
       firstAt: Date.now() - 60_000,
@@ -854,7 +855,7 @@ describe('MED-C — recovery dead-letters corrupt fragments without partial disp
     // canonical fields ops needs to triage.
     const dlLog = warns.find((w) => w.msg === 'album.recovery.dead_letter')
     expect(dlLog).toBeDefined()
-    expect(dlLog!.ctx?.chatId).toBe('164795011')
+    expect(dlLog!.ctx?.chatId).toBe('123456789')
     expect(dlLog!.ctx?.mgid).toBe('med-c-parse')
     expect(typeof dlLog!.ctx?.reason).toBe('string')
     expect(String(dlLog!.ctx?.reason)).toContain('parse')
@@ -866,13 +867,13 @@ describe('MED-C — recovery dead-letters corrupt fragments without partial disp
     // Negative control: the MED-C guard MUST NOT fire on a healthy
     // album. Same shape as the corrupt cases above but no tampering.
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'med-c-clean')
+    const key = compositeAlbumKey('123456789', 'med-c-clean')
     await ensureAlbumsDir(statePaths.root)
 
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'med-c-clean',
       kind: 'document',
       firstAt: Date.now() - 60_000,
@@ -928,8 +929,8 @@ describe('Album buffer baseline', () => {
     })
 
     const ctx = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 1,
       mediaGroupId: 'solo-mgid',
       fileId: 'solo',
@@ -977,7 +978,7 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
     // First fragment carries the @mention + caption — addressed.
     const ctx1 = makeGroupAlbumCtx({
       chatId: ADDR_GROUP_CHAT,
-      fromId: ADDR_WARCHIEF,
+      fromId: ADDR_OWNER,
       messageId: 1,
       mediaGroupId: 'b1-mgid',
       fileId: 'doc-1',
@@ -988,7 +989,7 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
     // caption / mention on one fragment.
     const ctx2 = makeGroupAlbumCtx({
       chatId: ADDR_GROUP_CHAT,
-      fromId: ADDR_WARCHIEF,
+      fromId: ADDR_OWNER,
       messageId: 2,
       mediaGroupId: 'b1-mgid',
       fileId: 'doc-2',
@@ -996,7 +997,7 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
     })
     const ctx3 = makeGroupAlbumCtx({
       chatId: ADDR_GROUP_CHAT,
-      fromId: ADDR_WARCHIEF,
+      fromId: ADDR_OWNER,
       messageId: 3,
       mediaGroupId: 'b1-mgid',
       fileId: 'doc-3',
@@ -1031,7 +1032,7 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
 
   test('DM album + router wired → legacy notify to master, NO router dispatch', async () => {
     // Hybrid routing (2026-05-28): even with the router wired, a private
-    // DM album must land in the master (channel-thrall) session via legacy
+    // DM album must land in the master (channel-agent-one) session via legacy
     // notify, NOT a per-chat session. Mirrors the single-message DM test
     // in handlers.addressing.test.ts, for the album flush path.
     const clock = makeClock()
@@ -1054,16 +1055,16 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
     // DM album (positive chat id = private). No @mention needed — DMs are
     // addressed unconditionally.
     const ctx1 = makeAlbumCtx({
-      chatId: ADDR_WARCHIEF,
-      fromId: ADDR_WARCHIEF,
+      chatId: ADDR_OWNER,
+      fromId: ADDR_OWNER,
       messageId: 1,
       mediaGroupId: 'dm-mgid',
       fileId: 'dm-doc-1',
       caption: 'личный альбом',
     })
     const ctx2 = makeAlbumCtx({
-      chatId: ADDR_WARCHIEF,
-      fromId: ADDR_WARCHIEF,
+      chatId: ADDR_OWNER,
+      fromId: ADDR_OWNER,
       messageId: 2,
       mediaGroupId: 'dm-mgid',
       fileId: 'dm-doc-2',
@@ -1107,7 +1108,7 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
     const fragments = [1, 2, 3].map((i) =>
       makeGroupAlbumCtx({
         chatId: ADDR_GROUP_CHAT,
-        fromId: ADDR_WARCHIEF,
+        fromId: ADDR_OWNER,
         messageId: i,
         mediaGroupId: 'b1-bare-mgid',
         fileId: `doc-${i}`,
@@ -1154,23 +1155,23 @@ describe('FIX-D B1 — group album aggregate addressing', () => {
     // Two bare fragments + one with caption. None mention the bot —
     // private chat does not require it.
     const ctx1 = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 1,
       mediaGroupId: 'dm-mgid',
       fileId: 'doc-1',
       caption: 'private caption',
     })
     const ctx2 = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 2,
       mediaGroupId: 'dm-mgid',
       fileId: 'doc-2',
     })
     const ctx3 = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 3,
       mediaGroupId: 'dm-mgid',
       fileId: 'doc-3',
@@ -1220,7 +1221,7 @@ describe('FIX-D M1 — policy/router XOR defence-in-depth', () => {
 
     const ctx = makeGroupAlbumCtx({
       chatId: ADDR_GROUP_CHAT,
-      fromId: ADDR_WARCHIEF,
+      fromId: ADDR_OWNER,
       messageId: 1,
       mediaGroupId: 'm1-mgid',
       fileId: 'doc-1',
@@ -1274,8 +1275,8 @@ describe('FIX-D M1 — policy/router XOR defence-in-depth', () => {
       },
       {
         chatId: String(ADDR_GROUP_CHAT),
-        senderId: String(ADDR_WARCHIEF),
-        user: 'warchief',
+        senderId: String(ADDR_OWNER),
+        user: 'operator',
         mediaGroupId: 'm1-direct-mgid',
         kind: 'document',
       },
@@ -1283,7 +1284,7 @@ describe('FIX-D M1 — policy/router XOR defence-in-depth', () => {
         server: serverSpy.server,
         config: makeConfig(),
         log,
-        bot: { id: 8507713167, username: 'canarybot' },
+        bot: { id: 987654321, username: 'canarybot' },
         telegramApi: makeTelegramApi(),
         policy,
         // router intentionally missing
@@ -1309,8 +1310,8 @@ describe('FIX-D M1 — policy/router XOR defence-in-depth', () => {
     })
 
     const ctx = makeAlbumCtx({
-      chatId: 164795011,
-      fromId: 164795011,
+      chatId: 123456789,
+      fromId: 123456789,
       messageId: 1,
       mediaGroupId: 'm1-dm-mgid',
       fileId: 'doc-1',
@@ -1336,15 +1337,15 @@ describe('FIX-D M1 — policy/router XOR defence-in-depth', () => {
 describe('FIX-D M2 — recovery schedules fresh albums for delayed flush', () => {
   test('3 fresh fragments → scheduleFlush invoked with positive delay; flush eventually delivers all', async () => {
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'm2-mgid')
+    const key = compositeAlbumKey('123456789', 'm2-mgid')
     await ensureAlbumsDir(statePaths.root)
 
     // Three fragments persisted just now — all within graceMs.
     const baseNow = Date.now()
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'm2-mgid',
       kind: 'document',
       firstAt: baseNow - 500, // 500ms old — way inside the grace window
@@ -1404,13 +1405,13 @@ describe('FIX-D M2 — recovery schedules fresh albums for delayed flush', () =>
 
   test('aged album (older than graceMs) → flushed immediately, scheduleFlush not called', async () => {
     const statePaths = makeStatePaths()
-    const key = compositeAlbumKey('164795011', 'm2-aged-mgid')
+    const key = compositeAlbumKey('123456789', 'm2-aged-mgid')
     await ensureAlbumsDir(statePaths.root)
 
     const meta: PersistedAlbumMeta = {
-      chatId: '164795011',
-      senderId: '164795011',
-      user: 'warchief',
+      chatId: '123456789',
+      senderId: '123456789',
+      user: 'operator',
       mediaGroupId: 'm2-aged-mgid',
       kind: 'document',
       firstAt: Date.now() - 60_000, // 60s old — past graceMs

@@ -143,7 +143,7 @@ export async function handlePermissionRequest(
       // resolve a future id-reusing request).
       sentMessageId = permissionRelay.getPending(requestId)?.telegramMessageId
     } catch (err) {
-      // If we can't deliver the keyboard the warchief can never tap → there is
+      // If we can't deliver the keyboard the operator can never tap → there is
       // no point waiting out the timeout. Fail closed immediately.
       log.warn('permission/request sendPrompt failed — fail-closed deny', {
         request_id: requestId,

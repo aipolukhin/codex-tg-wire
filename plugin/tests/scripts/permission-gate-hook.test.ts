@@ -191,6 +191,13 @@ describe('resolvePolicyPath', () => {
   test('defaults under workspace/chats', () => {
     expect(resolvePolicyPath({ CLAUDE_WORKSPACE_DIR: '/ws' })).toBe('/ws/chats/permission-policy.yaml')
   })
+  test('channel workspace env is accepted', () => {
+    expect(resolvePolicyPath({ TELEGRAM_WORKSPACE_ROOT: '/channel-ws' })).toBe('/channel-ws/chats/permission-policy.yaml')
+  })
+  test('no workspace has no deployment-specific fallback', () => {
+    expect(resolvePolicyPath({ HOME: '/home/someone' })).toBeUndefined()
+    expect(loadPolicy(undefined).warning).toContain('not configured')
+  })
 })
 
 describe('buildConfirmRequest', () => {

@@ -14,7 +14,7 @@
 // CLI:
 //   bun scripts/patch-claude-settings.ts \
 //     --settings /path/to/settings.json \
-//     --chat-id 164795011 \
+//     --chat-id 123456789 \
 //     --webhook-url http://127.0.0.1:8089/hooks/agent \
 //     [--agent-id dashi-channel] \
 //     [--helper /abs/path/to/post-hook.ts]

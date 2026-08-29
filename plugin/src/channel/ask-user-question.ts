@@ -2,7 +2,7 @@
 //
 // Lives between the PreToolUse hook wrapper (TASK-4) and the Telegram
 // keyboard UX (TASK-2): the wrapper POSTs a `submit` here, gets a Promise
-// that resolves only when the warchief answers via inline keyboard OR
+// that resolves only when the operator answers via inline keyboard OR
 // the timer fires. The webhook layer (TASK-3) routes Telegram callbacks
 // back into `answerChoice` / `toggle` / `done` / `expire`.
 //
@@ -93,7 +93,7 @@ export interface AskSettleEvent {
   status: AskUserQuestionStatus
   // The chat + message id of the CURRENTLY-OPEN question keyboard at settle
   // time. On `answered` the relay has already cleared the anchor (undefined);
-  // on `timeout`/expire it points at the card the warchief left un-answered.
+  // on `timeout`/expire it points at the card the operator left un-answered.
   chatId: string | undefined
   telegramMessageId: number | undefined
   currentIndex: number

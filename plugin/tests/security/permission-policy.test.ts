@@ -120,9 +120,9 @@ describe('built-in confirm bash (interpreter/exfil evasion)', () => {
 
 describe('systemctl is verb-aware — read-only verbs and mentions do not confirm (live FP 2026-06-10)', () => {
   test('read-only systemctl verbs auto-allow', () => {
-    // `systemctl cat channel-thrall.service` raised a real confirm card while
+    // `systemctl cat channel-agent-one.service` raised a real confirm card while
     // diagnosing a service — reading a unit file mutates nothing.
-    expect(classify('Bash', { command: 'systemctl cat channel-thrall.service' }, VARIANT1).tier).toBe('allow')
+    expect(classify('Bash', { command: 'systemctl cat channel-agent-one.service' }, VARIANT1).tier).toBe('allow')
     expect(classify('Bash', { command: 'systemctl status nginx' }, VARIANT1).tier).toBe('allow')
     expect(classify('Bash', { command: 'systemctl show -p MainPID foo.service' }, VARIANT1).tier).toBe('allow')
     expect(classify('Bash', { command: 'systemctl list-units --failed' }, VARIANT1).tier).toBe('allow')
@@ -144,8 +144,8 @@ describe('systemctl is verb-aware — read-only verbs and mentions do not confir
     expect(classify('Bash', { command: "rg 'systemctl|restart|reload' docs/" }, VARIANT1).tier).toBe('allow')
     expect(classify('Bash', { command: 'echo "see systemctl|launchctl mess"' }, VARIANT1).tier).toBe('allow')
   })
-  test('mutating systemctl on normal services now auto-allows (warchief 2026-06-14: zero cards)', () => {
-    // The warchief drives the session via send-keys and asked for ZERO confirm
+  test('mutating systemctl on normal services now auto-allows (operator 2026-06-14: zero cards)', () => {
+    // The operator drives the session via send-keys and asked for ZERO confirm
     // cards. A mutating systemctl on a NORMAL service therefore flows straight
     // through to default_tier (allow) — no card. The ONE survivor is the agent's
     // own comms channel, hard-DENIED separately (see the own-channel block).
@@ -210,9 +210,9 @@ describe('systemctl is verb-aware — read-only verbs and mentions do not confir
   })
 })
 
-describe('systemctl on the agent own comms channel is hard-denied (warchief 2026-06-14: the one surviving brake)', () => {
+describe('systemctl on the agent own comms channel is hard-denied (operator 2026-06-14: the one surviving brake)', () => {
   // Cards are gone, but stopping/restarting the agent's OWN comms channel
-  // (channel-*/…-gateway/gateway.service/gateway.py) severs the warchief's
+  // (channel-*/…-gateway/gateway.service/gateway.py) severs the operator's
   // Telegram link mid-task — irreversible in the moment. That single mutating
   // systemctl stays a HARD-DENY (it never showed a card anyway — it's a brake).
   const denyOwnChannel = (cmd: string) => {
@@ -221,20 +221,20 @@ describe('systemctl on the agent own comms channel is hard-denied (warchief 2026
     expect(v.matchedRule).toBe('builtin:deny:own-channel')
   }
   test('mutating systemctl on a channel/gateway unit is denied', () => {
-    denyOwnChannel('systemctl restart channel-thrall.service')
-    denyOwnChannel('systemctl stop thrall-gateway.service')
+    denyOwnChannel('systemctl restart channel-agent-one.service')
+    denyOwnChannel('systemctl stop agent-one-gateway.service')
     denyOwnChannel('systemctl restart gateway.service')
     denyOwnChannel('systemctl restart gateway.py')
-    denyOwnChannel('systemctl restart channel-arthas.service')
+    denyOwnChannel('systemctl restart channel-agent-two.service')
   })
   test('remote (ssh) mutation of the channel/gateway is denied too', () => {
     denyOwnChannel("ssh host 'systemctl stop gateway.service'")
-    denyOwnChannel("ssh root@mac 'systemctl restart channel-silvana.service'")
+    denyOwnChannel("ssh root@mac 'systemctl restart channel-agent-one.service'")
   })
   test('a READ-ONLY systemctl on the channel still allows — read verb wins, no mutation', () => {
     // status/cat are not mutations, so the own-channel deny never engages.
-    expect(classify('Bash', { command: 'systemctl status channel-thrall.service' }, VARIANT1).tier).toBe('allow')
-    expect(classify('Bash', { command: 'systemctl cat thrall-gateway.service' }, VARIANT1).tier).toBe('allow')
+    expect(classify('Bash', { command: 'systemctl status channel-agent-one.service' }, VARIANT1).tier).toBe('allow')
+    expect(classify('Bash', { command: 'systemctl cat agent-one-gateway.service' }, VARIANT1).tier).toBe('allow')
   })
   test('bare/instance gateway shorthand is denied (Codex HIGH: `stop gateway` ≡ gateway.service)', () => {
     denyOwnChannel('systemctl stop gateway')
@@ -250,8 +250,8 @@ describe('systemctl on the agent own comms channel is hard-denied (warchief 2026
   test('a co-located confirm builtin CANNOT downgrade the own-channel deny (Codex HIGH: precedence)', () => {
     // git-exec-surface would normally return confirm; because own-channel lives
     // in the hard-deny pass (step 2b) it wins regardless of command ordering.
-    denyOwnChannel('git -c core.pager=evil log && systemctl restart channel-thrall.service')
-    denyOwnChannel('systemctl restart channel-thrall.service && git -c core.x=y log')
+    denyOwnChannel('git -c core.pager=evil log && systemctl restart channel-agent-one.service')
+    denyOwnChannel('systemctl restart channel-agent-one.service && git -c core.x=y log')
   })
 })
 
@@ -757,7 +757,7 @@ describe('confirm_overrides — operator downgrade of specific built-in confirms
 })
 
 describe('ultra-autonomy: lifting sudo / rm -rf NEVER lifts catastrophic hard-deny (Codex High 2026-06-10)', () => {
-  // The warchief's ultra-autonomy policy lifts sudo + rm -rf to run silently.
+  // The operator's ultra-autonomy policy lifts sudo + rm -rf to run silently.
   // The doctor downgrades its lint of this from FAIL to WARN on the premise
   // that the CODE-level hard-deny (catastrophic shell, secrets) runs BEFORE the
   // confirm-override layer and is untouchable. These tests lock that premise so
@@ -782,7 +782,7 @@ describe('ultra-autonomy: lifting sudo / rm -rf NEVER lifts catastrophic hard-de
   })
   test('ordinary lifted forms run silently as intended', () => {
     expect(classify('Bash', { command: 'rm -rf /tmp/junk' }, ULTRA).tier).toBe('allow')
-    expect(classify('Bash', { command: 'sudo chown openclaw:openclaw /home/openclaw/x' }, ULTRA).tier).toBe('allow')
+    expect(classify('Bash', { command: 'sudo chown service-user:service-user /home/service-user/x' }, ULTRA).tier).toBe('allow')
   })
 })
 

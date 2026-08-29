@@ -68,7 +68,7 @@ export function stripAnsi(text: string): string {
 }
 
 export interface PaneCaptureConfig {
-  /** tmux target, `session:window.pane` (e.g. `channel-thrall:0.0`). */
+  /** tmux target, `session:window.pane` (e.g. `channel-<agent>:0.0`). */
   paneTarget: string
   /** tmux socket name (`tmux -L <name>`). Empty = default socket. */
   socketName?: string

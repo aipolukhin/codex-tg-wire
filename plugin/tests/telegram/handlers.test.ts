@@ -42,15 +42,15 @@ const silentLog = createLogger('test', {
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: false, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -73,6 +73,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -193,7 +194,7 @@ function makeDeps(
 ): { deps: HandlerDeps; statePaths: StatePaths } {
   const config = overrides.config ?? makeConfig()
   const statePaths = makeStatePaths()
-  const bot: BotIdentity = { id: 8507713167, username: 'canarybot' }
+  const bot: BotIdentity = { id: 987654321, username: 'canarybot' }
   const { api } = makeTelegramApi()
   const server = overrides.server ?? makeServerSpy().server
   const deps: HandlerDeps = {
@@ -296,9 +297,9 @@ describe('handleInboundText — permission text DM-only guard (Fix 2)', () => {
     })
     const ctx = makeCtx({
       text: 'yes abcde',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -322,7 +323,7 @@ describe('handleInboundText — permission text DM-only guard (Fix 2)', () => {
       text: 'yes abcde',
       chatId: -1001234,
       chatType: 'group',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -346,7 +347,7 @@ describe('handleInboundText — permission text DM-only guard (Fix 2)', () => {
       text: 'yes abcde',
       chatId: -1009999,
       chatType: 'supergroup',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -361,8 +362,8 @@ describe('handleInboundText — OOB allowed_chat_ids gate (Fix 6)', () => {
   test('allowed user in chat NOT in allowed_chat_ids: OOB rejected, falls through', async () => {
     // Config: user is allowed, but chat 99999 is NOT.
     const config = makeConfig({
-      allowed_user_ids: [164795011],
-      allowed_chat_ids: [164795011],
+      allowed_user_ids: [123456789],
+      allowed_chat_ids: [123456789],
     })
     const serverSpy = makeServerSpy()
     const { deps, statePaths } = makeDeps({ config, server: serverSpy.server })
@@ -370,7 +371,7 @@ describe('handleInboundText — OOB allowed_chat_ids gate (Fix 6)', () => {
       text: '/help',
       chatId: 99999,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -397,9 +398,9 @@ describe('handleInboundText — OOB allowed_chat_ids gate (Fix 6)', () => {
     const { deps, statePaths } = makeDeps({ config, server: serverSpy.server, telegramApi: api })
     const ctx = makeCtx({
       text: '/help',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -413,10 +414,10 @@ describe('handleInboundText — OOB allowed_chat_ids gate (Fix 6)', () => {
   // The OOB gate is its authorization boundary — a non-allowed chat must mint
   // NO lease, an allowed chat must.
   test('/lease from a chat NOT in allowed_chat_ids: NO lease minted', async () => {
-    const config = makeConfig({ allowed_user_ids: [164795011], allowed_chat_ids: [164795011] })
+    const config = makeConfig({ allowed_user_ids: [123456789], allowed_chat_ids: [123456789] })
     const serverSpy = makeServerSpy()
     const { deps, statePaths } = makeDeps({ config, server: serverSpy.server })
-    const ctx = makeCtx({ text: '/lease деплой', chatId: 99999, chatType: 'private', fromId: 164795011 })
+    const ctx = makeCtx({ text: '/lease деплой', chatId: 99999, chatType: 'private', fromId: 123456789 })
 
     await handleInboundText(ctx, deps)
 
@@ -438,11 +439,11 @@ describe('handleInboundText — OOB allowed_chat_ids gate (Fix 6)', () => {
       },
     }
     const { deps, statePaths } = makeDeps({ config, server: serverSpy.server, telegramApi: api })
-    const ctx = makeCtx({ text: '/lease деплой стейджинга; ttl=48h', chatId: 164795011, chatType: 'private', fromId: 164795011 })
+    const ctx = makeCtx({ text: '/lease деплой стейджинга; ttl=48h', chatId: 123456789, chatType: 'private', fromId: 123456789 })
 
     await handleInboundText(ctx, deps)
 
-    const leases = activeLeases(loadAutonomyState({ root: statePaths.root }, '164795011'), Date.now())
+    const leases = activeLeases(loadAutonomyState({ root: statePaths.root }, '123456789'), Date.now())
     expect(leases.length).toBe(1)
     expect(leases[0]!.scope).toBe('деплой стейджинга')
     expect(leases[0]!.source).toBe('owner_cmd')
@@ -485,9 +486,9 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     })
     const ctx = makeCtx({
       text: 'hi there',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -527,19 +528,19 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     })
     const ctx = makeCtx({
       text: '/help',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
     await new Promise((r) => setTimeout(r, 0))
 
-    // /help replies via sendMessage but the auto-reply «🔧 Тралл занят» must
+    // /help replies via sendMessage but the auto-reply «🔧 Агент занят» must
     // NOT appear — OOB short-circuits before the watcher hook. The single
     // sendMessage we see is the /help body itself.
     expect(sendCalls.length).toBe(1)
-    expect(sendCalls[0]!.text).not.toContain('Тралл занят')
+    expect(sendCalls[0]!.text).not.toContain('Агент занят')
     // OOB handled inline — no channel notify.
     expect(serverSpy.calls.length).toBe(0)
     rmSync(statePaths.root, { recursive: true, force: true })
@@ -547,7 +548,7 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
 
   test('plain text from NOT allowed sender + busy session → watcher does NOT fire', async () => {
     // Sender NOT in allowed_user_ids. The watcher must NOT auto-reply
-    // even though the session is «busy», because the warchief explicitly
+    // even though the session is «busy», because the operator explicitly
     // gated the watcher on the allowlist (Fix #3 — prevents future group-chat
     // bot activity from leaking to non-allowed senders).
     const sendCalls: Array<{ chatId: string; text: string }> = []
@@ -571,10 +572,10 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
       telegramApi: api,
       watcher,
     })
-    // Sender id NOT in default allowed_user_ids ([164795011]).
+    // Sender id NOT in default allowed_user_ids ([123456789]).
     const ctx = makeCtx({
       text: 'hi from random user',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
       fromId: 99999,
     })
@@ -618,7 +619,7 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
       text: 'hi from allowed user in wrong chat',
       chatId: 88888,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -662,9 +663,9 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
       })
       const ctx = makeMediaCtx({
         kind,
-        chatId: 164795011,
+        chatId: 123456789,
         chatType: 'private',
-        fromId: 164795011,
+        fromId: 123456789,
       })
 
       await handler(ctx, deps)
@@ -708,7 +709,7 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
       })
       const ctx = makeMediaCtx({
         kind,
-        chatId: 164795011,
+        chatId: 123456789,
         chatType: 'private',
         fromId: 99999, // NOT in allowlist
       })
@@ -727,9 +728,9 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     const { deps, statePaths } = makeDeps({ server: serverSpy.server })
     const ctx = makeMediaCtx({
       kind: 'animation',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundAnimation(ctx, deps)
@@ -768,9 +769,9 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     })
     const ctx = makeCtx({
       text: 'hello',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -835,9 +836,9 @@ describe('handleInboundText — F3 permission-priority gate', () => {
     })
     const ctx = makeCtx({
       text: 'yes abcde',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -880,9 +881,9 @@ describe('handleInboundText — F3 permission-priority gate', () => {
     })
     const ctx = makeCtx({
       text: 'hello bot',
-      chatId: 164795011,
+      chatId: 123456789,
       chatType: 'private',
-      fromId: 164795011,
+      fromId: 123456789,
     })
 
     await handleInboundText(ctx, deps)
@@ -926,14 +927,14 @@ describe('handleInboundText — F3 permission-priority gate', () => {
     })
     // Build a Context with reply_to_message attached.
     const ctx = {
-      chat: { id: 164795011, type: 'private' as const },
-      from: { id: 164795011, is_bot: false, first_name: 'x' },
+      chat: { id: 123456789, type: 'private' as const },
+      from: { id: 123456789, is_bot: false, first_name: 'x' },
       message: {
         message_id: 100,
         date: 1700000000,
         text: 'my answer',
-        chat: { id: 164795011, type: 'private' as const },
-        from: { id: 164795011, is_bot: false, first_name: 'x' },
+        chat: { id: 123456789, type: 'private' as const },
+        from: { id: 123456789, is_bot: false, first_name: 'x' },
         reply_to_message: { message_id: 77, date: 1700000000 },
       },
     } as unknown as Context

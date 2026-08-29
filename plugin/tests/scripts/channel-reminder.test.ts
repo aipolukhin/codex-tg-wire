@@ -14,7 +14,7 @@ import {
 
 describe('reminderForChat', () => {
   test('positive (DM) chat id → strict reply-tool reminder', () => {
-    const r = reminderForChat('164795011')
+    const r = reminderForChat('123456789')
     expect(r).toContain('mcp__dashi-channel__reply')
     expect(r).toContain('MUST')
   })
@@ -50,7 +50,7 @@ describe('renderContext', () => {
   })
 
   test('is single-line JSON (safe as sole stdout)', () => {
-    expect(renderContext(reminderForChat('164795011')).includes('\n')).toBe(false)
+    expect(renderContext(reminderForChat('123456789')).includes('\n')).toBe(false)
   })
 })
 
@@ -72,14 +72,14 @@ function runHook(chatId: string | undefined, stdin: string) {
 describe('channel-reminder.ts — process contract', () => {
   test('DM: exit 0, stdout is the envelope only, stderr empty, no stdin/CHAT_ID leak', () => {
     const secret = 'PRIVATE-PROMPT-BODY-do-not-echo'
-    const r = runHook('164795011', secret)
+    const r = runHook('123456789', secret)
     expect(r.status).toBe(0)
     expect(r.stderr).toBe('')
     const parsed = JSON.parse(r.stdout)
     expect(parsed.hookSpecificOutput.hookEventName).toBe('UserPromptSubmit')
     expect(parsed.hookSpecificOutput.additionalContext).toContain('mcp__dashi-channel__reply')
     expect(r.stdout).not.toContain(secret)
-    expect(r.stdout).not.toContain('164795011')
+    expect(r.stdout).not.toContain('123456789')
   })
 
   test('group CHAT_ID → outbox-aware envelope, exit 0', () => {
@@ -169,7 +169,7 @@ describe('tovReminder', () => {
 
 describe('composeReminder', () => {
   test('DM: channel discipline first, then TOV block', async () => {
-    const r = await composeReminder({ CHAT_ID: '164795011' })
+    const r = await composeReminder({ CHAT_ID: '123456789' })
     expect(r).toContain('mcp__dashi-channel__reply')
     expect(r).toContain('по-русски')
     // Channel reminder precedes the TOV block.
@@ -177,13 +177,13 @@ describe('composeReminder', () => {
   })
 
   test('TOV disabled → only the channel reminder', async () => {
-    const r = await composeReminder({ CHAT_ID: '164795011', TOV_REMINDER_ENABLED: 'no' })
-    expect(r).toBe(reminderForChat('164795011'))
+    const r = await composeReminder({ CHAT_ID: '123456789', TOV_REMINDER_ENABLED: 'no' })
+    expect(r).toBe(reminderForChat('123456789'))
   })
 
   test('added TOV context stays within ~10 lines', async () => {
-    const r = await composeReminder({ CHAT_ID: '164795011' })
-    const channelLines = reminderForChat('164795011').split('\n').length
+    const r = await composeReminder({ CHAT_ID: '123456789' })
+    const channelLines = reminderForChat('123456789').split('\n').length
     const added = r.split('\n').length - channelLines
     expect(added).toBeLessThanOrEqual(10)
   })
@@ -208,7 +208,7 @@ import {
 
 describe('autonomyReminder (registry injection)', () => {
   test('no state dir → undefined (block omitted)', async () => {
-    expect(await autonomyReminder({ CHAT_ID: '164795011' })).toBeUndefined()
+    expect(await autonomyReminder({ CHAT_ID: '123456789' })).toBeUndefined()
   })
 
   test('no chat id → undefined', async () => {
@@ -219,8 +219,8 @@ describe('autonomyReminder (registry injection)', () => {
 
   test('empty registry → undefined', async () => {
     const dir = mkdtempSync(joinNode(tmpdir(), 'reminder-autonomy-'))
-    saveAutonomyState({ root: dir }, '164795011', emptyAutonomyState())
-    expect(await autonomyReminder({ CHAT_ID: '164795011', TELEGRAM_STATE_DIR: dir })).toBeUndefined()
+    saveAutonomyState({ root: dir }, '123456789', emptyAutonomyState())
+    expect(await autonomyReminder({ CHAT_ID: '123456789', TELEGRAM_STATE_DIR: dir })).toBeUndefined()
     rmSyncNode(dir, { recursive: true, force: true })
   })
 
@@ -231,8 +231,8 @@ describe('autonomyReminder (registry injection)', () => {
       { id: 'L-1', scope: 'ship the wave', expiresAtMs: Date.now() + 3 * 3_600_000, source: 'ask_card' },
       Date.now(),
     ).state
-    saveAutonomyState({ root: dir }, '164795011', state)
-    const block = (await autonomyReminder({ CHAT_ID: '164795011', TELEGRAM_STATE_DIR: dir })) as string
+    saveAutonomyState({ root: dir }, '123456789', state)
+    const block = (await autonomyReminder({ CHAT_ID: '123456789', TELEGRAM_STATE_DIR: dir })) as string
     expect(block).toContain('Активный мандат L-1')
     expect(block).toContain('Act-with-veto')
     rmSyncNode(dir, { recursive: true, force: true })
@@ -253,8 +253,8 @@ describe('autonomyReminder (registry injection)', () => {
 
   test('corrupt registry file → fail-open (undefined, no throw)', async () => {
     const dir = mkdtempSync(joinNode(tmpdir(), 'reminder-autonomy-'))
-    writeFileSyncNode(joinNode(dir, 'autonomy-164795011.json'), '{broken', 'utf8')
-    expect(await autonomyReminder({ CHAT_ID: '164795011', TELEGRAM_STATE_DIR: dir })).toBeUndefined()
+    writeFileSyncNode(joinNode(dir, 'autonomy-123456789.json'), '{broken', 'utf8')
+    expect(await autonomyReminder({ CHAT_ID: '123456789', TELEGRAM_STATE_DIR: dir })).toBeUndefined()
     rmSyncNode(dir, { recursive: true, force: true })
   })
 
@@ -265,8 +265,8 @@ describe('autonomyReminder (registry injection)', () => {
       { id: 'L-z', scope: 's', expiresAtMs: Date.now() + 3_600_000, source: 'manual' },
       Date.now(),
     ).state
-    saveAutonomyState({ root: dir }, '164795011', state)
-    const r = await composeReminder({ CHAT_ID: '164795011', TELEGRAM_STATE_DIR: dir })
+    saveAutonomyState({ root: dir }, '123456789', state)
+    const r = await composeReminder({ CHAT_ID: '123456789', TELEGRAM_STATE_DIR: dir })
     const iChannel = r.indexOf('mcp__dashi-channel__reply')
     const iAutonomy = r.indexOf('Активный мандат L-z')
     const iTov = r.indexOf('по-русски')

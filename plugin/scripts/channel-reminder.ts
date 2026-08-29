@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // channel-reminder.ts — UserPromptSubmit hook that re-injects the Telegram
-// bridge invariant on EVERY warchief turn.
+// bridge invariant on EVERY operator turn.
 //
 // Why this exists (2026-06-12): agents run as long-lived `claude … server:
 // dashi-channel` sessions. The dashi-channel MCP server states the reply
 // discipline once at session start ("the sender reads Telegram, not this
 // terminal"), and plugin/CLAUDE.md repeats it as a durable invariant — but
 // over a long session both fade, and agents end turns with terminal-only
-// text the warchief never sees. A UserPromptSubmit hook fires on every
+// text the operator never sees. A UserPromptSubmit hook fires on every
 // inbound prompt, so emitting the reminder here re-grounds the model each
 // turn instead of relying on start-of-session context alone.
 //

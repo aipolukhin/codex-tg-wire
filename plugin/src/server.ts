@@ -324,10 +324,9 @@ try {
 //
 // Resolution order for the workspace dir:
 //   1. explicit config.multichat.workspace_dir
-//   2. $CLAUDE_WORKSPACE_DIR env (set by the plugin shim on Mac mini)
-//   3. parent of cwd — for the canonical layout
-//      `~/.claude-lab/thrall/.claude/jarvis-channel/plugin`,
-//      this resolves to `~/.claude-lab/thrall/.claude`
+//   2. $CLAUDE_WORKSPACE_DIR env
+//   3. parent of cwd — for `<workspace>/dashi-plugin-claude-code/plugin`,
+//      this resolves to `<workspace>`
 //
 // Resolution order for the policy file path (FIX-G / M3, Codex review
 // 2026-05-27 #4 — the env var name `_POLICY_PATH` was being treated as
@@ -507,7 +506,7 @@ const mcp = new Server(
 // `shouldStreamForChat(policy, chatId)` per call. Codex review
 // 2026-05-27 (CRITICAL #1 / HIGH #9) found that the previous
 // construction-time `streamingEnabled` boolean was anchored to the
-// warchief's chat id — when warchief DM had `streaming: 'progress'`,
+// operator's chat id — when operator DM had `streaming: 'progress'`,
 // every public group was implicitly allowed to stream, even those
 // explicitly configured `streaming: 'off'`. Passing the policy
 // reference keeps each chat isolated to its own entry, and an
@@ -595,23 +594,28 @@ const progressReporter = new ProgressReporter({ telegramApi, config, log })
 // through redact + HTML validation before leaving the process.
 const taskMirror = new TaskMirror({ telegramApi, config, log, stateDir: statePaths.root })
 
-// Default pane target when tmux_mirror.pane_target is unset. Overridable via
-// JARVIS_PANE_TARGET (review 2026-07-09 SHOULD-fix: the hardcoded
-// `channel-thrall:0.0` fallback breaks on any other host); the historical
-// value stays the default — the canonical session for this plugin on Thrall.
+// Pane target when tmux_mirror.pane_target is unset. Prefer the public env,
+// then use Claude Code's current tmux pane id. No deployment-specific session
+// name is built in.
 function resolveDefaultPaneTarget(): string {
-  return (process.env.JARVIS_PANE_TARGET ?? '').trim() || 'channel-thrall:0.0'
+  return (
+    process.env.TELEGRAM_TMUX_PANE_TARGET
+    ?? process.env.TMUX_PANE
+    ?? ''
+  ).trim()
 }
 
 // TmuxMirror (2026-05-20) — read-only mirror of the agent's terminal pane
-// into ONE rolling Telegram message. Default-OFF in config; the warchief
+// into ONE rolling Telegram message. Default-OFF in config; the operator
 // opts in explicitly. When enabled without an explicit pane_target we
 // fall back to resolveDefaultPaneTarget().
 let tmuxMirror: TmuxMirror | null = null
 if (config.tmux_mirror.enabled) {
   const target = config.tmux_mirror.pane_target || resolveDefaultPaneTarget()
   const mirrorChatId = String(config.allowed_chat_ids[0] ?? '')
-  if (mirrorChatId === '') {
+  if (target === '') {
+    log.warn('tmux mirror enabled but no pane target could be resolved — set tmux_mirror.pane_target or TELEGRAM_TMUX_PANE_TARGET')
+  } else if (mirrorChatId === '') {
     log.warn('tmux mirror enabled but no allowed_chat_ids configured — skipping')
   } else {
     // Multichat gate: the mirror gates fail-closed against its own
@@ -620,7 +624,7 @@ if (config.tmux_mirror.enabled) {
     // (typically a public group) turns the mirror into a no-op
     // shell — pane content never reaches Telegram. Pre-fix (codex
     // review 2026-05-27, HIGH #9) we passed a pre-resolved boolean
-    // derived from the warchief's chat id; that fail-open path
+    // derived from the operator's chat id; that fail-open path
     // leaked pane content into chats absent from policy.
     tmuxMirror = new TmuxMirror({
       api: telegramApi,
@@ -656,7 +660,10 @@ if (config.tmux_mirror.enabled) {
 // Env gate for the M3 reconciler (behaviour-changing surface, off by default).
 // Accepts `1` / `true` / `yes` / `on` (case-insensitive).
 function resolveTaskReconcilerEnabled(): boolean {
-  const v = (process.env.JARVIS_TASK_RECONCILER ?? '').trim().toLowerCase()
+  const v = (
+    process.env.TELEGRAM_TASK_RECONCILER
+    ?? ''
+  ).trim().toLowerCase()
   return v === '1' || v === 'true' || v === 'yes' || v === 'on'
 }
 
@@ -664,63 +671,67 @@ function resolveTaskReconcilerEnabled(): boolean {
 // the REAL task list Claude Code renders in the tmux pane, so the context HUD
 // «Задачи» section and the TaskMirror message reflect reality even when the
 // agent forgets to call the task tools. Default-OFF: opt in with
-// JARVIS_TASK_RECONCILER=1 (behaviour-changing surface, warchief-gated, like
+// TELEGRAM_TASK_RECONCILER=1 (behaviour-changing surface, operator-gated, like
 // tmux_mirror). Reuses the tmux_mirror pane target/socket (the agent's task
 // list renders in that same pane) and captures a wider window (200 lines) so a
 // long list is always in view. Owner-DM-gated; each sink also gates internally.
 let taskRealityMirror: TaskRealityMirror | undefined
 if (resolveTaskReconcilerEnabled()) {
   const paneTarget = config.tmux_mirror.pane_target || resolveDefaultPaneTarget()
-  const ownerSet = new Set(hudOwnerChatIds.map(String))
-  // Owner DM only (positive numeric chat id in the owner set) — the pane is the
-  // single global DM session; a group chat must never be reconciled or nudged.
-  const isReconcilerOwnerChat = (chatId: string): boolean => {
-    if (!ownerSet.has(chatId)) return false
-    const n = Number(chatId)
-    return Number.isInteger(n) && n > 0
+  if (paneTarget === '') {
+    log.warn('task reality mirror enabled but no pane target could be resolved — set tmux_mirror.pane_target or TELEGRAM_TMUX_PANE_TARGET')
+  } else {
+    const ownerSet = new Set(hudOwnerChatIds.map(String))
+    // Owner DM only (positive numeric chat id in the owner set) — the pane is the
+    // single global DM session; a group chat must never be reconciled or nudged.
+    const isReconcilerOwnerChat = (chatId: string): boolean => {
+      if (!ownerSet.has(chatId)) return false
+      const n = Number(chatId)
+      return Number.isInteger(n) && n > 0
+    }
+    // M4 mechanical liveness. Runs inside the reality-mirror loop (fed pane
+    // captures for the dead-man, evaluated each ~20s tick for heartbeat +
+    // open-question reminders). Reads the outbound clock + the autonomy registry
+    // (open questions ONLY, read-only — never lease TTLs); sends via the reliable
+    // api and edits the context pin via the HUD's heartbeat suffix.
+    const heartbeatMonitor = new HeartbeatMonitor({
+      log,
+      // skipOutboundStamp (fix-loop-1 #6): a heartbeat nudge / dead-man alert /
+      // question reminder is not a real report — it must not reset the very
+      // silence window it measures (the monitor rate-limits itself instead).
+      send: (chatId: string, text: string): Promise<void> =>
+        telegramApi.sendMessage(chatId, text, { skipOutboundStamp: true }).then(() => undefined),
+      pinHeartbeat: (chatId: string, suffix: string | null): Promise<void> =>
+        contextHud.setHeartbeatSuffix(chatId, suffix),
+      autonomyPaths: { root: statePaths.root },
+      lastOutboundAt: (chatId: string): number | undefined =>
+        outboundTracker.lastOutboundAt(chatId),
+      isOwnerChat: isReconcilerOwnerChat,
+    })
+    taskRealityMirror = new TaskRealityMirror({
+      exec: defaultTmuxExec,
+      capture: {
+        paneTarget,
+        ...(config.tmux_mirror.socket_name ? { socketName: config.tmux_mirror.socket_name } : {}),
+        lineCount: 200,
+      },
+      log,
+      sinks: [contextHud, taskMirror],
+      // Session-epoch persistence (active + tombstones) — survives restarts so
+      // late lifecycle stragglers can't roll the epoch back (review r3 #1).
+      stateDir: statePaths.root,
+      isOwnerChat: isReconcilerOwnerChat,
+      liveness: heartbeatMonitor,
+    })
+    log.info('task reality mirror configured', { pane_target: paneTarget })
+    const shutdownReality = (): void => taskRealityMirror?.stop()
+    process.once('SIGINT', shutdownReality)
+    process.once('SIGTERM', shutdownReality)
   }
-  // M4 mechanical liveness. Runs inside the reality-mirror loop (fed pane
-  // captures for the dead-man, evaluated each ~20s tick for heartbeat +
-  // open-question reminders). Reads the outbound clock + the autonomy registry
-  // (open questions ONLY, read-only — never lease TTLs); sends via the reliable
-  // api and edits the context pin via the HUD's heartbeat suffix.
-  const heartbeatMonitor = new HeartbeatMonitor({
-    log,
-    // skipOutboundStamp (fix-loop-1 #6): a heartbeat nudge / dead-man alert /
-    // question reminder is not a real report — it must not reset the very
-    // silence window it measures (the monitor rate-limits itself instead).
-    send: (chatId: string, text: string): Promise<void> =>
-      telegramApi.sendMessage(chatId, text, { skipOutboundStamp: true }).then(() => undefined),
-    pinHeartbeat: (chatId: string, suffix: string | null): Promise<void> =>
-      contextHud.setHeartbeatSuffix(chatId, suffix),
-    autonomyPaths: { root: statePaths.root },
-    lastOutboundAt: (chatId: string): number | undefined =>
-      outboundTracker.lastOutboundAt(chatId),
-    isOwnerChat: isReconcilerOwnerChat,
-  })
-  taskRealityMirror = new TaskRealityMirror({
-    exec: defaultTmuxExec,
-    capture: {
-      paneTarget,
-      ...(config.tmux_mirror.socket_name ? { socketName: config.tmux_mirror.socket_name } : {}),
-      lineCount: 200,
-    },
-    log,
-    sinks: [contextHud, taskMirror],
-    // Session-epoch persistence (active + tombstones) — survives restarts so
-    // late lifecycle stragglers can't roll the epoch back (review r3 #1).
-    stateDir: statePaths.root,
-    isOwnerChat: isReconcilerOwnerChat,
-    liveness: heartbeatMonitor,
-  })
-  log.info('task reality mirror configured', { pane_target: paneTarget })
-  const shutdownReality = (): void => taskRealityMirror?.stop()
-  process.once('SIGINT', shutdownReality)
-  process.once('SIGTERM', shutdownReality)
 }
 
-// InboundWatcher (PR-A3, 2026-05-20) — auto-reply «Тралл занят» when the
-// warchief sends plain text while ProgressReporter says the session is
+// InboundWatcher (PR-A3, 2026-05-20) — auto-reply «Агент занят» when the
+// operator sends plain text while ProgressReporter says the session is
 // mid-tool. The watcher receives `progressReporter` for read-only busy
 // detection — never mutates reporter state. Debounce + safe-api enforced
 // inside the watcher.
@@ -747,8 +758,8 @@ if (config.memory.enabled === true && config.memory.workspace_path !== undefined
     sourceTag: config.memory.source_tag,
     // Agent label preference: explicit memory.agent_label > 'Agent' fallback.
     // Telegram bot username is not used here because it's typically the
-    // assistant's tool-handle (e.g. 'fridayhumanbot') rather than the
-    // human-readable agent name ('Silvana') that goes into recent.md.
+    // assistant's tool-handle (e.g. 'example_agent_bot') rather than the
+    // human-readable configured agent name that goes into recent.md.
     agentLabel: config.memory.agent_label ?? 'Agent',
     maxHotBytes: config.memory.max_hot_bytes,
     trimKeepLines: config.memory.trim_keep_lines,
@@ -910,7 +921,7 @@ bot.on('callback_query:data', async ctx => {
   // We use allowed_user_ids (not the permission_gate set) because each tap
   // injects one whitelisted keystroke into the pane, so the authorization
   // surface must match that of any other session-driving control command.
-  // The handler never mutates the keyboard message — the warchief taps it
+  // The handler never mutates the keyboard message — the operator taps it
   // repeatedly across a multi-step dialog.
   if (data.startsWith('kkey:')) {
     try {
@@ -952,7 +963,7 @@ bot.on('callback_query:data', async ctx => {
   // slash command in the agent pane. Same fail-closed allowlist auth as kkey:
   // (config.allowed_user_ids === the /cc OOB command's gate). A tap types
   // `/<name>` into the pane and submits — identical to typing `/cc <name>`.
-  // Never mutates the keyboard message — the warchief taps it repeatedly.
+  // Never mutates the keyboard message — the operator taps it repeatedly.
   if (data.startsWith('ccmd:')) {
     try {
       await handleCcmdCallback(
@@ -1178,8 +1189,8 @@ if (
   try {
     // chatsBasePath: claude's cwd. The workspace-level
     // `.claude/settings.json` (hooks registration — C4) lives at
-    // `{chatsBasePath}/.claude/settings.json`. Default mirrors the
-    // canonical Thrall layout: `{workspaceDir}/chats`.
+    // `{chatsBasePath}/.claude/settings.json`. Default follows the
+    // documented layout: `{workspaceDir}/chats`.
     const chatsBasePath = join(multichatWorkspaceDir, 'chats')
     // entrypointScript: tmux runs this instead of `claude` directly so
     // the C1 inbox -> pty injection loop is active. Falls back to
@@ -1201,8 +1212,7 @@ if (
     // H8 (2026-05-23): resolve the absolute path to the `claude`
     // binary BEFORE handing it to the pool. tmux inherits the parent
     // PATH (we explicitly pin it in spawnInternal), but on the
-    // staging/Thrall VPS the canonical `claude` lives at a
-    // non-default location; relying on tmux's default-shell PATH
+    // `claude` may live at a non-default location; relying on tmux's shell PATH
     // lookup at spawn time has bitten us with the `which-claude`
     // returning a stale wrapper. Resolve once at boot, fail loud if
     // unresolvable — far easier to debug than a silently-wrong binary.
@@ -1261,7 +1271,7 @@ if (
 // /keys keypad target resolution (OOB dialog answers from Telegram). Explicit
 // tmux_mirror config wins; otherwise fall back to our own $TMUX/$TMUX_PANE —
 // the plugin process lives inside the agent's tmux session, so its env
-// names exactly the pane the warchief sees. Works with the mirror disabled.
+// names exactly the pane the operator sees. Works with the mirror disabled.
 function resolveTmuxKeysTarget():
   | { paneTarget: string; socketName?: string; socketPath?: string }
   | undefined {
@@ -1341,7 +1351,7 @@ const handlerDeps: HandlerDeps = {
 // card, and each pin drops a permanent «закрепил сообщение» service bubble
 // into the chat (disable_notification mutes only the push). Delete OUR OWN
 // pin service messages immediately — gated on the sender being THIS bot, so
-// the warchief's manual pins are never touched. Best-effort: a failed delete
+// the operator's manual pins are never touched. Best-effort: a failed delete
 // just leaves one bubble behind.
 bot.on('message:pinned_message', ctx => {
   if (botIdentity.id === 0 || ctx.message.from?.id !== botIdentity.id) return
@@ -1562,7 +1572,7 @@ poller = new TelegramPoller({
 
 // Register the OOB command list with Telegram, scoped to the OWNER's chat(s)
 // only (not the default/all_private_chats scopes), so the «/» autocomplete menu
-// is visible to the warchief alone. Telegram scope precedence is
+// is visible to the operator alone. Telegram scope precedence is
 // chat > all_private_chats > default, so we clear the broader scopes first and
 // then register per owner chat. Best-effort: any failure here (no internet,
 // token revoked) must not block the poller from starting.

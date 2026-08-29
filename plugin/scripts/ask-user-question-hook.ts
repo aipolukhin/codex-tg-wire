@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // ask-user-question-hook.ts — PreToolUse hook that intercepts the built-in
 // `AskUserQuestion` tool and routes the prompt through the dashi-channel
-// plugin so the warchief can answer from Telegram instead of an in-terminal
+// plugin so the operator can answer from Telegram instead of an in-terminal
 // menu.
 //
 // Wire shape (per phase2 PLAN.md):
@@ -87,7 +87,7 @@ const HTTP_MARGIN_MS = 5_000
 
 // FIX-T1 F1 (PRX-1 Phase 5, 2026-05-27): loopback-only egress guard.
 //
-// The hook posts the warchief's prompt + bearer token to TELEGRAM_WEBHOOK_URL.
+// The hook posts the operator's prompt + bearer token to TELEGRAM_WEBHOOK_URL.
 // If TELEGRAM_WEBHOOK_URL is misconfigured (typo, accidental remote host,
 // envvar overridden by a shell profile) the bearer and prompt would
 // exfiltrate to an arbitrary endpoint. Enforce:
@@ -385,7 +385,7 @@ function emit(stdout: string): void {
  * accepted then dropped, AbortController fired, DNS glitch, etc.) MUST
  * NOT match here — by the time we observe one, the plugin has likely
  * already sent a Telegram prompt, and falling back to the native UI
- * would prompt the warchief twice.
+ * would prompt the operator twice.
  *
  * FIX-T2 F1 (PRX-1 Phase 5, 2026-05-27) — narrow detection to true
  * connection-refused errors only. The pre-fix path also matched generic
@@ -403,7 +403,7 @@ function emit(stdout: string): void {
  *   - Any other error means the connection was at least accepted; the
  *     plugin may have started processing (and sent a TG prompt) before
  *     the wire broke. We MUST deny so the tool doesn't run unverified
- *     while the warchief is staring at a stale keyboard.
+ *     while the operator is staring at a stale keyboard.
  */
 export function isConnectionRefused(err: unknown): boolean {
   if (err === null || typeof err !== 'object') return false

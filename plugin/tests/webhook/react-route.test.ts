@@ -18,7 +18,7 @@ import { startWebhookServer, type WebhookDeps, type WebhookServerHandle } from '
 
 const FAKE_TOKEN = '123456789:AAH-fake_test_token_with_at_least_thirty_chars'
 const WEBHOOK_TOKEN = 'wh_test_token_32_chars__________'
-const WARCHIEF_ID = '164795011'
+const OWNER_ID = '123456789'
 const GROUP_ID = '-1003784643974'
 
 let stateDir: string
@@ -39,7 +39,8 @@ beforeEach(() => {
   const env = {
     TELEGRAM_BOT_TOKEN: FAKE_TOKEN,
     TELEGRAM_STATE_DIR: stateDir,
-    TELEGRAM_ALLOWED_CHAT_IDS: `${WARCHIEF_ID},${GROUP_ID}`,
+    TELEGRAM_ALLOWED_USER_IDS: '123456789',
+    TELEGRAM_ALLOWED_CHAT_IDS: `${OWNER_ID},${GROUP_ID}`,
   }
   baseConfig = loadConfig(env)
   paths = getStatePaths(baseConfig, { TELEGRAM_BOT_TOKEN: FAKE_TOKEN, TELEGRAM_STATE_DIR: stateDir })
@@ -103,10 +104,10 @@ describe('POST /hooks/react', () => {
   test('happy path sets 👀 for a DM message_id', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, message_id: 28045 })
+    const resp = await post(h, { chat_id: OWNER_ID, message_id: 28045 })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'reacted' })
-    expect(calls).toEqual([{ chatId: WARCHIEF_ID, messageId: 28045, emoji: '👀' }])
+    expect(calls).toEqual([{ chatId: OWNER_ID, messageId: 28045, emoji: '👀' }])
   })
 
   test('coerces numeric-string message_id and supports negative group chat_id', async () => {
@@ -120,7 +121,7 @@ describe('POST /hooks/react', () => {
   test('honours an explicit emoji override', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h, calls } = await start()
-    await post(h, { chat_id: WARCHIEF_ID, message_id: 1, emoji: '🔥' })
+    await post(h, { chat_id: OWNER_ID, message_id: 1, emoji: '🔥' })
     expect(calls[0]?.emoji).toBe('🔥')
   })
 
@@ -131,7 +132,7 @@ describe('POST /hooks/react', () => {
         throw new Error('429 Too Many Requests')
       },
     })
-    const resp = await post(h, { chat_id: WARCHIEF_ID, message_id: 5 })
+    const resp = await post(h, { chat_id: OWNER_ID, message_id: 5 })
     expect(resp.status).toBe(200)
     expect(await resp.json()).toEqual({ status: 'react_failed' })
   })
@@ -139,7 +140,7 @@ describe('POST /hooks/react', () => {
   test('503 when reaction capability is not wired', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h } = await start({ omitReact: true })
-    const resp = await post(h, { chat_id: WARCHIEF_ID, message_id: 5 })
+    const resp = await post(h, { chat_id: OWNER_ID, message_id: 5 })
     expect(resp.status).toBe(503)
     expect(await resp.json()).toEqual({ status: 'reactions_unavailable' })
   })
@@ -155,7 +156,7 @@ describe('POST /hooks/react', () => {
   test('401 without bearer', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h, calls } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, message_id: 5 }, null)
+    const resp = await post(h, { chat_id: OWNER_ID, message_id: 5 }, null)
     expect(resp.status).toBe(401)
     expect(calls).toEqual([])
   })
@@ -163,14 +164,14 @@ describe('POST /hooks/react', () => {
   test('400 on malformed body (missing message_id)', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID })
+    const resp = await post(h, { chat_id: OWNER_ID })
     expect(resp.status).toBe(400)
   })
 
   test('400 on non-positive message_id', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
     const { h } = await start()
-    const resp = await post(h, { chat_id: WARCHIEF_ID, message_id: 0 })
+    const resp = await post(h, { chat_id: OWNER_ID, message_id: 0 })
     expect(resp.status).toBe(400)
   })
 })

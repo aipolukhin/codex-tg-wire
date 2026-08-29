@@ -259,7 +259,7 @@ describe('submit_prompt', () => {
   test('cyrillic fingerprint survives 60-char truncation (UTF-8 safe)', () => {
     installStubTmux()
     const ru =
-      '[from @dashieshiev] Проверь пожалуйста последние коммиты плагина и скажи решили ли мы все фиксы по репорту ученика'
+      '[from @example_owner] Проверь пожалуйста последние коммиты плагина и скажи решили ли мы все фиксы по репорту ученика'
     writeFileSync(join(dir, 'pane-1.txt'), READY_PANE)
     // Fingerprint (first 60 chars) still visible → not submitted → retry;
     // a byte-split fingerprint would never match and false-succeed on the

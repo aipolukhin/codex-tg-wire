@@ -1,11 +1,11 @@
 // Tests for the tmux-pane segment filter. The filter sits between the raw
 // `tmux capture-pane` output (after stripAnsi) and the Telegram renderer:
 // it classifies each chunk of the pane into one of a handful of segment
-// types and drops the ones the warchief doesn't want to see in the
+// types and drops the ones the operator doesn't want to see in the
 // rolling mirror message.
 //
 // Fixtures are crafted from real captures of Claude Code running inside
-// tmux (the warchief sent two screenshots on 2026-05-20 showing the boot
+// tmux (the operator sent two screenshots on 2026-05-20 showing the boot
 // banner, the channel-status block, the experimental-inbound warning, the
 // input prompt, and the footer hints). We do NOT depend on tmux at test
 // time — the fixtures are inline strings.
@@ -31,8 +31,8 @@ const BOOT_BANNER = [
   '│                      ▝▜█████▛▘                     │ What\'s new              │',
   '│                        ▘▘ ▝▝                       │ Added `claude agents -… │',
   '│       Opus 4.7 (1M context) · Claude Max ·         │ Added `agent_id` and `… │',
-  '│       grenkalove@gmail.com\'s Organization          │ Status line JSON input… │',
-  '│ ~/.claude-lab/thrall/.claude/jarvis-channel/plugin │ /release-notes for more │',
+  '│       user@example.com\'s Organization              │ Status line JSON input… │',
+  '│ ~/.claude-lab/agent-one/.claude/dashi-plugin-claude-code/plugin │ /release-notes for more │',
   '╰──────────────────────────────────────────────────────────────────────────────╯',
 ].join('\n')
 
@@ -95,7 +95,7 @@ describe('segmentizePane — classification', () => {
     expect(segs.length).toBe(1)
     expect(segs[0]?.type).toBe('boot_banner')
     expect(segs[0]?.text).toContain('Claude Code v2.1.144')
-    expect(segs[0]?.text).toContain('grenkalove@gmail.com')
+    expect(segs[0]?.text).toContain('user@example.com')
   })
 
   test('captures «Listening for channel messages from:» + server line as channel_status', () => {
@@ -159,7 +159,7 @@ describe('segmentizePane — classification', () => {
 
   test('input prompt box (─ line + > line + ─ line) classifies as input_box', () => {
     // 2026-05-22: input box was promoted to its own segment so the
-    // warchief's mirror can hide it. A conversation line that follows
+    // operator's mirror can hide it. A conversation line that follows
     // («> hello», not all-whitespace after >) breaks out of the box.
     const segs = segmentizePane(INPUT_PROMPT_BOX + '\n> hello\n')
     const types = segs.map((s) => s.type)
@@ -177,7 +177,7 @@ describe('filterPane — applies hide-list', () => {
     // Hidden:
     expect(out).not.toContain('Claude Code v2.1.144')
     expect(out).not.toContain('Welcome back Dashi')
-    expect(out).not.toContain('grenkalove@gmail.com')
+    expect(out).not.toContain('user@example.com')
     expect(out).not.toContain('Experimental · inbound messages')
     expect(out).not.toContain('prompt injection risks')
     expect(out).not.toContain('bypass permissions')
@@ -192,7 +192,7 @@ describe('filterPane — applies hide-list', () => {
 
   test('DEFAULT_HIDDEN_SEGMENTS lists the four groups we hide by default', () => {
     // 2026-05-22: `input_box` joined the default hide list — the
-    // warchief's iPhone mirror should not surface the prompt area.
+    // operator's iPhone mirror should not surface the prompt area.
     expect(new Set(DEFAULT_HIDDEN_SEGMENTS)).toEqual(
       new Set<SegmentType>([
         'boot_banner',
@@ -557,9 +557,9 @@ describe('filterPane — mode latest_inbound_only', () => {
   test('drops every segment up to AND INCLUDING the last inbound preview', () => {
     const text = [
       '● Earlier conversation about EdgeLab',
-      '← dashi-channel: first voice from warchief',
+      '← dashi-channel: first voice from operator',
       '● Reply to first voice',
-      '← dashi-channel: second voice from warchief',
+      '← dashi-channel: second voice from operator',
       '● Reply still in progress',
     ].join('\n')
     const out = filterPane(text, { hide: [], mode: 'latest_inbound_only' })

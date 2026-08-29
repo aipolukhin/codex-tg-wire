@@ -15,10 +15,10 @@ const silentLog = createLogger('test', {
 
 function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: {
       enabled: true,
       interval_ms: 700,
@@ -33,7 +33,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -56,6 +56,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -176,15 +177,15 @@ function makeManager(opts: { config?: AppConfig; clock?: FakeClock; api?: FakeAp
 describe('StatusManager.start', () => {
   test('sends initial typing message via sendMessage', async () => {
     const { mgr, api } = makeManager()
-    const handle = await mgr.start('164795011', undefined)
-    expect(handle.chatId).toBe('164795011')
+    const handle = await mgr.start('123456789', undefined)
+    expect(handle.chatId).toBe('123456789')
     expect(handle.messageId).toBe(100)
     // `sendChatAction` is also called immediately, so filter to the
     // message-send subset before asserting length.
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(1)
     const sent = api.calls.find((c) => c.kind === 'send')!
     expect(sent.kind).toBe('send')
-    expect(sent.chatId).toBe('164795011')
+    expect(sent.chatId).toBe('123456789')
     expect(sent.text).toContain('Печатает')
     const opts = sent.opts as { parse_mode?: string; reply_to_message_id?: number }
     expect(opts.parse_mode).toBe('HTML')
@@ -193,18 +194,18 @@ describe('StatusManager.start', () => {
 
   test('passes reply_to_message_id when supplied', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', 4242)
+    await mgr.start('123456789', 4242)
     const opts = api.calls[0]!.opts as { reply_to_message_id?: number }
     expect(opts.reply_to_message_id).toBe(4242)
   })
 
   test('isActive flips true after start, false after complete', async () => {
     const { mgr } = makeManager()
-    expect(mgr.isActive('164795011')).toBe(false)
-    await mgr.start('164795011', undefined)
-    expect(mgr.isActive('164795011')).toBe(true)
-    await mgr.complete('164795011')
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
+    await mgr.start('123456789', undefined)
+    expect(mgr.isActive('123456789')).toBe(true)
+    await mgr.complete('123456789')
+    expect(mgr.isActive('123456789')).toBe(false)
   })
 
   test('start finalises previous active status before opening a new one', async () => {
@@ -213,9 +214,9 @@ describe('StatusManager.start', () => {
     // superseded") before sending the new typing message, otherwise the
     // album path leaks stale pulsing status messages.
     const { mgr, api } = makeManager()
-    const firstHandle = await mgr.start('164795011', undefined)
+    const firstHandle = await mgr.start('123456789', undefined)
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(1)
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     const edits = api.calls.filter((c) => c.kind === 'edit')
     expect(edits.length).toBeGreaterThanOrEqual(1)
     // The cancel-edit targets the FIRST message id and ends with "superseded".
@@ -229,12 +230,12 @@ describe('StatusManager.start', () => {
 
   test('start cancel-edit on the previous status survives a "message not modified" error', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     // Force the cancel-edit on the previous status to fail with the
     // benign "not modified" error — start() must still complete.
     api.failEditWith = new Error('Bad Request: message is not modified')
-    await mgr.start('164795011', undefined)
-    expect(mgr.isActive('164795011')).toBe(true)
+    await mgr.start('123456789', undefined)
+    expect(mgr.isActive('123456789')).toBe(true)
   })
 
   test('start fires a `typing` sendChatAction immediately and re-pulses on 4 s timer', async () => {
@@ -242,11 +243,11 @@ describe('StatusManager.start', () => {
     // ~5 s. StatusManager pulses it on a 4 s timer, with one immediate call
     // on start() so the user sees the indicator without a 4 s delay.
     const { mgr, clock, api } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     const actions = api.calls.filter((c) => c.kind === 'chat_action')
     expect(actions.length).toBe(1)
     expect(actions[0]!.action).toBe('typing')
-    expect(actions[0]!.chatId).toBe('164795011')
+    expect(actions[0]!.chatId).toBe('123456789')
 
     // Advance just under the pulse window — no new action yet.
     clock.advance(3999)
@@ -258,7 +259,7 @@ describe('StatusManager.start', () => {
 
     // After complete() the pulse must stop — no further calls even after
     // multiple windows.
-    await mgr.complete('164795011')
+    await mgr.complete('123456789')
     clock.advance(20_000)
     expect(api.calls.filter((c) => c.kind === 'chat_action').length).toBe(2)
   })
@@ -267,7 +268,7 @@ describe('StatusManager.start', () => {
 describe('StatusManager.update', () => {
   test('edits existing message with new state text', async () => {
     const { mgr, api } = makeManager()
-    const handle = await mgr.start('164795011', undefined)
+    const handle = await mgr.start('123456789', undefined)
     await mgr.update(handle, { kind: 'thinking' })
     const edits = api.calls.filter((c) => c.kind === 'edit')
     expect(edits.length).toBe(1)
@@ -277,7 +278,7 @@ describe('StatusManager.update', () => {
 
   test('update with tool state renders 🔧 + tool name (HTML-escaped)', async () => {
     const { mgr, api } = makeManager()
-    const handle = await mgr.start('164795011', undefined)
+    const handle = await mgr.start('123456789', undefined)
     await mgr.update(handle, { kind: 'tool', toolName: 'Bash<test>' })
     const edits = api.calls.filter((c) => c.kind === 'edit')
     expect(edits.length).toBe(1)
@@ -288,7 +289,7 @@ describe('StatusManager.update', () => {
   test('update swallows "message is not modified" silently', async () => {
     const { mgr, api } = makeManager()
     api.failEditWith = new Error('Bad Request: message is not modified')
-    const handle = await mgr.start('164795011', undefined)
+    const handle = await mgr.start('123456789', undefined)
     // Should not throw despite the API error.
     await mgr.update(handle, { kind: 'thinking' })
     // One send + one (failed-but-swallowed) edit.
@@ -298,8 +299,8 @@ describe('StatusManager.update', () => {
 
   test('update with stale handle is a no-op', async () => {
     const { mgr, api } = makeManager()
-    const handle = await mgr.start('164795011', undefined)
-    await mgr.complete('164795011')
+    const handle = await mgr.start('123456789', undefined)
+    await mgr.complete('123456789')
     const editsBefore = api.calls.filter((c) => c.kind === 'edit').length
     await mgr.update(handle, { kind: 'thinking' })
     const editsAfter = api.calls.filter((c) => c.kind === 'edit').length
@@ -310,17 +311,17 @@ describe('StatusManager.update', () => {
 describe('StatusManager.complete', () => {
   test('clears handle and (default) deletes status message', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', undefined)
-    await mgr.complete('164795011')
-    expect(mgr.isActive('164795011')).toBe(false)
+    await mgr.start('123456789', undefined)
+    await mgr.complete('123456789')
+    expect(mgr.isActive('123456789')).toBe(false)
     expect(api.calls.filter((c) => c.kind === 'delete').length).toBe(1)
   })
 
   test('skips delete when delete_on_complete=false', async () => {
     const config = makeConfig({ delete_on_complete: false })
     const { mgr, api } = makeManager({ config })
-    await mgr.start('164795011', undefined)
-    await mgr.complete('164795011')
+    await mgr.start('123456789', undefined)
+    await mgr.complete('123456789')
     expect(api.calls.filter((c) => c.kind === 'delete').length).toBe(0)
   })
 
@@ -333,17 +334,17 @@ describe('StatusManager.complete', () => {
   test('complete swallows delete errors', async () => {
     const { mgr, api } = makeManager()
     api.failDeleteWith = new Error('Bad Request: message to delete not found')
-    await mgr.start('164795011', undefined)
-    await mgr.complete('164795011') // must not throw
-    expect(mgr.isActive('164795011')).toBe(false)
+    await mgr.start('123456789', undefined)
+    await mgr.complete('123456789') // must not throw
+    expect(mgr.isActive('123456789')).toBe(false)
   })
 })
 
 describe('StatusManager.cancel', () => {
   test('edits to "Остановлено: <reason>" and stops timers', async () => {
     const { mgr, api, clock } = makeManager()
-    await mgr.start('164795011', undefined)
-    await mgr.cancel('164795011', 'user stop')
+    await mgr.start('123456789', undefined)
+    await mgr.cancel('123456789', 'user stop')
     const edits = api.calls.filter((c) => c.kind === 'edit')
     expect(edits.length).toBeGreaterThanOrEqual(1)
     expect(edits[edits.length - 1]!.text).toContain('Остановлено')
@@ -354,7 +355,7 @@ describe('StatusManager.cancel', () => {
     const before = api.calls.length
     clock.advance(5000)
     expect(api.calls.length).toBe(before)
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
   })
 
   test('cancel on unknown chat is a no-op', async () => {
@@ -367,7 +368,7 @@ describe('StatusManager.cancel', () => {
 describe('StatusManager interval ticker', () => {
   test('advancing time triggers periodic edits (dot animation)', async () => {
     const { mgr, api, clock } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     // Two ticks visible to network: tick 1 → "Печатает.." (2 dots), tick 2 →
     // "Печатает..." (3 dots). Tick 3 would cycle back to "Печатает." which
     // matches lastText (the initial text) and is intentionally skipped to
@@ -392,10 +393,10 @@ describe('StatusManager interval ticker', () => {
 
   test('tick stops after complete', async () => {
     const { mgr, api, clock } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     clock.advance(700) // one tick edit
     const editsBefore = api.calls.filter((c) => c.kind === 'edit').length
-    await mgr.complete('164795011')
+    await mgr.complete('123456789')
     clock.advance(5000)
     const editsAfter = api.calls.filter((c) => c.kind === 'edit').length
     expect(editsAfter).toBe(editsBefore)
@@ -406,13 +407,13 @@ describe('StatusManager TTL guard', () => {
   test('auto-cancels after ttl_ms with reason="ttl"', async () => {
     const config = makeConfig({ ttl_ms: 5000 })
     const { mgr, api, clock } = makeManager({ config })
-    await mgr.start('164795011', undefined)
-    expect(mgr.isActive('164795011')).toBe(true)
+    await mgr.start('123456789', undefined)
+    expect(mgr.isActive('123456789')).toBe(true)
     clock.advance(5000)
     // The TTL fires cancel(), which is async. Drain microtasks.
     await Promise.resolve()
     await Promise.resolve()
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
     const edits = api.calls.filter((c) => c.kind === 'edit')
     // Last edit must be the "Остановлено: ttl" finalization. (Interval
     // ticks may also have fired before TTL — we only check the final one.)
@@ -423,8 +424,8 @@ describe('StatusManager TTL guard', () => {
   test('complete before TTL prevents auto-cancel firing', async () => {
     const config = makeConfig({ ttl_ms: 5000, interval_ms: 100_000 })
     const { mgr, api, clock } = makeManager({ config })
-    await mgr.start('164795011', undefined)
-    await mgr.complete('164795011')
+    await mgr.start('123456789', undefined)
+    await mgr.complete('123456789')
     const editsBefore = api.calls.filter((c) => c.kind === 'edit').length
     clock.advance(10_000)
     await Promise.resolve()
@@ -437,8 +438,8 @@ describe('StatusManager TTL guard', () => {
 describe('StatusManager updateByChatId (for status MCP tool)', () => {
   test('re-targets active status by chat id without external handle', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', undefined)
-    await mgr.updateByChatId('164795011', { kind: 'tool', toolName: 'Read' })
+    await mgr.start('123456789', undefined)
+    await mgr.updateByChatId('123456789', { kind: 'tool', toolName: 'Read' })
     const edits = api.calls.filter((c) => c.kind === 'edit')
     expect(edits[edits.length - 1]!.text).toContain('🔧')
     expect(edits[edits.length - 1]!.text).toContain('Read')
@@ -455,10 +456,10 @@ describe('StatusManager.activeChatIds', () => {
   test('returns the list of active chats (used by shutdown)', async () => {
     const { mgr } = makeManager()
     expect(mgr.activeChatIds()).toEqual([])
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     await mgr.start('200', undefined)
     const ids = mgr.activeChatIds().sort()
-    expect(ids).toEqual(['164795011', '200'])
+    expect(ids).toEqual(['123456789', '200'])
   })
 })
 
@@ -469,8 +470,8 @@ describe('StatusManager.activeChatIds', () => {
 describe('StatusManager.recordActivityByChatId', () => {
   test('PreToolUse on existing status renders activity block edit', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', undefined)
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.start('123456789', undefined)
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Bash',
       toolInput: { command: 'bun test' },
@@ -486,20 +487,20 @@ describe('StatusManager.recordActivityByChatId', () => {
 
   test('SessionStart with no active status opens one without reply_to', async () => {
     const { mgr, api } = makeManager()
-    await mgr.recordActivityByChatId('164795011', { kind: 'session_start' })
+    await mgr.recordActivityByChatId('123456789', { kind: 'session_start' })
     const sends = api.calls.filter((c) => c.kind === 'send')
     expect(sends.length).toBe(1)
-    expect(sends[0]!.chatId).toBe('164795011')
+    expect(sends[0]!.chatId).toBe('123456789')
     const opts = sends[0]!.opts as { reply_to_message_id?: number }
     expect(opts.reply_to_message_id).toBeUndefined()
-    expect(mgr.isActive('164795011')).toBe(true)
+    expect(mgr.isActive('123456789')).toBe(true)
   })
 
   test('Stop calls complete() and stops timers', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', undefined)
-    await mgr.recordActivityByChatId('164795011', { kind: 'session_stop' })
-    expect(mgr.isActive('164795011')).toBe(false)
+    await mgr.start('123456789', undefined)
+    await mgr.recordActivityByChatId('123456789', { kind: 'session_stop' })
+    expect(mgr.isActive('123456789')).toBe(false)
     // delete_on_complete=true by default → expect one delete call.
     const deletes = api.calls.filter((c) => c.kind === 'delete')
     expect(deletes.length).toBe(1)
@@ -507,9 +508,9 @@ describe('StatusManager.recordActivityByChatId', () => {
 
   test('Agent PreToolUse renders immediately even within throttle window', async () => {
     const { mgr, api, clock } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     // First non-Agent record sets lastToolRenderAt.
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Bash',
       toolInput: { command: 'echo hi' },
@@ -518,7 +519,7 @@ describe('StatusManager.recordActivityByChatId', () => {
     const beforeAgent = api.calls.filter((c) => c.kind === 'edit').length
     // Within 5 s — non-Agent would NOT trigger an edit. Agent must.
     clock.advance(100)
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Agent',
       toolInput: { subagent_type: 'researcher' },
@@ -536,9 +537,9 @@ describe('StatusManager.recordActivityByChatId', () => {
     // noise edits between our two record calls.
     const config = makeConfig({ interval_ms: 100_000_000 })
     const { mgr, api, clock } = makeManager({ config })
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     // First non-Agent renders immediately (sentinel → past threshold).
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Bash',
       toolInput: { command: 'one' },
@@ -547,7 +548,7 @@ describe('StatusManager.recordActivityByChatId', () => {
     const editsAfterFirst = api.calls.filter((c) => c.kind === 'edit').length
     // Second one within 5 s — throttled, no new edit.
     clock.advance(2000)
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Bash',
       toolInput: { command: 'two' },
@@ -555,7 +556,7 @@ describe('StatusManager.recordActivityByChatId', () => {
     })
     expect(api.calls.filter((c) => c.kind === 'edit').length).toBe(editsAfterFirst)
     // PostToolUse (reasoning flip) flushes the buffer — must include `two`.
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_end',
       toolName: 'Bash',
       toolInput: { command: 'two' },
@@ -569,14 +570,14 @@ describe('StatusManager.recordActivityByChatId', () => {
 
   test('UserPromptSubmit flips phase to reasoning and renders', async () => {
     const { mgr, api } = makeManager()
-    await mgr.start('164795011', undefined)
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.start('123456789', undefined)
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Bash',
       toolInput: { command: 'ls /' },
       toolUseId: 'u1',
     })
-    await mgr.recordActivityByChatId('164795011', { kind: 'reasoning' })
+    await mgr.recordActivityByChatId('123456789', { kind: 'reasoning' })
     const last = api.calls.filter((c) => c.kind === 'edit').pop()!
     expect(last.text).toContain('reasoning...')
   })
@@ -585,8 +586,8 @@ describe('StatusManager.recordActivityByChatId', () => {
     const { mgr, api } = makeManager()
     // session_start with no prior status → opens. Then a reasoning event
     // shouldn't carry any user prompt body because the mapping drops it.
-    await mgr.recordActivityByChatId('164795011', { kind: 'session_start' })
-    await mgr.recordActivityByChatId('164795011', { kind: 'reasoning' })
+    await mgr.recordActivityByChatId('123456789', { kind: 'session_start' })
+    await mgr.recordActivityByChatId('123456789', { kind: 'reasoning' })
     const everything = api.calls.map((c) => c.text ?? '').join('\n')
     expect(everything).not.toContain('prompt')
     expect(everything).toContain('working --')
@@ -594,11 +595,11 @@ describe('StatusManager.recordActivityByChatId', () => {
 
   test('Buffer enforces ACTIVITY_MAX_BUFFER (10) — older shifted out', async () => {
     const { mgr, api, clock } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     // Push 12 Agent calls — Agent always renders, so we exercise the path
     // where the buffer caps and the renderer still shows +N earlier.
     for (let i = 0; i < 12; i++) {
-      await mgr.recordActivityByChatId('164795011', {
+      await mgr.recordActivityByChatId('123456789', {
         kind: 'tool_start',
         toolName: 'Agent',
         toolInput: { subagent_type: `subagent-${i}` },
@@ -626,9 +627,9 @@ describe('StatusManager.recordActivityByChatId', () => {
       throw new Error('telegram down')
     }
     // Must not throw.
-    await mgr.recordActivityByChatId('164795011', { kind: 'session_start' })
+    await mgr.recordActivityByChatId('123456789', { kind: 'session_start' })
     // No active status created → no further calls succeed silently.
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
     api.api.sendMessage = origSend
   })
 
@@ -639,10 +640,10 @@ describe('StatusManager.recordActivityByChatId', () => {
     // and inspecting the subsequent edit text — the masked summary must
     // appear in the very next render (proving the buffer already held it).
     const { mgr, clock, api } = makeManager()
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
 
     // Pair: PreToolUse with toolUseId → PostToolUse with same id.
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_start',
       toolName: 'Agent',
       toolInput: { subagent_type: 'researcher' },
@@ -652,7 +653,7 @@ describe('StatusManager.recordActivityByChatId', () => {
     const longToken = `abcd${'x'.repeat(20)}wxyz` // matches generic-long rule
     clock.advance(100)
     const editsBefore = api.calls.filter((c) => c.kind === 'edit').length
-    await mgr.recordActivityByChatId('164795011', {
+    await mgr.recordActivityByChatId('123456789', {
       kind: 'tool_end',
       toolName: 'Agent',
       toolInput: { subagent_type: 'researcher' },
@@ -677,11 +678,11 @@ describe('StatusManager.recordActivityByChatId', () => {
     // shown). Flush via a `reasoning` event since it always renders.
     const config = makeConfig({ interval_ms: 100_000_000 })
     const { mgr, api, clock } = makeManager({ config })
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
 
     const editsAtStart = api.calls.filter((c) => c.kind === 'edit').length
     for (let i = 0; i < 12; i++) {
-      await mgr.recordActivityByChatId('164795011', {
+      await mgr.recordActivityByChatId('123456789', {
         kind: 'tool_start',
         toolName: 'Bash',
         toolInput: { command: `cmd-${i.toString().padStart(2, '0')}` },
@@ -696,7 +697,7 @@ describe('StatusManager.recordActivityByChatId', () => {
     expect(editsAfterTools - editsAtStart).toBe(1)
 
     // Flush via reasoning event → always renders.
-    await mgr.recordActivityByChatId('164795011', { kind: 'reasoning' })
+    await mgr.recordActivityByChatId('123456789', { kind: 'reasoning' })
     const last = api.calls.filter((c) => c.kind === 'edit').pop()!
     // Buffer kept the last 10 (cmd-02..cmd-11). Renderer window is 5 →
     // show cmd-07..cmd-11 + a `+5 earlier` line (10 buffered − 5 shown).
@@ -711,7 +712,7 @@ describe('StatusManager.recordActivityByChatId', () => {
 })
 
 describe('StatusManager.suppress_typing_bubble', () => {
-  // Warchief request 2026-05-27: the «Печатает...» bubble is visual noise
+  // Operator request 2026-05-27: the «Печатает...» bubble is visual noise
   // on top of TmuxMirror. When suppress_typing_bubble=true (production
   // default), the bubble must NOT exist until state advances past typing.
   // Native sendChatAction (header animation) and TTL guard still run.
@@ -720,20 +721,20 @@ describe('StatusManager.suppress_typing_bubble', () => {
     const { mgr, api } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    const handle = await mgr.start('164795011', undefined)
+    const handle = await mgr.start('123456789', undefined)
     expect(handle.messageId).toBe(0)
     // No send for the bubble. sendChatAction still fires immediately so the
     // Telegram header animation is unchanged.
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(0)
     expect(api.calls.filter((c) => c.kind === 'chat_action').length).toBe(1)
-    expect(mgr.isActive('164795011')).toBe(true)
+    expect(mgr.isActive('123456789')).toBe(true)
   })
 
   test('does not edit while state stays in typing across ticks', async () => {
     const { mgr, api, clock } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     clock.advance(5000)
     expect(api.calls.filter((c) => c.kind === 'edit').length).toBe(0)
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(0)
@@ -743,8 +744,8 @@ describe('StatusManager.suppress_typing_bubble', () => {
     const { mgr, api } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', 4242)
-    await mgr.updateByChatId('164795011', { kind: 'tool', toolName: 'Bash' })
+    await mgr.start('123456789', 4242)
+    await mgr.updateByChatId('123456789', { kind: 'tool', toolName: 'Bash' })
     const sends = api.calls.filter((c) => c.kind === 'send')
     expect(sends.length).toBe(1)
     expect(sends[0]!.text).toContain('Bash')
@@ -757,8 +758,8 @@ describe('StatusManager.suppress_typing_bubble', () => {
     const { mgr, api } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
-    await mgr.recordActivityByChatId('164795011', { kind: 'reasoning' })
+    await mgr.start('123456789', undefined)
+    await mgr.recordActivityByChatId('123456789', { kind: 'reasoning' })
     const sends = api.calls.filter((c) => c.kind === 'send')
     expect(sends.length).toBe(1)
     // First render is the activity block, not «Печатает...».
@@ -769,39 +770,39 @@ describe('StatusManager.suppress_typing_bubble', () => {
     const { mgr, api } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
-    await mgr.cancel('164795011', 'user stop')
+    await mgr.start('123456789', undefined)
+    await mgr.cancel('123456789', 'user stop')
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(0)
     expect(api.calls.filter((c) => c.kind === 'edit').length).toBe(0)
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
   })
 
   test('complete on a pure-typing session does not call deleteMessage', async () => {
     const { mgr, api } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
-    await mgr.complete('164795011')
+    await mgr.start('123456789', undefined)
+    await mgr.complete('123456789')
     expect(api.calls.filter((c) => c.kind === 'delete').length).toBe(0)
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
   })
 
   test('TTL on a pure-typing session expires silently without «Остановлено» bubble', async () => {
     const { mgr, api, clock, config } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     clock.advance(config.status.ttl_ms + 1)
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(0)
     expect(api.calls.filter((c) => c.kind === 'edit').length).toBe(0)
-    expect(mgr.isActive('164795011')).toBe(false)
+    expect(mgr.isActive('123456789')).toBe(false)
   })
 
   test('chat_action still pulses on the 4s timer while bubble is suppressed', async () => {
     const { mgr, api, clock } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
+    await mgr.start('123456789', undefined)
     expect(api.calls.filter((c) => c.kind === 'chat_action').length).toBe(1)
     clock.advance(4000)
     expect(api.calls.filter((c) => c.kind === 'chat_action').length).toBe(2)
@@ -813,9 +814,9 @@ describe('StatusManager.suppress_typing_bubble', () => {
     const { mgr, api } = makeManager({
       config: makeConfig({ suppress_typing_bubble: true }),
     })
-    await mgr.start('164795011', undefined)
-    await mgr.updateByChatId('164795011', { kind: 'thinking' })
-    await mgr.updateByChatId('164795011', { kind: 'tool', toolName: 'Read' })
+    await mgr.start('123456789', undefined)
+    await mgr.updateByChatId('123456789', { kind: 'thinking' })
+    await mgr.updateByChatId('123456789', { kind: 'tool', toolName: 'Read' })
     // First non-typing transition sends; second edits the same message.
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(1)
     expect(api.calls.filter((c) => c.kind === 'edit').length).toBeGreaterThanOrEqual(1)

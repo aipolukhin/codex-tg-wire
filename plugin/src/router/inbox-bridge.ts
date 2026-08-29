@@ -44,7 +44,7 @@ import { assertValidChatId } from '../chats/policy-loader.js'
 
 // M11 (2026-05-23): per-chat state directories and the JSON files
 // inside them carry user prompts and bot replies (potentially with
-// PII / private context). The plugin runs as the openclaw user; we
+// PII / private context). The plugin runs as the service-user user; we
 // constrain dirs to 0o700 and files to 0o600 so a coincidental
 // other-user on the host cannot read inbox/outbox payloads.
 //

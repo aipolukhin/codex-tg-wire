@@ -4,7 +4,7 @@
 // including the Claude Code boot banner, the «Experimental · inbound
 // messages» warning, footer hints (bypass-permissions reminder,
 // auto-update failure, tmux focus-events note) and everything in between.
-// The warchief asked us to surface only what is semantically meaningful
+// The operator asked us to surface only what is semantically meaningful
 // (the channel-status marker, the live conversation, the input prompt)
 // and hide the rest.
 //
@@ -16,7 +16,7 @@
 // to make catastrophic-backtracking).
 //
 // Anchors are picked from the actual Claude Code v2.1.144 layout (the
-// warchief sent screenshots on 2026-05-20). They are deliberately
+// operator sent screenshots on 2026-05-20). They are deliberately
 // specific phrases — never a single keyword that could appear in a
 // regular conversation — so false-positives in `conversation` text are
 // extremely unlikely.
@@ -35,7 +35,7 @@ export type SegmentType =
 // anchors on the last inbound preview line that Claude Code emits when
 // the dashi-channel MCP pushes a notification (`← <channel>: …`). All
 // segments before AND the anchor itself are dropped — only what came
-// AFTER the warchief's last message remains. If no preview is present
+// AFTER the operator's last message remains. If no preview is present
 // (fresh session) the mode degrades to `full_pane`.
 export type RenderMode = 'full_pane' | 'latest_inbound_only'
 
@@ -54,7 +54,7 @@ export interface FilterOptions {
   mode?: RenderMode
 }
 
-// Default hide-list. Mirrors the warchief's spec on 2026-05-20 + 05-22:
+// Default hide-list. Mirrors the operator's spec on 2026-05-20 + 05-22:
 // boot banner (splash + email + path), inbound-injection warning,
 // footer hints (bypass-perms reminder, auto-update failure, tmux
 // focus-events note, /btw tip) AND the input box (the bordered prompt
@@ -137,7 +137,7 @@ const FOOTER_LINE_RES: readonly RegExp[] = [
 // Inbound preview: Claude Code emits one such line when an MCP channel
 // (e.g. dashi-channel) pushes a notification mid-session — `← <name>:
 // <preview>`. The arrow is U+2190; the channel name is a kebab-case
-// identifier in our world (`dashi-channel`, `orgrimmar-inbox`, etc.).
+// identifier in our world (`dashi-channel`, `agent-inbox`, etc.).
 //
 // Codex review 2026-05-22 flagged the earlier `\S+:` form as too loose
 // — a tool that prints «← github: issue title» at column zero would
@@ -438,7 +438,7 @@ export function filterPane(text: string, opts?: FilterOptions): string {
     // Fresh session with no preview line at all → degrade to full_pane.
     if (lastIdx >= 0) {
       // Drop the anchor itself AND every segment before it. The mirror
-      // wants only what happened AFTER the warchief's last message, so
+      // wants only what happened AFTER the operator's last message, so
       // the preview (which echoes that message) is not part of "after".
       segs = segs.slice(lastIdx + 1)
     }

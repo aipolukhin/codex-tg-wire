@@ -3,7 +3,7 @@
 //
 // The TaskRealityMirror derives a `TaskFreshness` value from the reconciled
 // state + turn-active window and hands it to each surface's render path. Both
-// surfaces render the SAME header wording so the warchief reads one consistent
+// surfaces render the SAME header wording so the operator reads one consistent
 // «сверено / УСТАРЕЛИ / НЕ СВЕРЕНО / завершено» language everywhere.
 //
 // Bucketing matters for edit-churn: the label embeds a coarse relative age

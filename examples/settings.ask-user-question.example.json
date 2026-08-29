@@ -1,7 +1,7 @@
 {
   "_comment_1": "PreToolUse hook, который перехватывает встроенный инструмент AskUserQuestion и пробрасывает выбор варианта в Telegram через dashi-channel плагин (порт 8093 по умолчанию).",
   "_comment_2": "Скопируй блок hooks в свой ~/.claude-lab/<agent>/.claude/settings.json (НЕ в settings.local.json), либо смерджи через scripts/install-hooks.sh (см. docs).",
-  "_comment_3": "Замени <repo> на абсолютный путь к этому репозиторию (например /home/openclaw/.claude-lab/thrall/.claude/jarvis-channel).",
+  "_comment_3": "Замени <repo> на абсолютный путь к этому репозиторию (например /home/<service-user>/.claude-lab/<agent>/.claude/dashi-plugin-claude-code).",
   "_comment_4": "ВАЖНО: убери \"AskUserQuestion\" из permissions.deny в settings.local.json.example, иначе Claude Code зарежет инструмент ещё до того, как PreToolUse сработает.",
   "_comment_5": "ВАЖНО: плагин dashi-channel должен слушать на 127.0.0.1:8093. Если он не запущен — wrapper тихо отдаёт пустой stdout, и Claude Code откроет нативный терминальный UI как fallback.",
   "_comment_6": "ВАЖНО: TELEGRAM_WEBHOOK_TOKEN — bearer плагина, его НИКОГДА не пишем в settings.json. Экспортируется в env самого Claude-агента (через wrapper-скрипт запуска или systemd EnvironmentFile).",

@@ -20,7 +20,7 @@ describe('buildHookRequest', () => {
   test('builds POST with bearer + JSON body containing chatId', () => {
     const result = buildHookRequest({
       env: {
-        TELEGRAM_HOOK_CHAT_ID: '164795011',
+        TELEGRAM_HOOK_CHAT_ID: '123456789',
         TELEGRAM_WEBHOOK_URL: 'http://127.0.0.1:8089/hooks/agent',
         TELEGRAM_WEBHOOK_TOKEN: TOKEN,
       },
@@ -31,7 +31,7 @@ describe('buildHookRequest', () => {
     expect(result.url).toBe('http://127.0.0.1:8089/hooks/agent')
     expect(result.headers.Authorization).toBe(`Bearer ${TOKEN}`)
     expect(result.headers['Content-Type']).toBe('application/json')
-    expect(result.body).toContain('"chatId":"164795011"')
+    expect(result.body).toContain('"chatId":"123456789"')
     expect(result.body).toContain('"hook_event_name":"Stop"')
   })
 

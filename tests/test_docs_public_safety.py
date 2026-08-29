@@ -1,26 +1,15 @@
-"""Docs safety tests for files that ship in the public repo.
+"""Structural publication-safety tests for documentation shipped to users.
 
-TASK-10 (REPORT C3): plugin/docs/canary-smoke.md was originally an internal
-Orgrimmar runbook that hardcoded:
-  - the test bot id (8507713167)
-  - the warchief's personal Telegram user id (164795011)
-  - operator-specific Mac paths (~/Users/jasonqwwen/...)
-  - production session names (channel-thrall, channel-silvana, etc. — kept
-    in the original as `orgrimmar-silvana`, `orgrimmar-kaelthas`, ...)
-  - server-specific paths (/home/openclaw, sa-thrall agent ids)
-  - Tailscale IPs (100.97.43.49, 100.104.191.127)
-  - Orgrimmar-internal terminology ("принц approval", "warchief", "вождь")
-
-This test fails if any of those leak back into the public docs zone, while
-keeping the file as a non-trivial public canary recipe a third-party operator
-could follow (size floor enforces that sanitization did not degenerate into
-deletion).
-
-Add new forbidden tokens here when future PRs reintroduce internal context.
+The checks deliberately avoid embedding old deployment fingerprints in the
+test itself. They reject classes of leaks (concrete home directories, private
+tailnet addresses and configured Telegram IDs) while allowing clearly fake
+examples and documented placeholders.
 """
 
 from __future__ import annotations
 
+import ipaddress
+import re
 import unittest
 from pathlib import Path
 
@@ -28,49 +17,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CANARY_SMOKE = REPO_ROOT / "plugin" / "docs" / "canary-smoke.md"
 
-# Tokens that must NEVER appear in any public docs file. Grouped by leak type
-# so failure messages stay actionable.
-FORBIDDEN_IDENTIFIERS = (
-    # Bot / user ids
-    "8507713167",
-    "164795011",
-    # Operator usernames / unix users
-    "jasonqwwen",
-    "openclaw",
-    # Absolute server paths
-    "/home/openclaw",
-    # Agent identifiers
-    "sa-thrall",
-    # Tailscale IPs (Orgrimmar-internal network)
-    "100.97.43.49",
-    "100.104.191.127",
-    # Internal terminology
-    "principe",
-    "принц",
-    "warchief",
-    "вождь",
-    # Production session names — these are concrete prod tmux sessions
-    # listed in the original "Do NOT touch" block. Public docs must
-    # generalize to `channel-<your-agent>`.
-    "orgrimmar-silvana",
-    "orgrimmar-kaelthas",
-    "orgrimmar-garrosh",
-    "orgrimmar-arthas",
-    "orgrimmar-claude",
-    "orgrimmar-canary",
+CONCRETE_HOME_RE = re.compile(r"/(?:Users|home)/(?P<user>[A-Za-z0-9._-]+)")
+IPV4_RE = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+CONFIGURED_TELEGRAM_ID_RE = re.compile(
+    r"TELEGRAM_(?:EXPECTED_BOT_ID|ALLOWED_USER_IDS|ALLOWED_CHAT_IDS)\s*=\s*-?\d{6,}"
 )
 
-# Files in scope for this safety check. TASK-10 starts with canary-smoke.md;
-# extend the tuple as more docs are sanitized.
-#
-# Note: TASK-12 removed the warchief Telegram user id (164795011) from
-# docs/05-troubleshooting.md but that file still uses Orgrimmar-specific
-# operator paths (`/home/openclaw`, `openclaw`, `принц`) inside concrete
-# sudo / systemd examples. Adding TROUBLESHOOTING to this tuple requires
-# rewriting those examples first. TASK-12 instead added a narrower
-# `TroubleshootingPublicSafetyTest` in tests/test_docs_links.py that
-# only enforces the user-id rule. A future TASK-N can promote the file
-# here once the wider sanitization lands.
+# Files in scope for this safety check. Extend as more public runbooks land.
 PUBLIC_DOCS = (CANARY_SMOKE,)
 
 # Lower bound on file size. Sanitization must not collapse the runbook into
@@ -98,45 +51,35 @@ class PublicDocsExistTest(unittest.TestCase):
         )
 
 
-class PublicDocsNoInternalLeaksTest(unittest.TestCase):
-    """Every public docs file must be free of Orgrimmar-internal identifiers."""
+class PublicDocsNoDeploymentLeaksTest(unittest.TestCase):
+    """Public recipes must contain placeholders, not a real deployment map."""
 
     def _scan(self, path: Path) -> list[str]:
         text = path.read_text(encoding="utf-8")
-        return [token for token in FORBIDDEN_IDENTIFIERS if token in text]
+        failures: list[str] = []
+        for match in CONCRETE_HOME_RE.finditer(text):
+            failures.append(f"concrete home path `{match.group(0)}`")
+        for match in CONFIGURED_TELEGRAM_ID_RE.finditer(text):
+            failures.append(f"concrete Telegram config `{match.group(0)}`")
+        for raw_ip in IPV4_RE.findall(text):
+            try:
+                address = ipaddress.ip_address(raw_ip)
+            except ValueError:
+                continue
+            if address in ipaddress.ip_network("100.64.0.0/10"):
+                failures.append(f"tailnet address `{raw_ip}`")
+        return failures
 
-    def test_canary_smoke_no_leaks(self) -> None:
-        leaks = self._scan(CANARY_SMOKE)
-        self.assertEqual(
-            leaks,
-            [],
-            f"{CANARY_SMOKE} still contains internal identifiers: {leaks}. "
-            "Replace each with a public placeholder (e.g. `<test-bot-id>`, "
-            "`<your-telegram-user-id>`, `~/path/to/your/.claude-lab`, "
-            "`channel-<your-agent>`, `operator approval`).",
-        )
-
-    def test_all_public_docs_no_leaks(self) -> None:
-        """Sweep all in-scope docs in one pass so adding new files to
-        ``PUBLIC_DOCS`` automatically inherits the same guard."""
+    def test_all_public_docs_no_structural_leaks(self) -> None:
         failures: list[str] = []
         for path in PUBLIC_DOCS:
-            for token in self._scan(path):
-                failures.append(f"{path.name}: contains forbidden token `{token}`")
+            for leak in self._scan(path):
+                failures.append(f"{path.name}: {leak}")
         self.assertEqual(failures, [], "\n".join(failures))
 
 
-class PublicDocsMacPathsGeneralizedTest(unittest.TestCase):
-    """Operator-specific Mac paths must be replaced with placeholders."""
-
-    def test_canary_smoke_no_jasonqwwen_users_path(self) -> None:
-        text = CANARY_SMOKE.read_text(encoding="utf-8")
-        self.assertNotIn(
-            "/Users/jasonqwwen",
-            text,
-            "Mac path `/Users/jasonqwwen/...` must be replaced with a generic "
-            "placeholder like `~/path/to/your/.claude-lab`.",
-        )
+class PublicDocsPathsGeneralizedTest(unittest.TestCase):
+    """Deployment paths must be expressed as copy-editable placeholders."""
 
     def test_canary_smoke_uses_placeholder_path(self) -> None:
         text = CANARY_SMOKE.read_text(encoding="utf-8")
@@ -169,7 +112,7 @@ class PublicDocsPlaceholderHintsTest(unittest.TestCase):
             "<your-telegram-user-id>",
             self.text,
             "Runbook should use `<your-telegram-user-id>` placeholder where "
-            "the warchief's concrete id used to live.",
+            "the operator's concrete id used to live.",
         )
 
     def test_userinfobot_hint_present(self) -> None:
@@ -191,12 +134,12 @@ class PublicDocsPlaceholderHintsTest(unittest.TestCase):
         )
 
     def test_operator_approval_wording(self) -> None:
-        # "принц approval" / "warchief" was replaced with "operator approval".
+        # "владелец approval" / "operator" was replaced with "operator approval".
         self.assertIn(
             "operator approval",
             self.text,
             "Production cutover sentence should read `operator approval` "
-            "instead of the Orgrimmar-internal `принц approval` wording.",
+            "instead of deployment-specific role wording.",
         )
 
 
@@ -272,7 +215,7 @@ class SmokeMatrixCoverageTest(unittest.TestCase):
             "TmuxMirror",
             self.text,
             "Smoke matrix must include TmuxMirror rows (enabled in DM, "
-            "disabled in group) so operators verify the warchief-DM-only "
+            "disabled in group) so operators verify the operator-DM-only "
             "policy for the live progress mirror.",
         )
 

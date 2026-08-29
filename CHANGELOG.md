@@ -9,6 +9,22 @@ in lockstep (enforced by `plugin/tests/version-sync.test.ts`), and the MCP
 server identity reads `package.json` at runtime. Release process:
 `docs/RELEASING.md`.
 
+## [Unreleased]
+
+### Security
+- Removed built-in Telegram identity defaults. Both user and chat allowlists
+  are required; the optional bot-id pin is supplied by each deployment.
+- Removed deployment-specific paths, session names and archived operational
+  artifacts from the public tree. Permission policy and tmux targets now come
+  from explicit config/environment or fail closed.
+
+### Changed
+- Added the standalone Codex App Server backend (`bun run start:codex`) next to
+  the legacy Claude Channel runtime, backed by the shared durable SQLite queue.
+- Renamed the public context-window override to `DASHI_CONTEXT_WINDOW`; pane
+  and task-reconciler overrides use `TELEGRAM_TMUX_PANE_TARGET` and
+  `TELEGRAM_TASK_RECONCILER`.
+
 Versions before 1.0.0 were not tracked — the project shipped ~60 merged PRs
 between 2026-05-14 and 2026-06-14 without a version discipline. 1.0.0
 retroactively marks the state of `main` on 2026-06-14.
@@ -54,7 +70,7 @@ retroactively marks the state of `main` on 2026-06-14.
 ### Changed
 - **`plugin/.mcp.json` ships only the `dashi-channel` server.** The four
   `dashi-gbrain-*` HTTP servers pointed at the author's private shared-memory
-  host (`mcp.orgrimmar.xyz`), which issues no public tokens — fresh installs
+  host (`mcp.example.invalid`), which issues no public tokens — fresh installs
   saw a permanent auth warning and agents wasted time probing an unreachable
   service. Shared-memory MCP entries now live in
   `examples/mcp.gbrain.example.json` as an opt-in template: self-host your own
@@ -84,7 +100,7 @@ retroactively marks the state of `main` on 2026-06-14.
   session model is read from the transcript so no manual override is needed.
   An explicit operator override is still available and always wins over the
   per-model table; precedence is config `context_window_tokens` > env
-  `JARVIS_CONTEXT_WINDOW` > per-model table.
+  `DASHI_CONTEXT_WINDOW` > per-model table.
 - **`webhook/server.ts` split into route modules** (PR #108): the webhook
   server is refactored into focused route modules — a move-only refactor with
   no behavior change.
@@ -142,9 +158,8 @@ retroactively marks the state of `main` on 2026-06-14.
 
 ## [1.0.0] — 2026-06-14
 
-Retroactive baseline — first stable state, in production for the whole agent
-fleet (silvana, kaelthas, garrosh, arthas). Highlights accumulated since
-2026-05-14:
+Retroactive baseline for the first stable public feature set. Highlights
+accumulated since 2026-05-14:
 
 - Telegram DM bridge: inbound injection into a tmux-hosted Claude Code
   session, `reply`/`edit_message`/`react`/`download_attachment` MCP tools.

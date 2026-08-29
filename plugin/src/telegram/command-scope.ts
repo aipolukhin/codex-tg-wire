@@ -2,7 +2,7 @@
 //
 // Telegram command scopes have a precedence: chat > all_private_chats > default.
 // If we register commands under the DEFAULT scope, EVERY chat the bot is in sees
-// them in the «/» autocomplete. The warchief's requirement is that the command
+// them in the «/» autocomplete. The operator's requirement is that the command
 // menu is visible ONLY to the owner. So we:
 //   1. CLEAR the broader scopes (default + all_private_chats) that a previous
 //      build may have populated — otherwise their stale entries keep showing.

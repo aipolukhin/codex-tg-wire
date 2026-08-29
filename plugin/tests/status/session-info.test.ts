@@ -11,10 +11,10 @@ describe('SessionInfoStore', () => {
 
   test('model from SessionStart survives a later event that omits it', () => {
     const s = new SessionInfoStore()
-    s.record('164795011', { transcriptPath: '/t/a.jsonl', sessionId: 'sid-1', model: 'opus' })
+    s.record('123456789', { transcriptPath: '/t/a.jsonl', sessionId: 'sid-1', model: 'opus' })
     // A later PreToolUse hook carries transcript + session but NO model.
-    s.record('164795011', { transcriptPath: '/t/a.jsonl', sessionId: 'sid-1' })
-    expect(s.get('164795011')).toEqual({
+    s.record('123456789', { transcriptPath: '/t/a.jsonl', sessionId: 'sid-1' })
+    expect(s.get('123456789')).toEqual({
       transcriptPath: '/t/a.jsonl',
       sessionId: 'sid-1',
       model: 'opus',
@@ -40,7 +40,7 @@ describe('SessionInfoStore', () => {
     s.record('-1009999', { transcriptPath: '/t/group.jsonl', sessionId: 'g', model: 'sonnet' })
     // …but the owner DM never recorded → its keyed get must be empty, not the
     // group's transcript.
-    expect(s.get('164795011')).toEqual({})
+    expect(s.get('123456789')).toEqual({})
   })
 
   test('empty fields do not overwrite previous values', () => {

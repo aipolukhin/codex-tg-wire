@@ -1,22 +1,22 @@
-// InboundWatcher — auto-reply «Тралл занят» when the warchief sends plain
+// InboundWatcher — configurable busy auto-reply when the operator sends plain
 // text while a Claude session is mid-tool. Sits between OOB resolution and
 // the gate/notify call in `handleInboundText` — OOB always takes priority,
 // and the watcher NEVER replaces the channel notification (auto-reply AND
 // gate-and-notify both fire on a busy chat).
 //
-// Behaviour contract (plan §2.2, warchief defaults 2026-05-20):
+// Behaviour contract (plan §2.2, operator defaults 2026-05-20):
 //   * Disabled (`config.watcher.enabled === false`) → no-op, reason='disabled'.
 //   * Not busy (per ProgressReporter.isBusy) → no-op, reason='not-busy'.
 //   * Debounced — within `config.watcher.debounce_ms` of the last successful
 //     auto-reply for THIS chat → no-op, reason='debounced'.
 //   * Send fails — caught, reason='send-failed', lastReplyMs NOT updated so
 //     the next message can retry.
-//   * Otherwise — `sendMessage` quote-replies the warchief's message via
+//   * Otherwise — `sendMessage` quote-replies the operator's message via
 //     `reply_to_message_id`, lastReplyMs updates, return `{ replied: true }`.
 //
 // Tone constraints (rules.md):
-//   * No emoji in production paths. The warchief explicitly asked for «🔧»
-//     prefix on auto-reply (visual cue that Тралл is mid-tool — single
+//   * No emoji in production paths. The «🔧» prefix is a compact visual cue
+//     that the configured agent is mid-tool — single
 //     character, anchored, NOT a decorative emoji string).
 //   * HTML output through `escapeHtml` for the tool name; the safe-wrapper
 //     also validates HTML before send.
@@ -110,7 +110,7 @@ export class InboundWatcher {
       this.lastReplyMs.set(input.chatId, now)
 
       const toolName = this.progressReporter.getActiveToolName(input.chatId)
-      const text = composeAutoReply(toolName)
+      const text = composeAutoReply(toolName, this.config.watcher.agent_label)
 
       try {
         await this.telegramApi.sendMessage(input.chatId, text, {
@@ -161,7 +161,10 @@ export class InboundWatcher {
  * Compose the auto-reply body. Exposed for tests so the HTML shape is
  * pinned without invoking the full class.
  */
-export function composeAutoReply(toolName: string | undefined): string {
+export function composeAutoReply(
+  toolName: string | undefined,
+  agentLabel = 'Агент',
+): string {
   const tool = toolName ?? '…'
-  return `🔧 Тралл занят, активный инструмент: <code>${escapeHtml(tool)}</code>. Жди или /stop.`
+  return `🔧 ${escapeHtml(agentLabel)} занят, активный инструмент: <code>${escapeHtml(tool)}</code>. Жди или /stop.`
 }

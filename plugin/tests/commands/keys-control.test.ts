@@ -45,7 +45,7 @@ const DIALOG_WITH_INTERRUPT = [
   '│ ❯ 1. Yes                       │',
 ].join('\n')
 
-const UNKNOWN = 'openclaw@mac ~ % raw shell prompt, no TUI markers'
+const UNKNOWN = 'service-user@mac ~ % raw shell prompt, no TUI markers'
 
 // After /clear (v2.1.200): a fresh `❯ /clear` echo, the transcript collapses to
 // the welcome banner, and the idle footer returns. NOTE: there is NO

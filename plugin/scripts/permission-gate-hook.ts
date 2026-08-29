@@ -27,8 +27,9 @@
 //   TELEGRAM_WEBHOOK_URL    base, e.g. http://127.0.0.1:8093  (we append the path)
 //   TELEGRAM_WEBHOOK_TOKEN  bearer token configured on the plugin
 //   TELEGRAM_WEBHOOK_PORT   loopback port allowlist hint (default 8093)
-//   TELEGRAM_PERMISSION_POLICY_PATH  policy.yaml path (default: workspace/chats/permission-policy.yaml)
-//   CLAUDE_WORKSPACE_DIR    workspace root (for the default policy path)
+//   TELEGRAM_PERMISSION_POLICY_PATH  explicit policy.yaml path
+//   CLAUDE_WORKSPACE_DIR    workspace root (otherwise uses workspace/chats/permission-policy.yaml)
+//   TELEGRAM_WORKSPACE_ROOT alternative workspace root used by the channel config
 //   CHAT_ID                 scope id for per-scope policy (default "main")
 //   PERMISSION_CONFIRM_TIMEOUT_MS  owner-tap wait, default 120000
 
@@ -71,16 +72,21 @@ export function renderDeny(reason: string): string {
 
 // ── policy loading ──────────────────────────────────────────────────────
 
-export function resolvePolicyPath(env: Readonly<Record<string, string | undefined>>): string {
+export function resolvePolicyPath(env: Readonly<Record<string, string | undefined>>): string | undefined {
   const explicit = env.TELEGRAM_PERMISSION_POLICY_PATH
   if (explicit && explicit.length > 0) return explicit
-  const ws = env.CLAUDE_WORKSPACE_DIR && env.CLAUDE_WORKSPACE_DIR.length > 0
-    ? env.CLAUDE_WORKSPACE_DIR
-    : join(env.HOME ?? '', '.claude-lab/thrall/.claude')
+  const ws = env.CLAUDE_WORKSPACE_DIR?.trim() || env.TELEGRAM_WORKSPACE_ROOT?.trim()
+  if (!ws) return undefined
   return join(ws, 'chats', 'permission-policy.yaml')
 }
 
-export function loadPolicy(path: string): { policy: PermissionPolicy; warning?: string } {
+export function loadPolicy(path: string | undefined): { policy: PermissionPolicy; warning?: string } {
+  if (!path) {
+    return {
+      policy: FALLBACK_POLICY,
+      warning: 'permission policy path not configured; set TELEGRAM_PERMISSION_POLICY_PATH or CLAUDE_WORKSPACE_DIR; confirm-everything fallback',
+    }
+  }
   let raw: string
   try {
     raw = readFileSync(path, 'utf8')

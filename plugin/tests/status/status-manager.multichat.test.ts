@@ -2,8 +2,8 @@
 // 2026-05-27, TASK-2 / CRITICAL #1 + HIGH #9).
 //
 // Pre-fix the manager was constructed with a single boolean
-// `streamingEnabled`, computed from the warchief's chat id. If the
-// warchief DM had `streaming: 'progress'`, every chat — including a
+// `streamingEnabled`, computed from the operator's chat id. If the
+// operator DM had `streaming: 'progress'`, every chat — including a
 // public group with `streaming: 'off'` or a chat absent from policy
 // entirely — implicitly inherited streaming. The new design passes a
 // `policy` reference and gates per-chat with `shouldStreamForChat`,
@@ -11,7 +11,7 @@
 // own `streaming` flag.
 //
 // Surface under test:
-//   * start(chatId, …) for warchief vs. public group
+//   * start(chatId, …) for operator vs. public group
 //   * recordActivityByChatId(chatId, …) including the SessionStart
 //     lazy-open path that previously bypassed all gates because the
 //     entry did not yet exist
@@ -37,7 +37,7 @@ const silentLog = createLogger('test', {
   stream: { write: () => true } as unknown as NodeJS.WritableStream,
 })
 
-const WARCHIEF = '164795011'
+const OWNER_CHAT_ID = '123456789'
 const PUBLIC_GROUP = '-1003784643974'
 const UNLISTED = '999'
 
@@ -70,10 +70,10 @@ function makePolicy(chats: Record<string, ChatPolicy>): MultichatPolicy {
 
 function makeConfig(): AppConfig {
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: false,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011, -1003784643974],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789, -1003784643974],
     status: {
       enabled: true,
       interval_ms: 700,
@@ -84,7 +84,7 @@ function makeConfig(): AppConfig {
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -107,6 +107,7 @@ function makeConfig(): AppConfig {
       collapse_completed_after: 5,
     },
     watcher: {
+      agent_label: 'Агент',
       enabled: true,
       debounce_ms: 10_000,
       busy_threshold_ms: 30_000,
@@ -219,21 +220,21 @@ function makeManager(opts: {
 // ─────────────────────────────────────────────────────────────────────
 
 describe('StatusManager multichat policy isolation', () => {
-  test('warchief chat with streaming=progress sends bubble; public group with streaming=off does not', async () => {
+  test('operator chat with streaming=progress sends bubble; public group with streaming=off does not', async () => {
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
       [PUBLIC_GROUP]: makeChatPolicy({ streaming: 'off', mode: 'public' }),
     })
     const { mgr, api } = makeManager({ policy })
 
-    const wHandle = await mgr.start(WARCHIEF, undefined)
+    const wHandle = await mgr.start(OWNER_CHAT_ID, undefined)
     const pHandle = await mgr.start(PUBLIC_GROUP, undefined)
 
-    // Warchief: real message id, entry tracked, network send fired.
+    // Operator: real message id, entry tracked, network send fired.
     expect(wHandle.messageId).toBe(100)
-    expect(mgr.isActive(WARCHIEF)).toBe(true)
+    expect(mgr.isActive(OWNER_CHAT_ID)).toBe(true)
     const wSends = api.calls.filter(
-      (c) => c.kind === 'send' && c.chatId === WARCHIEF,
+      (c) => c.kind === 'send' && c.chatId === OWNER_CHAT_ID,
     )
     expect(wSends.length).toBe(1)
 
@@ -250,7 +251,7 @@ describe('StatusManager multichat policy isolation', () => {
     // streaming from the legacy fail-open default. Now it must be a
     // total no-op.
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
     })
     const { mgr, api } = makeManager({ policy })
 
@@ -262,7 +263,7 @@ describe('StatusManager multichat policy isolation', () => {
 
   test('recordActivityByChatId on public group with streaming=off is a no-op', async () => {
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
       [PUBLIC_GROUP]: makeChatPolicy({ streaming: 'off', mode: 'public' }),
     })
     const { mgr, api } = makeManager({ policy })
@@ -285,7 +286,7 @@ describe('StatusManager multichat policy isolation', () => {
 
   test('recordActivityByChatId on chat absent from policy is fail-closed (no lazy-open)', async () => {
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
     })
     const { mgr, api } = makeManager({ policy })
 
@@ -298,23 +299,23 @@ describe('StatusManager multichat policy isolation', () => {
     expect(mgr.isActive(UNLISTED)).toBe(false)
   })
 
-  test('warchief streaming continues to work alongside denied public group', async () => {
+  test('operator streaming continues to work alongside denied public group', async () => {
     // Smoke test that the gate does not break the happy path: a
-    // shared manager handling both chats keeps emitting warchief
+    // shared manager handling both chats keeps emitting operator
     // edits while staying silent for the public group.
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
       [PUBLIC_GROUP]: makeChatPolicy({ streaming: 'off', mode: 'public' }),
     })
     const { mgr, api } = makeManager({ policy })
 
-    await mgr.start(WARCHIEF, undefined)
+    await mgr.start(OWNER_CHAT_ID, undefined)
     await mgr.start(PUBLIC_GROUP, undefined)
-    await mgr.updateByChatId(WARCHIEF, { kind: 'thinking' })
+    await mgr.updateByChatId(OWNER_CHAT_ID, { kind: 'thinking' })
     await mgr.updateByChatId(PUBLIC_GROUP, { kind: 'thinking' })
 
     const wEdits = api.calls.filter(
-      (c) => c.kind === 'edit' && c.chatId === WARCHIEF,
+      (c) => c.kind === 'edit' && c.chatId === OWNER_CHAT_ID,
     )
     const pEdits = api.calls.filter(
       (c) => c.kind === 'edit' && c.chatId === PUBLIC_GROUP,
@@ -325,12 +326,12 @@ describe('StatusManager multichat policy isolation', () => {
 
   test('activeChatIds() only includes chats that were actually allowed to open', async () => {
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
       [PUBLIC_GROUP]: makeChatPolicy({ streaming: 'off', mode: 'public' }),
     })
     const { mgr } = makeManager({ policy })
 
-    await mgr.start(WARCHIEF, undefined)
+    await mgr.start(OWNER_CHAT_ID, undefined)
     await mgr.start(PUBLIC_GROUP, undefined)
     await mgr.start(UNLISTED, undefined)
 
@@ -338,7 +339,7 @@ describe('StatusManager multichat policy isolation', () => {
     // on each — denied chats must not appear so the sweep doesn't
     // try to surface an `Остановлено: shutdown` bubble in a chat the
     // bot was told not to write to.
-    expect(mgr.activeChatIds()).toEqual([WARCHIEF])
+    expect(mgr.activeChatIds()).toEqual([OWNER_CHAT_ID])
   })
 
   test('complete() and cancel() on denied chat are silent no-ops', async () => {
@@ -347,7 +348,7 @@ describe('StatusManager multichat policy isolation', () => {
     // start), entries.get returns undefined and the methods are
     // idempotent no-ops — verify nothing slips into the wire.
     const policy = makePolicy({
-      [WARCHIEF]: makeChatPolicy({ streaming: 'progress' }),
+      [OWNER_CHAT_ID]: makeChatPolicy({ streaming: 'progress' }),
       [PUBLIC_GROUP]: makeChatPolicy({ streaming: 'off', mode: 'public' }),
     })
     const { mgr, api } = makeManager({ policy })
@@ -368,9 +369,9 @@ describe('StatusManager multichat policy isolation', () => {
 describe('StatusManager legacy null-policy mode', () => {
   test('null policy: start(any_chat) sends bubble (legacy behaviour preserved)', async () => {
     const { mgr, api } = makeManager({ policy: null })
-    const handle = await mgr.start(WARCHIEF, undefined)
+    const handle = await mgr.start(OWNER_CHAT_ID, undefined)
     expect(handle.messageId).toBe(100)
-    expect(mgr.isActive(WARCHIEF)).toBe(true)
+    expect(mgr.isActive(OWNER_CHAT_ID)).toBe(true)
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(1)
   })
 
@@ -396,8 +397,8 @@ describe('StatusManager legacy null-policy mode', () => {
       clearTimer: clock.clearTimer,
       // `policy` deliberately omitted.
     })
-    await mgr.start(WARCHIEF, undefined)
-    expect(mgr.isActive(WARCHIEF)).toBe(true)
+    await mgr.start(OWNER_CHAT_ID, undefined)
+    expect(mgr.isActive(OWNER_CHAT_ID)).toBe(true)
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(1)
   })
 })

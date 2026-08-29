@@ -109,15 +109,15 @@ function mkConfig(overrides: { allowedUserIds?: number[]; maxPreview?: number; t
   // them, and the test would otherwise drift every time another module
   // adds a config block.
   return {
-    bot_id: 8507713167,
+    bot_id: 987654321,
     dm_only: true,
-    allowed_user_ids: [164795011],
-    allowed_chat_ids: [164795011],
+    allowed_user_ids: [123456789],
+    allowed_chat_ids: [123456789],
     status: { enabled: false, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
-    permission_relay: { enabled: true, allowed_user_ids: overrides.allowedUserIds ?? [164795011], bash_only_proof: true },
+    permission_relay: { enabled: true, allowed_user_ids: overrides.allowedUserIds ?? [123456789], bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true, new: true },
     memory: {
       enabled: false,
@@ -129,7 +129,7 @@ function mkConfig(overrides: { allowedUserIds?: number[]; maxPreview?: number; t
     },
     progress: { enabled: false, edit_throttle_ms: 3000, recent_buffer: 10, session_ttl_ms: 600000 },
     task_mirror: { enabled: false, edit_throttle_ms: 3000, session_ttl_ms: 600000, collapse_completed_after: 5 },
-    watcher: { enabled: false, debounce_ms: 10000, busy_threshold_ms: 30000 },
+    watcher: { agent_label: 'Агент', enabled: false, debounce_ms: 10000, busy_threshold_ms: 30000 },
     ask_user_question: {
       enabled: true,
       timeout_ms: overrides.timeoutMs ?? 300_000,
@@ -206,7 +206,7 @@ describe('render single-select question', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_1',
       sessionId: 'sess_a',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Pick a stack',
         options: [
@@ -223,7 +223,7 @@ describe('render single-select question', () => {
 
     expect(send.sendCalls.length).toBe(1)
     const { chatId, text, opts } = send.sendCalls[0]!
-    expect(chatId).toBe('164795011')
+    expect(chatId).toBe('123456789')
     expect(opts.parse_mode).toBe('HTML')
     // header + question both rendered
     expect(text).toContain('<b>Вопрос 1/1</b>')
@@ -264,7 +264,7 @@ describe('render multi-select question', () => {
     relay.submit({
       toolUseId: 'toolu_2',
       sessionId: 'sess_b',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Pick frameworks',
         multiSelect: true,
@@ -297,7 +297,7 @@ describe('render multi-select question', () => {
     relay.submit({
       toolUseId: 'toolu_3',
       sessionId: 'sess_c',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         multiSelect: true,
@@ -317,7 +317,7 @@ describe('render multi-select question', () => {
 // Callback handling
 // ─────────────────────────────────────────────────────────────────────
 
-function mkCtx(data: string, fromId: number, chatId = '164795011'): {
+function mkCtx(data: string, fromId: number, chatId = '123456789'): {
   ctx: AskCallbackContext
   answers: { text?: string }[]
 } {
@@ -339,7 +339,7 @@ describe('handleAskCallback — choose', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_choose',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         options: [{ label: 'A' }, { label: 'B' }],
@@ -349,7 +349,7 @@ describe('handleAskCallback — choose', () => {
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0 // reset
 
-    const { ctx, answers } = mkCtx(`ask:choose:${reqId}:0:1`, 164795011)
+    const { ctx, answers } = mkCtx(`ask:choose:${reqId}:0:1`, 123456789)
     await ui.handleAskCallback(ctx)
 
     expect(answers.length).toBeGreaterThanOrEqual(1)
@@ -375,7 +375,7 @@ describe('handleAskCallback — choose', () => {
     relay.submit({
       toolUseId: 'toolu_multi',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [
         { question: 'Q1', options: [{ label: 'X' }, { label: 'Y' }] },
         { question: 'Q2', options: [{ label: 'P' }, { label: 'Q' }] },
@@ -386,7 +386,7 @@ describe('handleAskCallback — choose', () => {
     expect(send.sendCalls.length).toBe(1)
     send.sendCalls.length = 0
 
-    const { ctx } = mkCtx(`ask:choose:${reqId}:0:0`, 164795011)
+    const { ctx } = mkCtx(`ask:choose:${reqId}:0:0`, 123456789)
     await ui.handleAskCallback(ctx)
 
     // Old keyboard cleared via edit, next question sent fresh.
@@ -404,7 +404,7 @@ describe('handleAskCallback — toggle', () => {
     relay.submit({
       toolUseId: 'toolu_t',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         multiSelect: true,
@@ -415,7 +415,7 @@ describe('handleAskCallback — toggle', () => {
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0
 
-    const { ctx } = mkCtx(`ask:toggle:${reqId}:0:1`, 164795011)
+    const { ctx } = mkCtx(`ask:toggle:${reqId}:0:1`, 123456789)
     await ui.handleAskCallback(ctx)
 
     expect(relay.getPending(reqId)?.multiSelectInFlight).toEqual(['B'])
@@ -435,19 +435,19 @@ describe('handleAskCallback — other', () => {
     relay.submit({
       toolUseId: 'toolu_o',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0
 
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
 
     expect(send.sendCalls.length).toBe(1)
     expect(send.sendCalls[0]?.text).toContain('Введи ответ текстом')
-    expect(send.sendCalls[0]?.chatId).toBe('164795011')
+    expect(send.sendCalls[0]?.chatId).toBe('123456789')
     expect(ui.awaitingOtherCount()).toBe(1)
   })
 
@@ -456,12 +456,12 @@ describe('handleAskCallback — other', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_o2',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = handle.requestId!
     await ui.startQuestion(reqId)
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
     // Capture the prompt message_id that the «Other» send produced. After
     // FIX-T1 F4 (2026-05-27) tryHandleOtherText requires the inbound
@@ -474,8 +474,8 @@ describe('handleAskCallback — other', () => {
     send.sendCalls.length = 0
 
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
-      fromUserId: 164795011,
+      chatId: '123456789',
+      fromUserId: 123456789,
       text: 'my custom answer',
       replyToMessageId: promptMessageId,
     })
@@ -489,8 +489,8 @@ describe('handleAskCallback — other', () => {
   test('tryHandleOtherText returns false when no awaiting state', async () => {
     const { ui } = await mkUi()
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
-      fromUserId: 164795011,
+      chatId: '123456789',
+      fromUserId: 123456789,
       text: 'hello',
     })
     expect(consumed).toBe(false)
@@ -501,25 +501,25 @@ describe('handleAskCallback — other', () => {
     relay.submit({
       toolUseId: 'toolu_o3',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
 
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
+      chatId: '123456789',
       fromUserId: 99,
       text: 'evil interloper',
       // Even with a correctly-anchored replyToMessageId, the auth check
       // (FIX-T1 F4 runs the reply gate first; non-approver gate second)
-      // still rejects: only the warchief may answer.
+      // still rejects: only the operator may answer.
       replyToMessageId: 1002,
     })
     expect(consumed).toBe(false)
-    expect(ui.awaitingOtherCount()).toBe(1) // still waiting for warchief
+    expect(ui.awaitingOtherCount()).toBe(1) // still waiting for operator
   })
 })
 
@@ -534,14 +534,14 @@ describe('FIX-T1 F4 — Other prompt force_reply contract', () => {
     relay.submit({
       toolUseId: 'toolu_f4_a',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0
 
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
 
     expect(send.sendCalls.length).toBe(1)
@@ -561,23 +561,23 @@ describe('FIX-T1 F4 — Other prompt force_reply contract', () => {
     relay.submit({
       toolUseId: 'toolu_f4_b',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
     send.sendCalls.length = 0
 
     // Freeform text with NO reply_to_message_id → must NOT consume.
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
-      fromUserId: 164795011,
+      chatId: '123456789',
+      fromUserId: 123456789,
       text: 'random message typed at top level',
     })
     expect(consumed).toBe(false)
-    // Slot remains open — warchief can still answer by replying to the prompt.
+    // Slot remains open — operator can still answer by replying to the prompt.
     expect(ui.awaitingOtherCount()).toBe(1)
   })
 
@@ -586,19 +586,19 @@ describe('FIX-T1 F4 — Other prompt force_reply contract', () => {
     relay.submit({
       toolUseId: 'toolu_f4_c',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
     send.sendCalls.length = 0
 
     // Reply to some OTHER message (not the Other prompt) — must NOT consume.
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
-      fromUserId: 164795011,
+      chatId: '123456789',
+      fromUserId: 123456789,
       text: 'reply to wrong anchor',
       replyToMessageId: 99999,
     })
@@ -611,19 +611,19 @@ describe('FIX-T1 F4 — Other prompt force_reply contract', () => {
     const submitted = relay.submit({
       toolUseId: 'toolu_f4_d',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
     // startQuestion used msg_id 1001, Other prompt will be 1002.
-    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 164795011)
+    const { ctx } = mkCtx(`ask:other:${reqId}:0`, 123456789)
     await ui.handleAskCallback(ctx)
     send.sendCalls.length = 0
 
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
-      fromUserId: 164795011,
+      chatId: '123456789',
+      fromUserId: 123456789,
       text: 'explicit reply',
       replyToMessageId: 1002,
     })
@@ -637,7 +637,7 @@ describe('FIX-T1 F4 — Other prompt force_reply contract', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────
-// Card-close UX (2026-07-02, warchief feedback) — on answer the card is
+// Card-close UX (2026-07-02, operator feedback) — on answer the card is
 // closed (keyboard stripped + chosen answer appended); after the last
 // question ONE completion message is sent; on timeout the open card is
 // closed with «время истекло». Edits are best-effort.
@@ -649,7 +649,7 @@ describe('card-close on answer + completion message', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_ms_done',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Pick frameworks',
         multiSelect: true,
@@ -660,12 +660,12 @@ describe('card-close on answer + completion message', () => {
     await ui.startQuestion(reqId)
 
     // Toggle two options on, then commit with «Готово».
-    await ui.handleAskCallback(mkCtx(`ask:toggle:${reqId}:0:0`, 164795011).ctx)
-    await ui.handleAskCallback(mkCtx(`ask:toggle:${reqId}:0:2`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:toggle:${reqId}:0:0`, 123456789).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:toggle:${reqId}:0:2`, 123456789).ctx)
     send.editCalls.length = 0
     send.sendCalls.length = 0
 
-    await ui.handleAskCallback(mkCtx(`ask:done:${reqId}:0`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:done:${reqId}:0`, 123456789).ctx)
 
     // Card closed: keyboard stripped, both labels echoed on one line.
     expect(send.editCalls.length).toBe(1)
@@ -686,20 +686,20 @@ describe('card-close on answer + completion message', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_other_trunc',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = handle.requestId!
     await ui.startQuestion(reqId)
-    await ui.handleAskCallback(mkCtx(`ask:other:${reqId}:0`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:other:${reqId}:0`, 123456789).ctx)
     // startQuestion used 1001; Other prompt is 1002.
     send.editCalls.length = 0
     send.sendCalls.length = 0
 
     const longText = 'z'.repeat(250)
     const consumed = await ui.tryHandleOtherText({
-      chatId: '164795011',
-      fromUserId: 164795011,
+      chatId: '123456789',
+      fromUserId: 123456789,
       text: longText,
       replyToMessageId: 1002,
     })
@@ -726,18 +726,18 @@ describe('card-close on answer + completion message', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_once',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }, { label: 'B' }] }],
     })
     const reqId = handle.requestId!
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0
 
-    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:0:0`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:0:0`, 123456789).ctx)
     expect(send.sendCalls.length).toBe(1)
 
     // Telegram replays the same tap after the request already settled.
-    const { ctx, answers } = mkCtx(`ask:choose:${reqId}:0:0`, 164795011)
+    const { ctx, answers } = mkCtx(`ask:choose:${reqId}:0:0`, 123456789)
     await ui.handleAskCallback(ctx)
     expect(answers[0]?.text).toBe('Запрос уже закрыт')
     // No second completion message.
@@ -751,7 +751,7 @@ describe('card-close on answer + completion message', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_two',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [
         { question: 'Q1', options: [{ label: 'X' }, { label: 'Y' }] },
         { question: 'Q2', options: [{ label: 'P' }, { label: 'Q' }] },
@@ -763,7 +763,7 @@ describe('card-close on answer + completion message', () => {
     send.sendCalls.length = 0
 
     // Answer Q1 → Q1 card closed with «X», Q2 rendered fresh (msg 1002).
-    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:0:0`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:0:0`, 123456789).ctx)
     expect(send.editCalls.length).toBe(1)
     expect(send.editCalls[0]?.messageId).toBe(1001)
     expect(send.editCalls[0]?.text).toContain('Q1')
@@ -775,7 +775,7 @@ describe('card-close on answer + completion message', () => {
     send.sendCalls.length = 0
 
     // Answer Q2 → Q2 card closed with «Q», completion sent.
-    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:1:1`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:1:1`, 123456789).ctx)
     expect(send.editCalls.length).toBe(1)
     expect(send.editCalls[0]?.messageId).toBe(1002)
     expect(send.editCalls[0]?.text).toContain('Q2')
@@ -817,7 +817,7 @@ describe('Codex regression — timeout during a non-final answer', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_race_ack',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       timeoutMs: 30,
       questions: [
         { question: 'Q1', options: [{ label: 'X' }, { label: 'Y' }] },
@@ -832,8 +832,8 @@ describe('Codex regression — timeout during a non-final answer', () => {
     // exactly the pre-fix race window.
     const ctx: AskCallbackContext = {
       callbackQuery: { data: `ask:choose:${reqId}:0:0` },
-      from: { id: 164795011 },
-      chatId: '164795011',
+      from: { id: 123456789 },
+      chatId: '123456789',
       async answerCallbackQuery() {
         await new Promise((r) => setTimeout(r, 90))
       },
@@ -883,7 +883,7 @@ describe('Codex regression — timeout during a non-final answer', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_race_edit',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       timeoutMs: 30,
       questions: [
         { question: 'Q1', options: [{ label: 'X' }, { label: 'Y' }] },
@@ -894,13 +894,13 @@ describe('Codex regression — timeout during a non-final answer', () => {
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0
 
-    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:0:0`, 164795011).ctx)
+    await ui.handleAskCallback(mkCtx(`ask:choose:${reqId}:0:0`, 123456789).ctx)
 
     const result = await handle.result
     expect(result.status).toBe('timeout')
     await new Promise((r) => setTimeout(r, 10))
 
-    // Q1's card WAS closed with the chosen answer (the warchief did answer
+    // Q1's card WAS closed with the chosen answer (the operator did answer
     // it) — but Q2 was never rendered and no completion was sent.
     expect(send.editCalls.some((c) => c.text.includes('✅ Ответ:'))).toBe(true)
     expect(send.sendCalls.length).toBe(0)
@@ -926,7 +926,7 @@ describe('handleSettle — timeout closes the open card (relay onSettle seam)', 
     const handle = relay.submit({
       toolUseId: 'toolu_timeout',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       timeoutMs: 20,
       questions: [{ question: 'Pick a stack', options: [{ label: 'A' }, { label: 'B' }] }],
     })
@@ -952,7 +952,7 @@ describe('handleSettle — timeout closes the open card (relay onSettle seam)', 
       requestId: 'aaaaa',
       toolUseId: 'toolu_x',
       status: 'answered',
-      chatId: '164795011',
+      chatId: '123456789',
       telegramMessageId: 1001,
       currentIndex: 0,
       totalQuestions: 1,
@@ -970,7 +970,7 @@ describe('handleSettle — timeout closes the open card (relay onSettle seam)', 
         requestId: 'bbbbb',
         toolUseId: 'toolu_y',
         status: 'timeout',
-        chatId: '164795011',
+        chatId: '123456789',
         telegramMessageId: 1001,
         currentIndex: 0,
         totalQuestions: 1,
@@ -994,7 +994,7 @@ describe('handleAskCallback — auth + malformed', () => {
     relay.submit({
       toolUseId: 'toolu_u',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }, { label: 'B' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
@@ -1017,14 +1017,14 @@ describe('handleAskCallback — auth + malformed', () => {
     relay.submit({
       toolUseId: 'toolu_b',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = relay.listPendingIds()[0]!
     await ui.startQuestion(reqId)
     send.sendCalls.length = 0
 
-    const { ctx, answers } = mkCtx('ask:bogus:foo', 164795011)
+    const { ctx, answers } = mkCtx('ask:bogus:foo', 123456789)
     await ui.handleAskCallback(ctx)
 
     expect(answers.length).toBe(1)
@@ -1036,7 +1036,7 @@ describe('handleAskCallback — auth + malformed', () => {
 
   test('stale request id → "Запрос уже закрыт" popup', async () => {
     const { ui } = await mkUi()
-    const { ctx, answers } = mkCtx('ask:choose:aaaaa:0:0', 164795011)
+    const { ctx, answers } = mkCtx('ask:choose:aaaaa:0:0', 123456789)
     await ui.handleAskCallback(ctx)
     expect(answers[0]?.text).toBe('Запрос уже закрыт')
   })
@@ -1052,7 +1052,7 @@ describe('renderQuestionBody — HTML escaping', () => {
     relay.submit({
       toolUseId: 'toolu_esc',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'pick <script>alert(1)</script>',
         options: [
@@ -1075,7 +1075,7 @@ describe('renderQuestionBody — HTML escaping', () => {
     relay.submit({
       toolUseId: 'toolu_p',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       // The local AskQuestionOption type doesn't expose `preview` but the
       // relay accepts arbitrary caller-supplied shape — runtime carries it
       // and the UI probes defensively. Cast through unknown to suppress
@@ -1133,7 +1133,7 @@ describe('renderQuestionBody — FIX-T2 F2 tag-safe truncation', () => {
     relay.submit({
       toolUseId: 'toolu_f2_med',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         options: [{ label: 'A', preview } as unknown as { label: string }],
@@ -1158,7 +1158,7 @@ describe('renderQuestionBody — FIX-T2 F2 tag-safe truncation', () => {
     relay.submit({
       toolUseId: 'toolu_f2_big',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         options: [{ label: 'A', preview: longPreview } as unknown as { label: string }],
@@ -1190,7 +1190,7 @@ describe('renderQuestionBody — FIX-T2 F2 tag-safe truncation', () => {
     relay.submit({
       toolUseId: 'toolu_f2_overflow',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Pick one', options: opts }],
     })
     const reqId = relay.listPendingIds()[0]!
@@ -1211,7 +1211,7 @@ describe('renderQuestionBody — FIX-T2 F2 tag-safe truncation', () => {
     relay.submit({
       toolUseId: 'toolu_f2_lbl',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         options: [{ label: longLabel, description: 'desc' }],
@@ -1236,7 +1236,7 @@ describe('renderQuestionBody — FIX-T2 F2 tag-safe truncation', () => {
     relay.submit({
       toolUseId: 'toolu_f2_amp',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         options: [{ label: 'A', preview: longPreview } as unknown as { label: string }],
@@ -1322,7 +1322,7 @@ function mkScriptedUi(
 
 describe('rerenderCurrent — FIX-T2 F1 classifier integration', () => {
   test('message_gone → re-anchors ONCE, then expires on second hit', async () => {
-    // First edit: simulate "message to edit not found" (warchief deleted
+    // First edit: simulate "message to edit not found" (operator deleted
     // the keyboard). The handler must re-anchor by sending a fresh
     // message — the second send succeeds (no error queued for index 1).
     // Then we force another rerender that ALSO fails with message_gone
@@ -1336,7 +1336,7 @@ describe('rerenderCurrent — FIX-T2 F1 classifier integration', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_gone',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         multiSelect: true,
@@ -1350,14 +1350,14 @@ describe('rerenderCurrent — FIX-T2 F1 classifier integration', () => {
 
     // 1st toggle → rerenderCurrent → edit fails with message_gone →
     // re-anchor via sendMessage(2nd, no error) → new message_id=1002.
-    const { ctx: ctx1 } = mkCtx(`ask:toggle:${reqId}:0:0`, 164795011)
+    const { ctx: ctx1 } = mkCtx(`ask:toggle:${reqId}:0:0`, 123456789)
     await ui.handleAskCallback(ctx1)
     expect(send.sendCalls.length).toBe(2) // re-anchor send fired
     expect(relay.getPending(reqId)?.telegramMessageId).toBe(1002)
     expect(relay.isPending(reqId)).toBe(true) // still pending
 
     // 2nd toggle → rerenderCurrent → message_gone AGAIN → expire.
-    const { ctx: ctx2 } = mkCtx(`ask:toggle:${reqId}:0:1`, 164795011)
+    const { ctx: ctx2 } = mkCtx(`ask:toggle:${reqId}:0:1`, 123456789)
     await ui.handleAskCallback(ctx2)
     expect(relay.isPending(reqId)).toBe(false)
     const verdict = await handle.result
@@ -1376,7 +1376,7 @@ describe('rerenderCurrent — FIX-T2 F1 classifier integration', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_fbd',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{
         question: 'Q',
         multiSelect: true,
@@ -1385,7 +1385,7 @@ describe('rerenderCurrent — FIX-T2 F1 classifier integration', () => {
     })
     const reqId = handle.requestId!
     await ui.startQuestion(reqId)
-    const { ctx } = mkCtx(`ask:toggle:${reqId}:0:0`, 164795011)
+    const { ctx } = mkCtx(`ask:toggle:${reqId}:0:0`, 123456789)
     await ui.handleAskCallback(ctx)
     expect(relay.isPending(reqId)).toBe(false)
     const verdict = await handle.result
@@ -1402,7 +1402,7 @@ describe('startQuestion — FIX-T2 F1 send error classification', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_send_fbd',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = handle.requestId!
@@ -1420,7 +1420,7 @@ describe('startQuestion — FIX-T2 F1 send error classification', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_send_flood',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [{ question: 'Q', options: [{ label: 'A' }] }],
     })
     const reqId = handle.requestId!
@@ -1448,7 +1448,7 @@ describe('clearKeyboard — FIX-T2 F1 classifier integration', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_clr_fbd',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [
         { question: 'Q1', options: [{ label: 'A' }] },
         { question: 'Q2', options: [{ label: 'B' }] },
@@ -1458,7 +1458,7 @@ describe('clearKeyboard — FIX-T2 F1 classifier integration', () => {
     await ui.startQuestion(reqId)
     expect(send.sendCalls.length).toBe(1)
 
-    const { ctx } = mkCtx(`ask:choose:${reqId}:0:0`, 164795011)
+    const { ctx } = mkCtx(`ask:choose:${reqId}:0:0`, 123456789)
     await ui.handleAskCallback(ctx)
     // clearKeyboard failed forbidden → relay expired → no Q2 send fired.
     expect(send.sendCalls.length).toBe(1)
@@ -1481,7 +1481,7 @@ describe('clearKeyboard — FIX-T2 F1 classifier integration', () => {
     const handle = relay.submit({
       toolUseId: 'toolu_clr_gone',
       sessionId: 'sess',
-      chatId: '164795011',
+      chatId: '123456789',
       questions: [
         { question: 'Q1', options: [{ label: 'A' }] },
         { question: 'Q2', options: [{ label: 'B' }] },
@@ -1491,7 +1491,7 @@ describe('clearKeyboard — FIX-T2 F1 classifier integration', () => {
     await ui.startQuestion(reqId)
     expect(send.sendCalls.length).toBe(1)
 
-    const { ctx } = mkCtx(`ask:choose:${reqId}:0:0`, 164795011)
+    const { ctx } = mkCtx(`ask:choose:${reqId}:0:0`, 123456789)
     await ui.handleAskCallback(ctx)
     // Q2 was sent even though clear hit message_gone.
     expect(send.sendCalls.length).toBe(2)

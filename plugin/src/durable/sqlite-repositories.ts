@@ -298,8 +298,9 @@ export class SqliteOutboxRepository implements OutboxRepository {
     const result = this.database.run(
       `UPDATE delivery_jobs
        SET send_started_at_ms = ?, updated_at_ms = ?
-       WHERE id = ? AND state = 'LEASED' AND lease_owner = ? AND send_started_at_ms IS NULL`,
-      [nowMs, nowMs, id, workerId],
+       WHERE id = ? AND state = 'LEASED' AND lease_owner = ?
+         AND lease_expires_at_ms > ? AND send_started_at_ms IS NULL`,
+      [nowMs, nowMs, id, workerId, nowMs],
     )
     if (result.changes !== 1) throw new LeaseConflictError('delivery job', id)
     return this.require(id)

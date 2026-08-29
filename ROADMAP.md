@@ -14,7 +14,8 @@
 - [x] Зафиксировано: `thread/start` без первого turn не переживает restart — rollout ещё не создан.
 - [ ] Проверить restart во время active turn, approval и user-input request.
 - [x] Начат M1: SQLite/WAL migrations, durable inbox/outbox, leases, dedupe, TTL и crash recovery.
-- [ ] Подключить первый durable Telegram → Codex → Telegram slice поверх новых repositories.
+- [x] Добавлены provider-neutral contracts и fake-backed durable text workers с fault tests.
+- [ ] Подключить реальные Codex SessionCoordinator и grammY TelegramGateway к готовому slice.
 
 ## 1. Что именно мы строим
 

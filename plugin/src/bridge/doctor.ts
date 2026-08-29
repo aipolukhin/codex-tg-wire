@@ -312,6 +312,19 @@ export async function runBridgeDoctor(
   } else {
     checks.push(check('sandbox.policy', 'pass', 'danger-full-access is denied by the sandbox allowlist'))
   }
+  checks.push(
+    config.retention.enabled
+      ? check(
+          'retention.policy',
+          'pass',
+          `durable payload retention is enabled (${config.retention.payloadMaxAgeDays} days)`,
+        )
+      : check(
+          'retention.policy',
+          'warn',
+          'durable payload retention is disabled; private Telegram and Codex content will remain in SQLite',
+        ),
+  )
   checks.push(...inspectDatabase(config))
   checks.push(inspectCodex(config, options.runCommand ?? defaultRunCommand))
   checks.push(

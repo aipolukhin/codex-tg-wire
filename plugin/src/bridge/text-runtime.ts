@@ -25,6 +25,7 @@ import {
   SqliteOutboxRepository,
 } from '../durable/sqlite-repositories.js'
 import { SqliteSessionRepository } from '../durable/session-repository.js'
+import { DurableDataRetention } from '../durable/retention.js'
 import {
   DurableTelegramTextGateway,
   type DurableTelegramTextGatewayOptions,
@@ -85,6 +86,13 @@ export interface DurableTextRuntimeOptions {
   }
   albumFlushMs?: number
   voiceTranscriber?: VoiceTranscriber
+  retention?: {
+    enabled: boolean
+    payloadMaxAgeMs: number
+    intervalMs: number
+    attachmentDirectory?: string
+    outboundMediaDirectory?: string
+  }
 }
 
 export interface EnqueueOutboundMediaInput {
@@ -303,6 +311,18 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     workerId: options.outboxWorker?.workerId ?? 'outbox-1',
   })
   const reaper = new DurableLeaseReaper(inbox, outbox)
+  const retention = options.retention?.enabled === true
+    ? new DurableDataRetention(options.database, {
+        payloadMaxAgeMs: options.retention.payloadMaxAgeMs,
+        intervalMs: options.retention.intervalMs,
+        ...(options.retention.attachmentDirectory === undefined
+          ? {}
+          : { attachmentDirectory: options.retention.attachmentDirectory }),
+        ...(options.retention.outboundMediaDirectory === undefined
+          ? {}
+          : { outboundMediaDirectory: options.retention.outboundMediaDirectory }),
+      })
+    : undefined
   const startupRecovery = new StartupTurnRecovery(sessions, inbox, outbox, backend)
 
   return {
@@ -329,7 +349,11 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     },
     processInboundOnce: () => inbound.runOnce(),
     deliverOutboundOnce: () => outbound.runOnce(),
-    recoverExpiredLeases: () => reaper.runOnce(),
+    recoverExpiredLeases: () => {
+      const sweep = reaper.runOnce()
+      retention?.runIfDue()
+      return sweep
+    },
     runUxHeartbeat: () => ux.runHeartbeat(),
     async enqueueOutboundMedia(input) {
       if (outboundMediaStore === undefined) throw new Error('outbound media is not configured')

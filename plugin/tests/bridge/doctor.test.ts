@@ -132,4 +132,18 @@ describe('runBridgeDoctor', () => {
     expect(report.checks[0]?.id).toBe('config')
     expect(commandCalled).toBeFalse()
   })
+
+  test('warns when durable payload retention is explicitly disabled', async () => {
+    const { configPath } = fixture({ retention: { enabled: false } })
+    const report = await runBridgeDoctor({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: configPath,
+        DASHI_TELEGRAM_BOT_TOKEN: 'environment-only-token',
+      },
+      runCommand: compatibleCodex,
+    })
+
+    expect(report.ok).toBeTrue()
+    expect(report.checks.find((item) => item.id === 'retention.policy')?.status).toBe('warn')
+  })
 })

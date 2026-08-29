@@ -120,6 +120,14 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    retention: z
+      .object({
+        enabled: z.boolean().default(true),
+        payloadMaxAgeDays: z.number().int().min(1).max(3_650).default(30),
+        intervalMs: z.number().int().min(60_000).default(6 * 60 * 60_000),
+      })
+      .strict()
+      .default({}),
   })
   .strict()
   .superRefine((config, context) => {

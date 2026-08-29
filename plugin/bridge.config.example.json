@@ -63,5 +63,10 @@
     "startupGraceMs": 60000,
     "staleAfterMs": 120000,
     "maxConsecutiveErrors": 3
+  },
+  "retention": {
+    "enabled": true,
+    "payloadMaxAgeDays": 30,
+    "intervalMs": 21600000
   }
 }

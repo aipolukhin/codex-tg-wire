@@ -495,6 +495,7 @@ function configureConnection(database: Database): void {
   database.run('PRAGMA foreign_keys = ON')
   database.run('PRAGMA busy_timeout = 5000')
   database.run('PRAGMA synchronous = NORMAL')
+  database.run('PRAGMA secure_delete = ON')
   database.run('PRAGMA journal_mode = WAL')
 }
 

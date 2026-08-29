@@ -82,6 +82,11 @@ describe('loadBridgeServiceConfig', () => {
       staleAfterMs: 120_000,
       maxConsecutiveErrors: 3,
     })
+    expect(config.retention).toEqual({
+      enabled: true,
+      payloadMaxAgeDays: 30,
+      intervalMs: 6 * 60 * 60_000,
+    })
   })
 
   test('accepts the legacy token env name but never a token inside JSON', () => {

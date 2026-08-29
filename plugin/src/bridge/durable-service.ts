@@ -228,6 +228,15 @@ export async function bootstrapDurableBridgeService(
             },
           }
         : {}),
+      retention: {
+        enabled: config.retention.enabled,
+        payloadMaxAgeMs: config.retention.payloadMaxAgeDays * 24 * 60 * 60_000,
+        intervalMs: config.retention.intervalMs,
+        attachmentDirectory: config.attachments.directory,
+        ...(config.outboundMedia.enabled
+          ? { outboundMediaDirectory: config.outboundMedia.directory }
+          : {}),
+      },
     })
     const recovery = await runtime.recoverStartup()
     options.logger?.info('durable startup recovery completed', recovery)

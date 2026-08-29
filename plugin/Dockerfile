@@ -5,12 +5,14 @@ FROM ${NODE_IMAGE}
 
 ARG BUN_VERSION=1.4.0
 ARG CODEX_CLI_VERSION=0.149.1
+ARG DASHI_UID=10001
+ARG DASHI_GID=10001
 
 RUN npm install --global --no-audit --no-fund \
       "bun@${BUN_VERSION}" \
       "@openai/codex@${CODEX_CLI_VERSION}" \
-    && groupadd --gid 10001 dashi \
-    && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/dashi --shell /usr/sbin/nologin dashi \
+    && groupadd --gid "${DASHI_GID}" dashi \
+    && useradd --uid "${DASHI_UID}" --gid "${DASHI_GID}" --create-home --home-dir /home/dashi --shell /usr/sbin/nologin dashi \
     && install -d -o dashi -g dashi -m 0700 /var/lib/dashi /var/lib/codex
 
 WORKDIR /app
@@ -27,7 +29,7 @@ ENV HOME=/var/lib/codex \
     DASHI_CODEX_BRIDGE_CONFIG=/etc/dashi-codex-bridge/bridge.config.json \
     NODE_ENV=production
 
-USER 10001:10001
+USER ${DASHI_UID}:${DASHI_GID}
 
 STOPSIGNAL SIGTERM
 

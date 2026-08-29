@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  activateRelease,
   installReleaseArtifact,
   releaseStatus,
   rollbackRelease,
@@ -121,5 +122,8 @@ describe('release manager', () => {
     })
     expect(installed.activated).toBeFalse()
     expect(releaseStatus(prefix)).toEqual({ current: null, previous: null })
+    expect(activateRelease(prefix, installed.releaseDirectory).current?.metadata).toEqual(
+      release.metadata,
+    )
   })
 })

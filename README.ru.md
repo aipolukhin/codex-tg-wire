@@ -1,5 +1,7 @@
 # dashi-plugin-claude-code
 
+> **Гибридный Codex runtime:** для standalone-моста Telegram → Codex App Server есть отдельные инструкции по [установке](plugin/docs/codex-installation.md), [upgrade/rollback](plugin/docs/codex-upgrade.md), [гарантиям безопасности](plugin/docs/codex-security.md) и [совместимости](plugin/docs/codex-compatibility.md). Описанный ниже Claude channel plugin остаётся соседним legacy runtime.
+
 > **Выберите язык:** [**English →**](README.md) · Русский (эта страница)
 
 **Telegram → Claude Code channel plugin.** Превращает обычную, живую Claude Code сессию в Telegram-агента: бот слушает один или несколько чатов, отвечает в той же сессии, и оставляет всю работу внутри обычной Anthropic Max-подписки — без отдельного SDK-биллинга.

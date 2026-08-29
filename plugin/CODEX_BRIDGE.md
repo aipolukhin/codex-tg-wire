@@ -145,3 +145,5 @@ export GROQ_API_KEY='...'
 M5 implementation закрыт: production doctor, project policy, retention/scrub, online backup/offline restore, readiness/systemd watchdog, Telegram rate limits, replay gates, chaos/load harness, lockfile, license audit, CycloneDX и release checksums находятся в коде. Операционный runbook: [docs/codex-production.md](docs/codex-production.md).
 
 Gate M5 остаётся временным: короткий soak и fault suite пройдены, но перед RC нужен полный 72-часовой live canary с настоящими Telegram и Codex App Server. До него статус — hardened alpha, не RC.
+
+M6 packaging использует отдельную версию bridge `1.0.x`, pinned compatibility matrix, systemd/Docker profiles, credential files, safe init и immutable release manager с atomic `current`/`previous`. Инструкции: [installation](docs/codex-installation.md), [upgrade/rollback](docs/codex-upgrade.md), [security model](docs/codex-security.md), [compatibility](docs/codex-compatibility.md).

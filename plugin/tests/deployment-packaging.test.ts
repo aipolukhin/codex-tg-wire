@@ -31,7 +31,10 @@ describe('v1 deployment packaging', () => {
     const ignore = await text('.dockerignore')
     const bridgeEnvironment = await text('deploy/docker/bridge.env.example')
 
-    expect(dockerfile).toContain('USER 10001:10001')
+    expect(dockerfile).toContain('ARG DASHI_UID=10001')
+    expect(dockerfile).toContain('ARG DASHI_GID=10001')
+    expect(dockerfile).toContain('USER ${DASHI_UID}:${DASHI_GID}')
+    expect(compose).toContain('user: "${DASHI_UID:-10001}:${DASHI_GID:-10001}"')
     expect(compose).toContain('read_only: true')
     expect(compose).toContain('no-new-privileges:true')
     expect(compose).toContain('cap_drop:')

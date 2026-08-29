@@ -1,5 +1,7 @@
 # dashi-plugin-claude-code
 
+> **Hybrid Codex runtime:** the standalone Telegram → Codex App Server bridge now has separate [installation](plugin/docs/codex-installation.md), [upgrade/rollback](plugin/docs/codex-upgrade.md), [security guarantees](plugin/docs/codex-security.md) and [compatibility matrix](plugin/docs/codex-compatibility.md). The Claude channel plugin documented below remains available as the legacy sibling runtime.
+
 > **Read in your language:** English (this page) · [**Русская версия →**](README.ru.md)
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)

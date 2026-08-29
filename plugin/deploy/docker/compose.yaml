@@ -9,10 +9,12 @@ services:
       args:
         BUN_VERSION: ${BUN_VERSION:-1.4.0}
         CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-0.149.1}
+        DASHI_UID: ${DASHI_UID:-10001}
+        DASHI_GID: ${DASHI_GID:-10001}
     init: true
     restart: unless-stopped
     read_only: true
-    user: "10001:10001"
+    user: "${DASHI_UID:-10001}:${DASHI_GID:-10001}"
     env_file:
       - ${DASHI_BRIDGE_ENV_FILE:-./bridge.env}
     environment:

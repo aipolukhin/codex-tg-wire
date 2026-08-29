@@ -1,6 +1,6 @@
 # Codex bridge: production hardening и recovery
 
-Этот runbook относится к standalone `bun run start:codex`. Legacy Claude channel runtime использует другой lifecycle и другой health endpoint.
+Этот runbook относится к standalone `bun run start:codex`. Legacy Claude channel runtime использует другой lifecycle и другой health endpoint. Установка: [codex-installation.md](codex-installation.md), upgrade/rollback: [codex-upgrade.md](codex-upgrade.md), security contract: [codex-security.md](codex-security.md).
 
 ## Preflight и секреты
 
@@ -16,7 +16,7 @@ bun run doctor:codex --online
 
 Обычный doctor не обращается в Telegram. `--online` выполняет только `getMe`. Ни один режим не печатает token/Groq key и не создаёт production DB. FAIL даёт exit code `1`, неправильные аргументы — `2`.
 
-Bot token и optional `GROQ_API_KEY` должны жить только в environment file с mode `0600`. JSON strict: credential fields в нём запрещены. `allowedUserIds` и `allowedChatIds` обязательны и deny-by-default.
+Bot token и optional `GROQ_API_KEY` принимаются из environment или private credential file. Production templates используют systemd `LoadCredential` и Docker secrets; environment остаётся compatibility path. JSON strict: credential fields в нём запрещены. `allowedUserIds` и `allowedChatIds` обязательны и deny-by-default.
 
 ## Project policy
 
@@ -53,7 +53,8 @@ Bot token и optional `GROQ_API_KEY` должны жить только в envir
 Type=notify
 NotifyAccess=all
 WorkingDirectory=/opt/dashi/plugin
-EnvironmentFile=/etc/dashi/codex-bridge.env
+LoadCredential=telegram-token:/etc/dashi-codex-bridge/telegram-token
+Environment=DASHI_CODEX_BRIDGE_CONFIG=/etc/dashi-codex-bridge/bridge.config.json
 ExecStart=/usr/bin/env bun run start:codex
 Restart=on-failure
 RestartSec=5s
@@ -61,6 +62,8 @@ WatchdogSec=180s
 ```
 
 `NotifyAccess=all` нужен, потому что bridge вызывает `systemd-notify` как дочерний процесс. При потере readiness bridge прекращает `WATCHDOG=1`, и systemd выполняет restart. До production проверь наличие `systemd-notify` и согласуй `health.staleAfterMs < WatchdogSec`.
+
+При запуске вне systemd можно передать `DASHI_TELEGRAM_BOT_TOKEN_FILE`; внутри unit файл `telegram-token` автоматически находится через `CREDENTIALS_DIRECTORY`. Credential resolver не следует symlink, ограничивает размер и не печатает secret path/value.
 
 ## Backup и restore
 

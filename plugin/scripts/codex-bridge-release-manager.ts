@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import {
+  activateRelease,
   installReleaseArtifact,
   releaseStatus,
   rollbackRelease,
@@ -12,6 +13,7 @@ function usage(): never {
     'Usage:',
     '  bun run manage:codex -- install --artifact <tar.gz> --checksums <sha256> --prefix <dir> [--owner <user>] [--no-activate]',
     '  bun run manage:codex -- rollback --prefix <dir>',
+    '  bun run manage:codex -- activate --prefix <dir> --release <release-dir>',
     '  bun run manage:codex -- status --prefix <dir>',
     '',
   ].join('\n'))
@@ -68,8 +70,16 @@ try {
       activate: !values.has('--no-activate'),
     })
     process.stdout.write(
-      `installed: ${installed.metadata.bridgeVersion} ${installed.metadata.commit.slice(0, 12)}${installed.activated ? ' (active)' : ''}\n`,
+      [
+        `installed: ${installed.metadata.bridgeVersion} ${installed.metadata.commit.slice(0, 12)}${installed.activated ? ' (active)' : ''}`,
+        `release: ${installed.releaseDirectory}`,
+        '',
+      ].join('\n'),
     )
+  } else if (command === 'activate') {
+    const allowed = new Set(['--prefix', '--release'])
+    if ([...values.keys()].some((name) => !allowed.has(name))) usage()
+    printStatus(activateRelease(required(values, '--prefix'), required(values, '--release')))
   } else if (command === 'rollback' || command === 'status') {
     if ([...values.keys()].some((name) => name !== '--prefix')) usage()
     const prefix = required(values, '--prefix')

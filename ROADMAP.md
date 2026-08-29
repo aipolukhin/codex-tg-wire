@@ -35,7 +35,8 @@
 - [x] Добавлены durable per-project настройки: `/model`, `/effort`, `/sandbox`, `/approval` и безопасный `/cwd`; model capabilities читаются из live `model/list`, а произвольный путь из Telegram принять нельзя.
 - [x] Добавлен безопасный inbound attachment slice: Telegram photo/image и allowlisted documents сохраняются атомарно, переживают restart и доходят до Codex как `localImage` или sandbox-readable local file metadata.
 - [x] Неизвестные App Server notifications больше не теряются молча: bounded SQLite-журнал хранит только method/correlation/count/timestamps, без event payload.
-- [x] Начат M4: финальный Markdown Codex превращается в проверенный Telegram HTML и режется на ordered durable jobs до 4000 символов; `AMBIGUOUS` predecessor блокирует хвост, а ручной resolve продолжает цепочку без дублей.
+- [x] M4 закрыт: provider-neutral HUD/status и heartbeat, validated HTML/chunk chains, durable inbound/outbound media, atomic albums, verified file inbox/outbox и optional voice adapter работают только через SQLite/outbox boundaries.
+- [x] Media fault gate покрывает retry до `send_started`, `AMBIGUOUS` после него, restart на upload boundary, tamper detection, единый album turn/proof и запрет автоматического повтора неизвестного результата.
 
 ## 1. Что именно мы строим
 
@@ -199,7 +200,7 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 - User-input requests получают durable correlation id и срок жизни. **Готово:** обычные вопросы поддерживают кнопки и `/answer`; secret prompts отклоняются до Telegram.
 - MCP elicitation. **Готово для стабильных `form` и `url` modes:** поля стандартной schema нормализуются в typed Telegram controls, текст/числа принимаются через `/elicit`, URL-кнопка разрешает только HTTPS без embedded credentials. Ответы, multiselect и completion markers durable; deny/cancel/timeout/unroutable request закрываются безопасно. Расширенный `openai/form` capability намеренно не объявляется и такой запрос отменяется до сохранения произвольной schema.
 - `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server. **Готово:** выбор проекта и overrides хранятся в SQLite по bot/chat/project; `/cwd` принимает только id из `projects[]`, а `danger-full-access` доступен только при явном включении в `allowedSandboxModes`.
-- Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn. **Готов первый срез:** одиночные photo и image documents идут нативным `localImage`, разрешённые text/PDF/JSON/XML/CSV documents — через приватный durable file и bridge-generated path metadata. Albums, audio/video и outbound media остаются M4.
+- Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn. **Готово:** photo/image documents идут нативным `localImage`, voice/audio — `localAudio`, разрешённые documents/video — через приватный durable file и bridge-generated path metadata. READY proof включает SHA-256 и проверяется при каждом использовании.
 - Неизвестные App Server events сохраняются диагностически и безопасно игнорируются, не валят процесс. **Готово:** каталог известных методов проверяется вместе с generated schema, а unknown method агрегируется в bounded SQLite-журнал без params/body.
 - Restart recovery не запускает заменяющий turn. **Готово:** startup reconciler читает
   сохранённый turn через стабильный `thread/read(includeTurns: true)`; `COMPLETED`
@@ -215,16 +216,16 @@ Gate M3: все поддержанные flows покрыты record/replay fixt
 
 ### M4 — лучший UX Dashi
 
-- Перенести Dashi controls и статусную модель, отвязав их от Claude events.
-- HTML/Markdown sanitation, chunking, secret redaction и safe previews. **Готов text slice:** Dashi Markdown renderer и allowlist-validator формируют independently valid chunks до 4000 символов. Каждый chunk — отдельная ordered outbox job; хвост ждёт remote proof predecessor, parse rejection один раз безопасно падает в plain text.
-- HUD: active project/thread/turn, model, effort, sandbox, context/usage если это даёт протокол.
-- Heartbeat и уведомление о зависшем/упавшем backend без содержимого запроса.
-- Durable media references: свежий Telegram URL/file retrieval на каждой попытке.
-- Albums как одна логическая atomic job-группа.
-- Voice transcription — только после стабильных text/file paths и через отдельный adapter.
-- File inbox/outbox с size/type policy и безопасными именами.
+- [x] Dashi controls и статусная модель отвязаны от Claude events через provider-neutral `AgentBackend`/UX contracts.
+- [x] HTML/Markdown sanitation, chunking, secret redaction и safe previews: independently valid chunks до 4000 символов образуют ordered outbox chain; parse rejection безопасно падает в plain text.
+- [x] HUD показывает active project/thread/turn, model, effort, sandbox/approval, plan и доступный context/token usage.
+- [x] Heartbeat и backend hang/restart status не содержат prompt, command, plan или reasoning body.
+- [x] Durable media references проверяют regular-file, root, MIME, size и SHA-256 на каждой попытке; transient preparation остаётся retryable только до `send_started`.
+- [x] Outbound album — одна atomic outbox job и один Telegram `sendMediaGroup` proof; inbound `media_group_id` — одна SQLite-группа и один Codex turn.
+- [x] Voice transcription запускается только после durable READY path через отдельный adapter; без adapter Codex получает нативный `localAudio`.
+- [x] File inbox/outbox применяет exact MIME/size policy, safe generated names, private spool и content proofs.
 
-Gate M4: ни одна UX-функция не создаёт обход outbox; длинные ответы, HTML, media retries и restart во время upload проходят E2E.
+Gate M4: **пройден.** Telegram mutations доступны только worker/gateway после durable job; E2E покрывает длинные HTML-ответы, media retry/tamper, albums, voice и restart на upload boundary без автоматического дубля.
 
 ### M5 — production hardening
 

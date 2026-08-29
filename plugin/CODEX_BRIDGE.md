@@ -1,6 +1,6 @@
 # Dashi Codex Telegram Bridge — personal alpha
 
-Это отдельный durable bridge-сервис, а не Claude Code channel runtime. Он принимает Telegram update в SQLite, запускает turn через Codex App Server и отправляет финальный ответ только через durable outbox. Markdown финального ответа преобразуется в проверенный Telegram HTML; длинный ответ становится упорядоченной цепочкой сообщений до 4000 символов каждое.
+Это отдельный durable bridge-сервис, а не Claude Code channel runtime. Он принимает Telegram update в SQLite, запускает turn через Codex App Server и выполняет Telegram mutations только через durable outbox. Markdown финального ответа преобразуется в проверенный Telegram HTML; длинный ответ становится упорядоченной цепочкой сообщений до 4000 символов каждое. Media/file jobs используют content-addressed private spool и повторно проверяются перед каждой попыткой.
 
 ## Запуск
 
@@ -51,6 +51,12 @@ Bridge-managed Codex threads хранятся отдельно от текуще
 
 Switch/archive current thread запрещены при `ACTIVE` или `UNKNOWN` turn. Registry и выбор переживают restart; следующее обычное сообщение продолжает выбранный thread через Codex `thread/resume`.
 
+## HUD и heartbeat
+
+Для каждого turn bridge создаёт durable status root и обновляет только доказанный Telegram `message_id`. Карточка показывает выбранный project, thread/turn, model, effort, sandbox/approval, plan progress и token/context usage, когда эти числа присылает App Server. Проектор принимает provider-neutral progress facts: command, plan и reasoning body в статусную таблицу не попадают.
+
+Если App Server долго не даёт активности, heartbeat создаёт ordered edit job с безопасным elapsed status. После restart незавершённая карточка честно переходит в `UNKNOWN`; скрытого заменяющего turn нет. Все status sends/edits проходят через тот же outbox и сохраняют обычные правила `send_started`/`AMBIGUOUS`.
+
 ## Восстановление после рестарта
 
 До запуска polling и workers bridge проверяет каждый turn, оставшийся `ACTIVE`.
@@ -80,20 +86,37 @@ Problem center показывает только безопасные метад
 
 Длинный финальный ответ сначала целиком раскладывается в SQLite и лишь затем входящий update помечается обработанным. Каждый chunk ждёт `DELIVERED` predecessor. Поэтому неизвестный результат отправки останавливает хвост в очереди: `/resolved` с проверенным Telegram message id продолжает цепочку, а `/archive` закрывает оставшиеся зависимые chunks без скрытого повтора.
 
-## Входящие изображения и файлы
+## Media/file inbox, albums и voice
 
-Первый media slice принимает одиночные Telegram photo и documents. Стабильный Codex App Server input поддерживает `text`, `image` и `localImage`, поэтому photo и разрешённый image document передаются нативным `localImage`. Обычный разрешённый документ сохраняется локально, а Codex получает bridge-generated metadata с абсолютным path и читает файл своими sandboxed tools. `mention` для этого не используется: в App Server он предназначен для apps. Протокольный источник: [официальная документация Codex App Server](https://developers.openai.com/codex/app-server).
+Bridge принимает Telegram photo, documents, voice/audio и разрешённые video. Photo и image documents передаются нативным `localImage`, voice/audio — `localAudio`. Обычный документ или video сохраняется локально, а Codex получает bridge-generated metadata с абсолютным path и читает файл своими sandboxed tools. `mention` для этого не используется: в App Server он предназначен для apps. Протокольный источник: [официальная документация Codex App Server](https://developers.openai.com/codex/app-server).
+
+Фрагменты одного Telegram `media_group_id` сначала становятся отдельными durable inbox rows, но SQLite-группа разрешает lease только лидеру после `albums.flushMs` тишины. Caption и вложения собираются в один Codex input; `processed`, retry, terminal failure и expired-lease recovery применяются ко всей группе транзакционно. Фрагмент, пришедший после начала обработки группы, не теряется и обрабатывается как отдельное сообщение. Исходящий album — одна `send_album` job, один вызов `sendMediaGroup` и один proof со всеми Telegram message ids.
 
 Порядок обработки:
 
 1. raw Telegram update сначала фиксируется в SQLite;
 2. private chat и sender проходят deny-by-default allowlist;
 3. MIME и заявленный размер проверяются до скачивания;
-4. тело скачивается с жёстким streaming limit, image/PDF magic проверяется;
-5. файл атомарно сохраняется под generated hash-name с mode `0600`, а READY proof — в `telegram_attachments`;
-6. только после этого запускается Codex turn. После restart валидный READY-файл используется повторно без новой загрузки.
+4. тело скачивается с жёстким streaming limit, MIME-specific magic проверяется;
+5. файл атомарно сохраняется под generated hash-name с mode `0600`, READY metadata — в `telegram_attachments`, SHA-256 proof — отдельно в SQLite;
+6. перед каждым повторным использованием проверяются regular-file/no-symlink, root, размер, magic и SHA-256; испорченный proof вызывает безопасную повторную загрузку;
+7. только после этого запускается Codex turn или optional voice adapter.
 
-Настройки находятся в секции `attachments`: `directory`, `maxBytes` (не больше 20 MiB) и точный `allowedMimeTypes`. По умолчанию разрешены JPEG/PNG/WebP/GIF, plain text/Markdown/CSV, JSON, PDF и XML. Произвольный `application/octet-stream`, executables, archives, audio и video не разрешены. MIME mismatch, превышение лимита и запрещённый тип отклоняются до Codex; ответ об отказе проходит через durable outbox.
+Настройки находятся в секции `attachments`: `directory`, `maxBytes` (не больше 20 MiB) и точный `allowedMimeTypes`. По умолчанию разрешены JPEG/PNG/WebP/GIF, plain text/Markdown/CSV, JSON, PDF/XML, Ogg/MP3/MP4/WAV/WebM audio и MP4/WebM video. Произвольный `application/octet-stream`, executables и archives не разрешены. MIME mismatch, превышение лимита и запрещённый тип отклоняются до Codex; ответ об отказе проходит через durable outbox.
+
+Voice provider по умолчанию выключен (`voice.provider: "none"`), при этом voice всё равно доступен Codex как `localAudio`. Для Groq укажи `voice.provider: "groq"` и передай ключ только через окружение:
+
+```bash
+export GROQ_API_KEY='...'
+```
+
+`voice.model`, `voice.language`, `voice.apiRoot`, `voice.maxBytes` и `voice.requestTimeoutMs` настраиваются в JSON; ключ там запрещён strict schema. Adapter читает только уже materialized path, ещё раз сверяет размер и SHA-256, нормализует Telegram `.oga` в multipart filename `.ogg` и fail-soft оставляет исходное аудио, если транскрипция недоступна. Транскрипт маркируется как недоверенный пользовательский ввод.
+
+## Media/file outbox
+
+`enqueueOutboundMedia` и `enqueueOutboundAlbum` сначала копируют разрешённый project file в private content-addressed spool. В durable job лежат безопасное имя, MIME, размер и SHA-256, но не временный Telegram URL. Перед каждой попыткой gateway заново открывает spool file и проверяет allowed root, отсутствие symlink, type/size/hash и совместимость с Telegram media kind. Caption проходит тот же Markdown → validated HTML → redaction pipeline.
+
+До `send_started` ошибка подготовки или падение worker безопасно ретраится. После `send_started` неизвестный результат upload становится `AMBIGUOUS`; автоматический retry запрещён. Это одинаково для одного файла и atomic album.
 
 Неизвестные notification methods от App Server агрегируются в `codex_unhandled_notifications`. Журнал ограничен 1000 строками и содержит только method, thread/turn correlation, счётчик и timestamps — `params`, prompt и file content туда не записываются. Каталог известных методов сверяется с generated schema командой `bun run codex:schema:check`.
 
@@ -102,13 +125,14 @@ Problem center показывает только безопасные метад
 ## Граница безопасности
 
 - allowlist пользователей и чатов обязательны и работают deny-by-default;
-- bot token не хранится в конфиге или SQLite;
+- bot token и Groq key не хранятся в JSON или SQLite;
 - исходящий текст и подписи inline-кнопок проходят secret redaction;
 - Markdown финального ответа проходит Telegram HTML allowlist и повторную проверку после redaction; каждый chunk ограничен 4000 символами, а подтверждение доставки хранится отдельно;
 - update сохраняется до продвижения Telegram offset;
 - очередь turns и её порядок хранятся в SQLite; ожидание занятой session не расходует retry budget;
 - выбор проекта и Codex overrides хранятся в SQLite; Telegram не может подставить произвольный `cwd` или обойти sandbox allowlist;
-- вложения скачиваются только после allowlist, имеют MIME/size/content gates и никогда не получают Telegram filename как локальный path;
+- вложения скачиваются только после allowlist, имеют MIME/size/magic/hash gates и никогда не получают Telegram filename как локальный path;
+- album grouping, media captions, HUD и heartbeat не создают отдельный Telegram send path;
 - доставка после `send_started` с неизвестным результатом становится `AMBIGUOUS` и автоматически не повторяется.
 - prompts, edits и callback acknowledgements тоже проходят durable outbox;
 - первый валидный ответ выигрывает, повторный или callback от старого App Server соединения ничего не разрешает;
@@ -116,4 +140,4 @@ Problem center показывает только безопасные метад
 - вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
 - MCP URL разрешён только по HTTPS без embedded credentials; `openai/form` не согласовывается, а secret-like form schema не превращается в Telegram-карточку.
 
-Это personal alpha: controls/status UX, HUD, heartbeat, albums, audio/video/voice и outbound media ещё идут следующими срезами roadmap. Durable recovery text/Codex interaction kernel, включая MCP elicitation и ordered long replies, закрыт; media/upload recovery и retention относятся к M4/M5.
+Это personal alpha: durable recovery kernel и M4 UX/media slice закрыты. Следующий этап — M5 production hardening: doctor, retention/scrub, backup/restore, health/watchdog, rate limits, chaos/load и release supply-chain.

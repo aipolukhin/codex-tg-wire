@@ -217,4 +217,35 @@ describe('durable outbound media gateway', () => {
     expect(outbox.get('tampered-media')?.sendStartedAtMs).toBeNull()
     expect(api.media).toHaveLength(0)
   })
+
+  test('quarantines a process restart after the durable upload boundary', async () => {
+    const source = join(workspace, 'restart.pdf')
+    writeFileSync(source, '%PDF-restart')
+    const reference = await store.register({
+      path: source, fileName: 'restart.pdf', mimeType: 'application/pdf', kind: 'document',
+    })
+    outbox.enqueue({
+      id: 'restart-upload',
+      sourceKey: 'turn:media:restart-upload',
+      kind: 'send_media',
+      payload: { chatId: '7001', mediaKind: 'document', reference },
+      createdAtMs: NOW,
+    })
+    const leased = outbox.claimNext({ workerId: 'crashed-uploader', nowMs: NOW, leaseDurationMs: 1_000 })!
+    await makeGateway().prepareDelivery(leased)
+    outbox.markSendStarted(leased.id, 'crashed-uploader', NOW + 1)
+
+    database.close()
+    database = openDurableDatabase(filename)
+    outbox = new SqliteOutboxRepository(database)
+    expect(outbox.recoverExpiredLeases(NOW + 1_001)).toEqual({
+      retryable: 0, ambiguous: 1, expired: 0,
+    })
+    expect(outbox.get('restart-upload')?.state).toBe('AMBIGUOUS')
+    const restarted = new OutboxDeliveryWorker(outbox, makeGateway(), {
+      workerId: 'restarted-uploader', now: () => NOW + 1_001,
+    })
+    expect(await restarted.runOnce()).toEqual({ outcome: 'idle' })
+    expect(api.media).toHaveLength(0)
+  })
 })

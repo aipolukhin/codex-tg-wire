@@ -110,6 +110,7 @@ let transport: FakeTransport
 let client: CodexAppServerClient
 let telegram: FakeTelegramApi
 let runtime: DurableTextRuntime
+let clockNow: number
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'dashi-text-runtime-'))
@@ -132,6 +133,7 @@ beforeEach(async () => {
   })
   await initializing
   telegram = new FakeTelegramApi()
+  clockNow = NOW
   runtime = createDurableTextRuntime({
     database,
     codexClient: client,
@@ -147,8 +149,15 @@ beforeEach(async () => {
       defaultProjectId: 'workspace',
       attachmentDirectory: join(root, 'attachments'),
     },
-    inboxWorker: { now: () => NOW },
-    outboxWorker: { now: () => NOW },
+    inboxWorker: { now: () => clockNow },
+    outboxWorker: { now: () => clockNow },
+    albumFlushMs: 100,
+    voiceTranscriber: {
+      transcribe: async (attachment) => ({
+        status: 'ok',
+        transcript: `транскрипт из ${attachment.fileName}`,
+      }),
+    },
     outboundMedia: {
       directory: join(root, 'outbound-media'),
       allowedRoots: [root],
@@ -451,6 +460,119 @@ describe('durable text runtime composition', () => {
         'SELECT * FROM codex_unhandled_notifications',
       ).all()),
     ).not.toContain('must-not-be-stored')
+  })
+
+  test('turns a Telegram album into one Codex turn after the durable silence window', async () => {
+    const firstBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x01])
+    const secondBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x02])
+    telegram.downloads.set('album-photo-1', {
+      bytes: firstBytes, fileSize: firstBytes.length, uniqueId: 'album-u1',
+    })
+    telegram.downloads.set('album-photo-2', {
+      bytes: secondBytes, fileSize: secondBytes.length, uniqueId: 'album-u2',
+    })
+    runtime.ingest({
+      update_id: 809,
+      message: {
+        media_group_id: 'album-809',
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        caption: 'сравни изображения',
+        photo: [{ file_id: 'album-photo-1', file_unique_id: 'album-u1', width: 10, height: 10, file_size: 5 }],
+      },
+    }, NOW)
+    runtime.ingest({
+      update_id: 810,
+      message: {
+        media_group_id: 'album-809',
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        photo: [{ file_id: 'album-photo-2', file_unique_id: 'album-u2', width: 10, height: 10, file_size: 5 }],
+      },
+    }, NOW + 50)
+
+    clockNow = NOW + 149
+    expect(await runtime.processInboundOnce()).toEqual({ outcome: 'idle' })
+    clockNow = NOW + 150
+    const processing = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-album' } } })
+    const turnStart = await waitForRequest(transport, 'turn/start')
+    expect(turnStart).toMatchObject({
+      params: {
+        input: [
+          { type: 'text', text: 'сравни изображения', text_elements: [] },
+          { type: 'localImage', path: expect.stringContaining('/attachments/') },
+          { type: 'localImage', path: expect.stringContaining('/attachments/') },
+        ],
+      },
+    })
+    transport.emit({ id: turnStart.id, result: { turn: { id: 'turn-album' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-album', turnId: 'turn-album',
+        item: { type: 'agentMessage', id: 'album-answer', text: 'Сравнил.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: { threadId: 'thread-album', turn: { id: 'turn-album', status: 'completed', items: [] } },
+    })
+    expect((await processing).outcome).toBe('enqueued')
+    expect(telegram.downloadCalls).toEqual(['album-photo-1', 'album-photo-2'])
+    expect(database.query<{ count: number }, []>(
+      `SELECT count(*) AS count FROM telegram_updates WHERE state = 'PROCESSED'`,
+    ).get()?.count).toBe(2)
+    expect(transport.sent.filter(
+      (message) => 'method' in message && message.method === 'turn/start',
+    )).toHaveLength(1)
+  })
+
+  test('materializes and transcribes Telegram voice before sending localAudio to Codex', async () => {
+    const bytes = new TextEncoder().encode('OggSvoice-runtime')
+    telegram.downloads.set('voice-runtime', {
+      bytes, fileSize: bytes.length, uniqueId: 'voice-runtime-u1',
+    })
+    runtime.ingest({
+      update_id: 811,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        voice: {
+          file_id: 'voice-runtime', file_unique_id: 'voice-runtime-u1',
+          mime_type: 'audio/ogg', file_size: bytes.length,
+        },
+      },
+    }, NOW)
+    const processing = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-voice' } } })
+    const turnStart = await waitForRequest(transport, 'turn/start')
+    expect(turnStart).toMatchObject({
+      params: {
+        input: [
+          { type: 'text', text: expect.stringContaining('транскрипт из voice.ogg') },
+          { type: 'localAudio', path: expect.stringContaining('/attachments/') },
+        ],
+      },
+    })
+    transport.emit({ id: turnStart.id, result: { turn: { id: 'turn-voice' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-voice', turnId: 'turn-voice',
+        item: { type: 'agentMessage', id: 'voice-answer', text: 'Услышал.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: { threadId: 'thread-voice', turn: { id: 'turn-voice', status: 'completed', items: [] } },
+    })
+    expect((await processing).outcome).toBe('enqueued')
+    expect(database.query<{ kind: string; state: string }, []>(
+      'SELECT kind, state FROM telegram_attachments',
+    ).get()).toEqual({ kind: 'file', state: 'READY' })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM telegram_attachment_proofs',
+    ).get()?.count).toBe(1)
   })
 
   test('rejects a disallowed document through durable outbox before Codex', async () => {

@@ -3,6 +3,8 @@ import { dirname, isAbsolute, resolve } from 'node:path'
 
 import { z } from 'zod'
 
+import { DEFAULT_ATTACHMENT_MIME_TYPES } from '../telegram/durable-attachment-store.js'
+
 const TelegramUserIdSchema = z
   .union([z.string(), z.number().int().safe()])
   .transform(String)
@@ -34,6 +36,16 @@ export const BridgeConfigFileSchema = z
         maxTextLength: z.number().int().min(1).max(4_096).default(4_096),
       })
       .strict(),
+    attachments: z
+      .object({
+        directory: z.string().trim().min(1).default('./state/attachments'),
+        maxBytes: z.number().int().min(1).max(20 * 1024 * 1024).default(20 * 1024 * 1024),
+        allowedMimeTypes: z.array(
+          z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/),
+        ).min(1).default([...DEFAULT_ATTACHMENT_MIME_TYPES]),
+      })
+      .strict()
+      .default({}),
     codex: z
       .object({
         binary: z.string().trim().min(1).optional(),
@@ -158,6 +170,10 @@ export function loadBridgeServiceConfig(
     configPath,
     telegramToken,
     stateDatabase: absoluteFrom(baseDirectory, parsed.stateDatabase),
+    attachments: {
+      ...parsed.attachments,
+      directory: absoluteFrom(baseDirectory, parsed.attachments.directory),
+    },
     projects: parsed.projects.map((project) => ({
       ...project,
       cwd: absoluteFrom(baseDirectory, project.cwd),

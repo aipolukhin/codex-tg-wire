@@ -12,6 +12,8 @@ import type {
   UpdateRoutingClass,
 } from '../durable/contracts.js'
 import { SqliteAgentSettingsRepository } from '../durable/settings-repository.js'
+import { SqliteAttachmentRepository } from '../durable/attachment-repository.js'
+import { SqliteCodexEventRepository } from '../durable/codex-event-repository.js'
 import { SqliteCodexInteractionRepository } from '../durable/interaction-repository.js'
 import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
@@ -24,6 +26,10 @@ import {
   type DurableTelegramTextGatewayOptions,
   type TelegramTextApi,
 } from '../telegram/durable-text-gateway.js'
+import {
+  DurableAttachmentStore,
+  type DurableAttachmentStoreOptions,
+} from '../telegram/durable-attachment-store.js'
 import {
   DurableSessionCoordinator,
   StaticProjectResolver,
@@ -49,6 +55,8 @@ export interface DurableTextRuntimeOptions {
   botId: string
   projects: readonly ProjectDefinition[]
   telegram: DurableTelegramTextGatewayOptions
+    & Partial<Omit<DurableAttachmentStoreOptions, 'directory'>>
+    & { attachmentDirectory?: string }
   codex?: CodexAppServerBackendOptions & {
     interactionTimeoutMs?: number
     allowedSandboxModes?: readonly AgentSandboxMode[]
@@ -81,7 +89,13 @@ function telegramRoute(update: unknown): { chatId: string | null; routingClass: 
     return { chatId: null, routingClass: 'OTHER' }
   }
   const value = update as {
-    message?: { chat?: { id?: unknown }; text?: unknown }
+    message?: {
+      chat?: { id?: unknown }
+      text?: unknown
+      caption?: unknown
+      photo?: unknown
+      document?: unknown
+    }
     callback_query?: { message?: { chat?: { id?: unknown } } }
   }
   const callbackChatId = value.callback_query?.message?.chat?.id
@@ -90,12 +104,17 @@ function telegramRoute(update: unknown): { chatId: string | null; routingClass: 
   }
   const chatId = value.message?.chat?.id
   if (chatId === undefined) return { chatId: null, routingClass: 'OTHER' }
-  if (typeof value.message?.text !== 'string') {
+  const hasAttachment = Array.isArray(value.message?.photo) ||
+    (typeof value.message?.document === 'object' && value.message.document !== null)
+  const messageText = value.message?.text
+  if (typeof messageText !== 'string' && !hasAttachment) {
     return { chatId: String(chatId), routingClass: 'OTHER' }
   }
   return {
     chatId: String(chatId),
-    routingClass: value.message.text.trimStart().startsWith('/') ? 'CONTROL' : 'MESSAGE',
+    routingClass: typeof messageText === 'string' && messageText.trimStart().startsWith('/')
+      ? 'CONTROL'
+      : 'MESSAGE',
   }
 }
 
@@ -120,8 +139,26 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const outbox = new SqliteOutboxRepository(options.database)
   const sessions = new SqliteSessionRepository(options.database)
   const settings = new SqliteAgentSettingsRepository(options.database)
+  const attachmentStore = options.telegram.attachmentDirectory === undefined
+    ? undefined
+    : options.telegramApi.downloadAttachment === undefined
+      ? undefined
+      : new DurableAttachmentStore(
+          { downloadAttachment: options.telegramApi.downloadAttachment.bind(options.telegramApi) },
+          new SqliteAttachmentRepository(options.database),
+          {
+            directory: options.telegram.attachmentDirectory,
+            ...(options.telegram.maxBytes === undefined
+              ? {}
+              : { maxBytes: options.telegram.maxBytes }),
+            ...(options.telegram.allowedMimeTypes === undefined
+              ? {}
+              : { allowedMimeTypes: options.telegram.allowedMimeTypes }),
+          },
+        )
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
   const backendOptions: CodexAppServerBackendOptions = {
+    eventDiagnostics: new SqliteCodexEventRepository(options.database),
     ...(options.codex?.turnTimeoutMs === undefined ? {} : { turnTimeoutMs: options.codex.turnTimeoutMs }),
     ...(options.codex?.threadStartDefaults === undefined
       ? {}
@@ -141,6 +178,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   )
   const telegram = new DurableTelegramTextGateway(options.telegramApi, {
     ...options.telegram,
+    ...(attachmentStore === undefined ? {} : { attachmentStore }),
     projectIdForChat: (chatId) => {
       const selected = settings.getSelectedProject(options.botId, chatId)
       return selected !== null && projectIds.has(selected)

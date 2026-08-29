@@ -55,6 +55,23 @@ Problem center показывает только безопасные метад
 
 Принятые действия идемпотентны и сохраняются в `delivery_problem_actions` вместе с actor, исходным и целевым состоянием.
 
+## Входящие изображения и файлы
+
+Первый media slice принимает одиночные Telegram photo и documents. Стабильный Codex App Server input поддерживает `text`, `image` и `localImage`, поэтому photo и разрешённый image document передаются нативным `localImage`. Обычный разрешённый документ сохраняется локально, а Codex получает bridge-generated metadata с абсолютным path и читает файл своими sandboxed tools. `mention` для этого не используется: в App Server он предназначен для apps. Протокольный источник: [официальная документация Codex App Server](https://developers.openai.com/codex/app-server).
+
+Порядок обработки:
+
+1. raw Telegram update сначала фиксируется в SQLite;
+2. private chat и sender проходят deny-by-default allowlist;
+3. MIME и заявленный размер проверяются до скачивания;
+4. тело скачивается с жёстким streaming limit, image/PDF magic проверяется;
+5. файл атомарно сохраняется под generated hash-name с mode `0600`, а READY proof — в `telegram_attachments`;
+6. только после этого запускается Codex turn. После restart валидный READY-файл используется повторно без новой загрузки.
+
+Настройки находятся в секции `attachments`: `directory`, `maxBytes` (не больше 20 MiB) и точный `allowedMimeTypes`. По умолчанию разрешены JPEG/PNG/WebP/GIF, plain text/Markdown/CSV, JSON, PDF и XML. Произвольный `application/octet-stream`, executables, archives, audio и video не разрешены. MIME mismatch, превышение лимита и запрещённый тип отклоняются до Codex; ответ об отказе проходит через durable outbox.
+
+Неизвестные notification methods от App Server агрегируются в `codex_unhandled_notifications`. Журнал ограничен 1000 строками и содержит только method, thread/turn correlation, счётчик и timestamps — `params`, prompt и file content туда не записываются. Каталог известных методов сверяется с generated schema командой `bun run codex:schema:check`.
+
 По умолчанию `codex.approvalPolicy` равен `on-request`, `codex.sandboxMode` — `workspace-write`, а `codex.allowedSandboxModes` разрешает только `read-only` и `workspace-write`. `danger-full-access` нельзя включить одной Telegram-командой: оператор должен сначала явно добавить его в allowlist конфигурации. Интерактивный запрос живёт 10 минут (`codex.interactionTimeoutMs`); этот timeout должен быть меньше `codex.turnTimeoutMs`. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
 
 ## Граница безопасности
@@ -65,9 +82,10 @@ Problem center показывает только безопасные метад
 - update сохраняется до продвижения Telegram offset;
 - очередь turns и её порядок хранятся в SQLite; ожидание занятой session не расходует retry budget;
 - выбор проекта и Codex overrides хранятся в SQLite; Telegram не может подставить произвольный `cwd` или обойти sandbox allowlist;
+- вложения скачиваются только после allowlist, имеют MIME/size/content gates и никогда не получают Telegram filename как локальный path;
 - доставка после `send_started` с неизвестным результатом становится `AMBIGUOUS` и автоматически не повторяется.
 - prompts, edits и callback acknowledgements тоже проходят durable outbox;
 - первый валидный ответ выигрывает, повторный или callback от старого App Server соединения ничего не разрешает;
 - вопросы с `isSecret=true` отклоняются: мост не просит присылать пароль или токен в Telegram.
 
-Это personal alpha: permission-profile/MCP approvals, media и recovery активного turn ещё идут следующими срезами roadmap.
+Это personal alpha: permission-profile/MCP approvals, albums, audio/video/voice, outbound media и recovery активного turn ещё идут следующими срезами roadmap.

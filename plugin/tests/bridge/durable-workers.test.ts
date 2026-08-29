@@ -66,6 +66,7 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
   remoteId = 'telegram:message:101'
   onExecute: (() => void) | undefined
   executeGate: Promise<void> | undefined
+  inboundRejection: string | undefined
 
   extractText(update: InboxUpdate): IncomingTextMessage | null {
     const payload = update.payload as {
@@ -78,12 +79,38 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
     return { chatId: String(chatId), projectId: payload.project_id ?? 'default', text }
   }
 
+  async prepareInboundMessage(_update: InboxUpdate, message: IncomingTextMessage) {
+    if (this.inboundRejection !== undefined) {
+      return { outcome: 'rejected' as const, text: this.inboundRejection }
+    }
+    return {
+      outcome: 'accepted' as const,
+      message: { ...message, attachments: [] },
+    }
+  }
+
   buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput {
     return {
       id: `reply-${input.update.id}`,
       sourceKey: input.sourceKey,
       kind: 'send_text',
       payload: { chatId: input.message.chatId, text: input.result.finalText },
+      createdAtMs: input.nowMs,
+    }
+  }
+
+  buildInboundRejectionDelivery(input: {
+    update: InboxUpdate
+    message: IncomingTextMessage
+    text: string
+    sourceKey: string
+    nowMs: number
+  }): DeliveryJobInput {
+    return {
+      id: `rejected-${input.update.id}`,
+      sourceKey: input.sourceKey,
+      kind: 'send_text',
+      payload: { chatId: input.message.chatId, text: input.text },
       createdAtMs: input.nowMs,
     }
   }
@@ -252,6 +279,27 @@ describe('durable text vertical slice', () => {
     expect(await worker.runOnce()).toEqual({ outcome: 'ignored', updateId: accepted.update.id })
     expect(coordinator.calls).toHaveLength(0)
     expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+  })
+
+  test('durably replies to an attachment policy rejection without starting Codex', async () => {
+    const accepted = inbox.ingest(textUpdate(507))
+    telegram.inboundRejection = 'Этот тип вложения запрещён.'
+    const worker = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-a',
+      now: () => nowMs,
+    })
+
+    expect(await worker.runOnce()).toEqual({
+      outcome: 'enqueued',
+      updateId: accepted.update.id,
+      deliveryJobId: `rejected-${accepted.update.id}`,
+    })
+    expect(coordinator.calls).toHaveLength(0)
+    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+    expect(outbox.get(`rejected-${accepted.update.id}`)?.payload).toEqual({
+      chatId: '7001',
+      text: 'Этот тип вложения запрещён.',
+    })
   })
 
   test('retries coordinator failure without storing its possibly sensitive message', async () => {

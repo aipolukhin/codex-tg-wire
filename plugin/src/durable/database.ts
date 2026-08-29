@@ -239,6 +239,49 @@ const MIGRATIONS: readonly Migration[] = [
         ON agent_project_settings (updated_at_ms)`,
     ],
   },
+  {
+    version: 9,
+    name: 'inbound_attachments_and_codex_diagnostics',
+    statements: [
+      `CREATE TABLE telegram_attachments (
+        id TEXT PRIMARY KEY,
+        source_update_id INTEGER NOT NULL REFERENCES telegram_updates(id) ON DELETE CASCADE,
+        ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+        kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+        telegram_file_id TEXT NOT NULL,
+        telegram_unique_id TEXT,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        declared_size INTEGER CHECK (declared_size IS NULL OR declared_size >= 0),
+        state TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (state IN ('PENDING', 'READY', 'REJECTED')),
+        local_path TEXT,
+        actual_size INTEGER CHECK (actual_size IS NULL OR actual_size >= 0),
+        rejection_reason TEXT,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        UNIQUE (source_update_id, ordinal),
+        CHECK (state != 'READY' OR
+          (local_path IS NOT NULL AND actual_size IS NOT NULL AND rejection_reason IS NULL)),
+        CHECK (state != 'REJECTED' OR
+          (local_path IS NULL AND actual_size IS NULL AND rejection_reason IS NOT NULL))
+      )`,
+      `CREATE INDEX telegram_attachments_state_idx
+        ON telegram_attachments (state, updated_at_ms)`,
+      `CREATE TABLE codex_unhandled_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        method TEXT NOT NULL,
+        thread_id TEXT NOT NULL DEFAULT '',
+        turn_id TEXT NOT NULL DEFAULT '',
+        occurrence_count INTEGER NOT NULL DEFAULT 1 CHECK (occurrence_count > 0),
+        first_seen_at_ms INTEGER NOT NULL,
+        last_seen_at_ms INTEGER NOT NULL,
+        UNIQUE (method, thread_id, turn_id)
+      )`,
+      `CREATE INDEX codex_unhandled_notifications_seen_idx
+        ON codex_unhandled_notifications (last_seen_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

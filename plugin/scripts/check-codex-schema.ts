@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { KNOWN_CODEX_NOTIFICATION_METHODS } from '../src/codex/known-notifications.js'
+
 interface CompatibilityManifest {
   codexCliVersion: string
   schemaMode: 'stable'
@@ -51,6 +53,24 @@ function hashGeneratedTree(root: string): { files: number; sha256: string } {
   return { files: paths.length, sha256: hash.digest('hex') }
 }
 
+function checkKnownNotifications(root: string): void {
+  const source = readFileSync(join(root, 'ServerNotification.ts'), 'utf8')
+  const generated = new Set(
+    [...source.matchAll(/"method": "([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((method): method is string => method !== undefined),
+  )
+  const missing = [...generated].filter((method) => !KNOWN_CODEX_NOTIFICATION_METHODS.has(method))
+  const stale = [...KNOWN_CODEX_NOTIFICATION_METHODS].filter((method) => !generated.has(method))
+  if (missing.length > 0 || stale.length > 0) {
+    throw new Error([
+      'Codex notification method catalog is out of sync.',
+      `missing: ${missing.join(', ') || '<none>'}`,
+      `stale:   ${stale.join(', ') || '<none>'}`,
+    ].join('\n'))
+  }
+}
+
 function runCodex(command: string, args: string[]): string {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
@@ -84,6 +104,7 @@ const generatedRoot = join(tempRoot, 'generated')
 try {
   runCodex(codexBinary, ['app-server', 'generate-ts', '--out', generatedRoot])
   const actual = hashGeneratedTree(generatedRoot)
+  checkKnownNotifications(generatedRoot)
   if (
     actual.files !== manifest.generatedFileCount ||
     actual.sha256 !== manifest.schemaSha256

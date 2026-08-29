@@ -175,6 +175,9 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           projectId: operation.projectId,
           cwd,
           text: operation.text,
+          ...(operation.attachments === undefined || operation.attachments.length === 0
+            ? {}
+            : { attachments: operation.attachments }),
           settings: this.settingsProvider?.getTurnSettings(
             operation.botId,
             operation.chatId,

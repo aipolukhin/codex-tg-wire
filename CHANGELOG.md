@@ -34,6 +34,13 @@ server identity reads `package.json` at runtime. Release process:
   validate against the live App Server model catalog, `/sandbox` and
   `/approval` override turn policy, and `/cwd` selects only a configured
   project id instead of accepting a path from Telegram.
+- Added the first durable inbound attachment path. Allowlisted Telegram photos,
+  image documents and selected text/PDF data files are downloaded after owner
+  authorization, persisted atomically, reused after restart and forwarded to
+  Codex as native `localImage` input or sandbox-readable local-file metadata.
+- Added a bounded diagnostic journal for App Server notification methods not
+  present in the pinned schema. It aggregates method/correlation/count/time
+  metadata and never stores notification params or message bodies.
 
 ### Security
 - Removed built-in Telegram identity defaults. Both user and chat allowlists
@@ -47,6 +54,10 @@ server identity reads `package.json` at runtime. Release process:
 - Sandbox switching is constrained by an operator allowlist. The default
   configuration permits only `read-only` and `workspace-write`; enabling
   `danger-full-access` requires an explicit bridge configuration change.
+- Inbound attachments are deny-by-default by MIME type, capped at 20 MiB,
+  checked for declared and streamed size, and validated for image/PDF magic
+  before Codex starts. Durable files use generated names and mode `0600`;
+  unsupported attachments receive a durable rejection reply.
 
 ### Changed
 - Added the standalone Codex App Server backend (`bun run start:codex`) next to

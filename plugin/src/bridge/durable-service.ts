@@ -126,7 +126,11 @@ export async function bootstrapDurableBridgeService(
       capabilities: null,
     })
 
-    const telegram = new GrammyDurableAdapter(bot.api)
+    const telegram = new GrammyDurableAdapter(
+      bot.api,
+      config.telegramToken,
+      config.telegram.apiRoot,
+    )
     runtime = createDurableTextRuntime({
       database,
       codexClient,
@@ -140,6 +144,9 @@ export async function bootstrapDurableBridgeService(
         maxTextLength: config.telegram.maxTextLength,
         botUsername: identity.botUsername,
         extraSecrets: [config.telegramToken],
+        attachmentDirectory: config.attachments.directory,
+        maxBytes: config.attachments.maxBytes,
+        allowedMimeTypes: config.attachments.allowedMimeTypes,
       },
       codex: {
         turnTimeoutMs: config.codex.turnTimeoutMs,

@@ -4,7 +4,36 @@ export interface IncomingTextMessage {
   chatId: string
   projectId: string
   text: string
+  attachments?: readonly IncomingTelegramAttachment[]
 }
+
+export interface IncomingTelegramAttachment {
+  kind: 'image' | 'file'
+  fileId: string
+  uniqueId: string | null
+  fileName: string | null
+  mimeType: string
+  declaredSize: number | null
+}
+
+export interface AgentLocalAttachment {
+  kind: 'image' | 'file'
+  path: string
+  fileName: string
+  mimeType: string
+  size: number
+}
+
+export interface PreparedIncomingMessage {
+  chatId: string
+  projectId: string
+  text: string
+  attachments: readonly AgentLocalAttachment[]
+}
+
+export type InboundMessagePreparation =
+  | { outcome: 'accepted'; message: PreparedIncomingMessage }
+  | { outcome: 'rejected'; text: string }
 
 export type PersonalAlphaCommandName =
   | 'start'
@@ -99,6 +128,7 @@ export interface TextTurnOperation {
   chatId: string
   projectId: string
   text: string
+  attachments?: readonly AgentLocalAttachment[]
 }
 
 export interface TextTurnResult {
@@ -130,6 +160,10 @@ export interface AgentSettingsProvider {
   getTurnSettings(botId: string, chatId: string, projectId: string): AgentTurnSettings
 }
 
+export interface AgentEventDiagnostics {
+  recordUnhandledNotification(notification: { method: string; params?: unknown }): void
+}
+
 /**
  * Owns durable session/thread binding and must treat operationKey as
  * idempotent. Replaying the same operation after a bridge crash must reconcile
@@ -145,6 +179,7 @@ export interface AgentTextTurnInput {
   projectId: string
   cwd: string
   text: string
+  attachments?: readonly AgentLocalAttachment[]
   settings?: AgentTurnSettings
 }
 
@@ -185,6 +220,14 @@ export interface CommandDelivery {
   nowMs: number
 }
 
+export interface InboundRejectionDelivery {
+  update: InboxUpdate
+  message: IncomingTextMessage
+  text: string
+  sourceKey: string
+  nowMs: number
+}
+
 /**
  * The only Telegram boundary used by the durable workers. prepareDelivery may
  * validate payloads or fetch retry-safe media. executeDelivery performs the
@@ -192,9 +235,14 @@ export interface CommandDelivery {
  */
 export interface TelegramGateway<PreparedDelivery = unknown> {
   extractText(update: InboxUpdate): IncomingTextMessage | null
+  prepareInboundMessage?(
+    update: InboxUpdate,
+    message: IncomingTextMessage,
+  ): Promise<InboundMessagePreparation>
   extractCommand?(update: InboxUpdate): IncomingCommand | null
   extractInteractionResponse?(update: InboxUpdate): IncomingInteractionResponse | null
   buildFinalTextDelivery(input: FinalTextDelivery): DeliveryJobInput
+  buildInboundRejectionDelivery?(input: InboundRejectionDelivery): DeliveryJobInput
   buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
   prepareDelivery(job: DeliveryJob): Promise<PreparedDelivery>
   executeDelivery(prepared: PreparedDelivery): Promise<DeliveryProof>

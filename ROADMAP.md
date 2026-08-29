@@ -28,6 +28,8 @@
 - [x] Добавлен первый problem center: `/failed`, `/ambiguous`, audited `/retry`, `/resolved`, `/archive`; unsafe retry для `AMBIGUOUS` запрещён.
 - [x] Добавлен durable thread registry: `/new` сохраняет историю, `/threads`, `/switch`, `/resume` и локальный `/archive` переживают restart.
 - [x] Добавлены durable per-project настройки: `/model`, `/effort`, `/sandbox`, `/approval` и безопасный `/cwd`; model capabilities читаются из live `model/list`, а произвольный путь из Telegram принять нельзя.
+- [x] Добавлен безопасный inbound attachment slice: Telegram photo/image и allowlisted documents сохраняются атомарно, переживают restart и доходят до Codex как `localImage` или sandbox-readable local file metadata.
+- [x] Неизвестные App Server notifications больше не теряются молча: bounded SQLite-журнал хранит только method/correlation/count/timestamps, без event payload.
 
 ## 1. Что именно мы строим
 
@@ -190,8 +192,8 @@ Gate M2: fault-injection matrix проходит автоматически; `AM
 - Server-initiated approvals отображаются inline buttons с проверкой owner и одноразовым решением.
 - User-input requests получают durable correlation id и срок жизни.
 - `/model`, `/effort`, `/sandbox`, `/approval`, `/cwd`; модели и возможности читаются динамически через App Server. **Готово:** выбор проекта и overrides хранятся в SQLite по bot/chat/project; `/cwd` принимает только id из `projects[]`, а `danger-full-access` доступен только при явном включении в `allowedSandboxModes`.
-- Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn.
-- Неизвестные App Server events сохраняются диагностически и безопасно игнорируются, не валят процесс.
+- Image/file inputs конвертируются в поддерживаемые input items; неподдерживаемые типы отклоняются до запуска turn. **Готов первый срез:** одиночные photo и image documents идут нативным `localImage`, разрешённые text/PDF/JSON/XML/CSV documents — через приватный durable file и bridge-generated path metadata. Albums, audio/video и outbound media остаются M4.
+- Неизвестные App Server events сохраняются диагностически и безопасно игнорируются, не валят процесс. **Готово:** каталог известных методов проверяется вместе с generated schema, а unknown method агрегируется в bounded SQLite-журнал без params/body.
 
 Gate M3: все поддержанные flows покрыты record/replay fixtures и contract tests; upgrade Codex CLI либо проходит schema check, либо блокируется понятной ошибкой.
 

@@ -14,6 +14,7 @@ import type {
 } from '../../src/codex/transport.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
 import { SqliteOutboxRepository } from '../../src/durable/sqlite-repositories.js'
+import type { TelegramAttachmentDownload } from '../../src/telegram/durable-attachment-store.js'
 
 const NOW = 1_800_000_000_000
 
@@ -50,20 +51,29 @@ class FakeTransport implements AppServerTransport {
 
 class FakeTelegramApi {
   readonly sent: Array<{ chatId: string; text: string }> = []
+  readonly downloads = new Map<string, TelegramAttachmentDownload>()
+  readonly downloadCalls: string[] = []
 
   async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
     this.sent.push({ chatId, text })
     return { message_id: 901 }
   }
+
+  async downloadAttachment(fileId: string): Promise<TelegramAttachmentDownload> {
+    this.downloadCalls.push(fileId)
+    const download = this.downloads.get(fileId)
+    if (download === undefined) throw new Error('fake Telegram file is unavailable')
+    return download
+  }
 }
 
 async function waitForRequest(transport: FakeTransport, method: string) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     const request = transport.sent.find(
       (message) => 'method' in message && 'id' in message && message.method === method,
     )
     if (request !== undefined && 'id' in request) return request
-    await Promise.resolve()
+    await Bun.sleep(1)
   }
   throw new Error(`${method} request not observed`)
 }
@@ -109,6 +119,7 @@ beforeEach(async () => {
       allowedUserIds: ['7001'],
       allowedChatIds: ['7001'],
       defaultProjectId: 'workspace',
+      attachmentDirectory: join(root, 'attachments'),
     },
     inboxWorker: { now: () => NOW },
     outboxWorker: { now: () => NOW },
@@ -300,5 +311,124 @@ describe('durable text runtime composition', () => {
     expect(
       database.query<{ project_id: string }, []>('SELECT project_id FROM sessions').get()?.project_id,
     ).toBe('other')
+  })
+
+  test('downloads a photo durably, sends localImage and journals unknown events', async () => {
+    telegram.downloads.set('photo-large', {
+      bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00]),
+      fileSize: 5,
+      uniqueId: 'photo-u1',
+    })
+    const accepted = runtime.ingest({
+      update_id: 806,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        caption: 'проверь макет',
+        photo: [{
+          file_id: 'photo-large',
+          file_unique_id: 'photo-u1',
+          width: 1280,
+          height: 720,
+          file_size: 5,
+        }],
+      },
+    }, NOW)
+    expect(accepted.update.routingClass).toBe('MESSAGE')
+
+    const processing = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-image' } } })
+    const turnStart = await waitForRequest(transport, 'turn/start')
+    expect(turnStart).toMatchObject({
+      params: {
+        input: [
+          { type: 'text', text: 'проверь макет', text_elements: [] },
+          { type: 'localImage', path: expect.stringContaining('/attachments/') },
+        ],
+      },
+    })
+    transport.emit({ id: turnStart.id, result: { turn: { id: 'turn-image' } } })
+    transport.emit({
+      method: 'future/progress',
+      params: {
+        threadId: 'thread-image',
+        turnId: 'turn-image',
+        privatePayload: 'must-not-be-stored',
+      },
+    })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-image',
+        turnId: 'turn-image',
+        item: { type: 'agentMessage', id: 'image-answer', text: 'Вижу.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-image',
+        turn: { id: 'turn-image', status: 'completed', items: [] },
+      },
+    })
+    expect((await processing).outcome).toBe('enqueued')
+    expect(telegram.downloadCalls).toEqual(['photo-large'])
+    expect(
+      database.query<{ state: string; actual_size: number }, []>(
+        'SELECT state, actual_size FROM telegram_attachments',
+      ).get(),
+    ).toEqual({ state: 'READY', actual_size: 5 })
+    expect(
+      database.query<{
+        method: string
+        occurrence_count: number
+        thread_id: string
+        turn_id: string
+      }, []>(
+        `SELECT method, occurrence_count, thread_id, turn_id
+         FROM codex_unhandled_notifications`,
+      ).get(),
+    ).toEqual({
+      method: 'future/progress',
+      occurrence_count: 1,
+      thread_id: 'thread-image',
+      turn_id: 'turn-image',
+    })
+    expect(
+      JSON.stringify(database.query<Record<string, unknown>, []>(
+        'SELECT * FROM codex_unhandled_notifications',
+      ).all()),
+    ).not.toContain('must-not-be-stored')
+  })
+
+  test('rejects a disallowed document through durable outbox before Codex', async () => {
+    const accepted = runtime.ingest({
+      update_id: 807,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        document: {
+          file_id: 'binary-1',
+          file_unique_id: 'binary-u1',
+          file_name: 'payload.exe',
+          mime_type: 'application/x-msdownload',
+          file_size: 100,
+        },
+      },
+    }, NOW)
+    expect(accepted.update.routingClass).toBe('MESSAGE')
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    expect(
+      transport.sent.some((message) => 'method' in message && message.method === 'thread/start'),
+    ).toBe(false)
+    expect(telegram.downloadCalls).toEqual([])
+    expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
+    expect(telegram.sent[0]?.text).toContain('тип вложения запрещён')
+    expect(
+      database.query<{ state: string; rejection_reason: string }, []>(
+        'SELECT state, rejection_reason FROM telegram_attachments',
+      ).get(),
+    ).toEqual({ state: 'REJECTED', rejection_reason: 'mime_not_allowed' })
   })
 })

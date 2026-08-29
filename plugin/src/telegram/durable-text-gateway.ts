@@ -1,6 +1,8 @@
 import type {
+  AgentLocalAttachment,
   FinalTextDelivery,
   CommandDelivery,
+  InboundRejectionDelivery,
   IncomingCommand,
   IncomingInteractionResponse,
   IncomingTextMessage,
@@ -9,8 +11,16 @@ import type {
 } from '../bridge/contracts.js'
 import type { DeliveryJob, DeliveryJobInput, InboxUpdate } from '../durable/contracts.js'
 import { redactSecrets } from '../safety/redact.js'
+import type {
+  InboundAttachmentStore,
+  TelegramAttachmentDownload,
+} from './durable-attachment-store.js'
 
 export interface TelegramTextApi {
+  downloadAttachment?(
+    fileId: string,
+    maxBytes: number,
+  ): Promise<TelegramAttachmentDownload>
   answerCallbackQuery?(
     callbackQueryId: string,
     options: { text?: string },
@@ -45,6 +55,7 @@ export interface DurableTelegramTextGatewayOptions {
   maxTextLength?: number
   botUsername?: string
   projectIdForChat?: (chatId: string) => string
+  attachmentStore?: InboundAttachmentStore
 }
 
 export type PreparedTextDelivery = {
@@ -72,6 +83,21 @@ interface TelegramMessagePayload {
     chat?: { id?: string | number; type?: string }
     from?: { id?: string | number; is_bot?: boolean }
     text?: string
+    caption?: string
+    photo?: Array<{
+      file_id?: string
+      file_unique_id?: string
+      file_size?: number
+      width?: number
+      height?: number
+    }>
+    document?: {
+      file_id?: string
+      file_unique_id?: string
+      file_name?: string
+      mime_type?: string
+      file_size?: number
+    }
   }
 }
 
@@ -157,6 +183,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly maxTextLength: number
   private readonly botUsername: string | null
   private readonly projectIdForChat: (chatId: string) => string
+  private readonly attachmentStore: InboundAttachmentStore | undefined
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -169,6 +196,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.maxTextLength = options.maxTextLength ?? TELEGRAM_TEXT_LIMIT
     this.botUsername = options.botUsername?.replace(/^@/, '').toLowerCase() ?? null
     this.projectIdForChat = options.projectIdForChat ?? (() => this.defaultProjectId)
+    this.attachmentStore = options.attachmentStore
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -181,11 +209,52 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   extractText(update: InboxUpdate): IncomingTextMessage | null {
-    const message = this.authorizedMessage(update)
-    if (message === null) return null
-    const trimmed = message.text.trim()
-    if (trimmed.length === 0 || trimmed.startsWith('/')) return null
-    return { chatId: message.chatId, projectId: this.projectIdForChat(message.chatId), text: message.text }
+    const authorized = this.authorizedEnvelope(update)
+    if (authorized === null) return null
+    const text = typeof authorized.message.text === 'string'
+      ? authorized.message.text
+      : typeof authorized.message.caption === 'string'
+        ? authorized.message.caption
+        : ''
+    const attachments = this.extractAttachments(authorized.message)
+    const trimmed = text.trim()
+    if (trimmed.startsWith('/') || (trimmed.length === 0 && attachments.length === 0)) return null
+    return {
+      chatId: authorized.chatId,
+      projectId: this.projectIdForChat(authorized.chatId),
+      text,
+      ...(attachments.length === 0 ? {} : { attachments }),
+    }
+  }
+
+  async prepareInboundMessage(
+    update: InboxUpdate,
+    message: IncomingTextMessage,
+  ) {
+    const candidates = message.attachments ?? []
+    if (candidates.length === 0) {
+      return { outcome: 'accepted' as const, message: { ...message, attachments: [] } }
+    }
+    if (this.attachmentStore === undefined) {
+      return { outcome: 'rejected' as const, text: 'Вложения отключены в конфигурации bridge.' }
+    }
+    const attachments: AgentLocalAttachment[] = []
+    for (const [ordinal, candidate] of candidates.entries()) {
+      const materialized = await this.attachmentStore.materialize(update.id, ordinal, candidate)
+      if (materialized.outcome === 'rejected') {
+        const text = materialized.reason === 'size_limit'
+          ? 'Вложение превышает разрешённый размер.'
+          : materialized.reason === 'mime_not_allowed'
+            ? 'Этот тип вложения запрещён конфигурацией bridge.'
+            : 'Содержимое вложения не соответствует заявленному типу.'
+        return { outcome: 'rejected' as const, text }
+      }
+      attachments.push(materialized.attachment)
+    }
+    return {
+      outcome: 'accepted' as const,
+      message: { ...message, attachments },
+    }
   }
 
   extractCommand(update: InboxUpdate): IncomingCommand | null {
@@ -297,6 +366,15 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     }
   }
 
+  buildInboundRejectionDelivery(input: InboundRejectionDelivery): DeliveryJobInput {
+    return {
+      sourceKey: input.sourceKey,
+      kind: 'send_text',
+      payload: { chatId: input.message.chatId, text: input.text },
+      createdAtMs: input.nowMs,
+    }
+  }
+
   async prepareDelivery(job: DeliveryJob): Promise<PreparedTextDelivery> {
     if (job.kind === 'reaction') {
       if (!isRecord(job.payload)) throw new TelegramDeliveryPayloadError('reaction payload must be an object')
@@ -380,19 +458,64 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   private authorizedMessage(update: InboxUpdate): { chatId: string; text: string } | null {
+    const authorized = this.authorizedEnvelope(update)
+    if (authorized === null || typeof authorized.message.text !== 'string') return null
+    return { chatId: authorized.chatId, text: authorized.message.text }
+  }
+
+  private authorizedEnvelope(update: InboxUpdate): {
+    chatId: string
+    message: NonNullable<TelegramMessagePayload['message']>
+  } | null {
     if (!isRecord(update.payload)) return null
-    const payload = update.payload as TelegramMessagePayload
-    const message = payload.message
+    const message = (update.payload as TelegramMessagePayload).message
     const chatId = message?.chat?.id
     const senderId = message?.from?.id
-    const text = message?.text
     if (message?.chat?.type !== 'private' || message.from?.is_bot === true) return null
-    if (chatId === undefined || senderId === undefined || typeof text !== 'string') return null
+    if (chatId === undefined || senderId === undefined || message === undefined) return null
     const normalizedChatId = String(chatId)
     const normalizedSenderId = String(senderId)
     if (!this.allowedChats.has(normalizedChatId) || !this.allowedUsers.has(normalizedSenderId)) {
       return null
     }
-    return { chatId: normalizedChatId, text }
+    return { chatId: normalizedChatId, message }
+  }
+
+  private extractAttachments(
+    message: NonNullable<TelegramMessagePayload['message']>,
+  ): NonNullable<IncomingTextMessage['attachments']> {
+    const photos = message.photo?.filter((photo) =>
+      typeof photo.file_id === 'string' && photo.file_id.length > 0
+    ) ?? []
+    const photo = [...photos].sort((left, right) =>
+      ((right.width ?? 0) * (right.height ?? 0)) - ((left.width ?? 0) * (left.height ?? 0))
+    )[0]
+    if (photo?.file_id !== undefined) {
+      return [{
+        kind: 'image',
+        fileId: photo.file_id,
+        uniqueId: typeof photo.file_unique_id === 'string' ? photo.file_unique_id : null,
+        fileName: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        declaredSize: Number.isSafeInteger(photo.file_size) && (photo.file_size as number) >= 0
+          ? photo.file_size as number
+          : null,
+      }]
+    }
+    const document = message.document
+    if (typeof document?.file_id !== 'string' || document.file_id.length === 0) return []
+    const mimeType = typeof document.mime_type === 'string'
+      ? document.mime_type.toLowerCase().split(';', 1)[0]?.trim() || 'application/octet-stream'
+      : 'application/octet-stream'
+    return [{
+      kind: mimeType.startsWith('image/') ? 'image' : 'file',
+      fileId: document.file_id,
+      uniqueId: typeof document.file_unique_id === 'string' ? document.file_unique_id : null,
+      fileName: typeof document.file_name === 'string' ? document.file_name : null,
+      mimeType,
+      declaredSize: Number.isSafeInteger(document.file_size) && (document.file_size as number) >= 0
+        ? document.file_size as number
+        : null,
+    }]
   }
 }

@@ -105,6 +105,119 @@ describe('DurableTelegramTextGateway inbound', () => {
     }
   })
 
+  test('extracts the largest photo and allowlist-gated document messages', () => {
+    const photo = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        caption: 'что на картинке?',
+        photo: [
+          { file_id: 'small', file_unique_id: 'u-small', width: 90, height: 90, file_size: 100 },
+          { file_id: 'large', file_unique_id: 'u-large', width: 1280, height: 720, file_size: 500 },
+        ],
+      },
+    })
+    expect(gateway.extractText(photo)).toEqual({
+      chatId: '7001',
+      projectId: 'workspace',
+      text: 'что на картинке?',
+      attachments: [{
+        kind: 'image',
+        fileId: 'large',
+        uniqueId: 'u-large',
+        fileName: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        declaredSize: 500,
+      }],
+    })
+
+    const document = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        document: {
+          file_id: 'doc-1',
+          file_unique_id: 'doc-u1',
+          file_name: '../report.pdf',
+          mime_type: 'application/pdf',
+          file_size: 42,
+        },
+      },
+    })
+    expect(gateway.extractText(document)).toMatchObject({
+      text: '',
+      attachments: [{ kind: 'file', fileId: 'doc-1', mimeType: 'application/pdf' }],
+    })
+
+    expect(gateway.extractText(acceptedUpdate({
+      message: {
+        chat: { id: 9999, type: 'private' },
+        from: { id: 9999 },
+        photo: [{ file_id: 'foreign', width: 1, height: 1 }],
+      },
+    }))).toBeNull()
+  })
+
+  test('materializes accepted attachments and returns safe policy rejections', async () => {
+    const update = acceptedUpdate({ update_id: 700 })
+    const message = {
+      chatId: '7001',
+      projectId: 'workspace',
+      text: '',
+      attachments: [{
+        kind: 'file' as const,
+        fileId: 'doc-1',
+        uniqueId: 'u1',
+        fileName: 'report.pdf',
+        mimeType: 'application/pdf',
+        declaredSize: 42,
+      }],
+    }
+    const acceptedGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: [7001],
+      defaultProjectId: 'workspace',
+      attachmentStore: {
+        materialize: async (sourceUpdateId, ordinal) => ({
+          outcome: 'accepted',
+          attachment: {
+            kind: 'file',
+            path: `/safe/${sourceUpdateId}-${ordinal}.pdf`,
+            fileName: 'report.pdf',
+            mimeType: 'application/pdf',
+            size: 42,
+          },
+        }),
+      },
+    })
+    expect(await acceptedGateway.prepareInboundMessage(update, message)).toEqual({
+      outcome: 'accepted',
+      message: {
+        ...message,
+        attachments: [{
+          kind: 'file',
+          path: `/safe/${update.id}-0.pdf`,
+          fileName: 'report.pdf',
+          mimeType: 'application/pdf',
+          size: 42,
+        }],
+      },
+    })
+
+    const rejectedGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: [7001],
+      defaultProjectId: 'workspace',
+      attachmentStore: {
+        materialize: async () => ({ outcome: 'rejected', reason: 'mime_not_allowed' }),
+      },
+    })
+    expect(await rejectedGateway.prepareInboundMessage(update, message)).toEqual({
+      outcome: 'rejected',
+      text: 'Этот тип вложения запрещён конфигурацией bridge.',
+    })
+  })
+
   test('parses only supported commands addressed to this bot', () => {
     const make = (text: string) => acceptedUpdate({
       message: {

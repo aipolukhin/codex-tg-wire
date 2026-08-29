@@ -44,6 +44,9 @@ describe('loadBridgeServiceConfig', () => {
     })
 
     expect(config.stateDatabase).toBe(join(root, 'state', 'runtime.sqlite3'))
+    expect(config.attachments.directory).toBe(join(root, 'state', 'attachments'))
+    expect(config.attachments.maxBytes).toBe(20 * 1024 * 1024)
+    expect(config.attachments.allowedMimeTypes).toContain('image/jpeg')
     expect(config.projects).toEqual([{ id: 'main', cwd: join(root, 'workspace') }])
     expect(config.telegram.allowedUserIds).toEqual(['123456789'])
     expect(config.telegram.allowedChatIds).toEqual(['123456789', '-1001234567890'])
@@ -123,5 +126,27 @@ describe('loadBridgeServiceConfig', () => {
         },
       }),
     ).toThrow('must be included in codex.allowedSandboxModes')
+  })
+
+  test('validates attachment MIME policy and byte ceiling', () => {
+    const invalidMime = fixture({
+      attachments: { allowedMimeTypes: ['not-a-mime'] },
+    })
+    expect(() => loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: invalidMime.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+      },
+    })).toThrow('invalid bridge config')
+
+    const tooLarge = fixture({
+      attachments: { maxBytes: 20 * 1024 * 1024 + 1 },
+    })
+    expect(() => loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: tooLarge.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+      },
+    })).toThrow('invalid bridge config')
   })
 })

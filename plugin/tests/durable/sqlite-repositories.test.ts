@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite'
 
 import { LeaseConflictError } from '../../src/durable/contracts.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
+import { SqliteCodexEventRepository } from '../../src/durable/codex-event-repository.js'
 import { SqliteAgentSettingsRepository } from '../../src/durable/settings-repository.js'
 import {
   SqliteInboxRepository,
@@ -49,10 +50,12 @@ describe('durable database migrations', () => {
     expect(tables).toEqual([
       'agent_project_settings',
       'codex_interactions',
+      'codex_unhandled_notifications',
       'delivery_jobs',
       'delivery_problem_actions',
       'schema_migrations',
       'sessions',
+      'telegram_attachments',
       'telegram_chat_preferences',
       'telegram_poll_cursors',
       'telegram_updates',
@@ -66,7 +69,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(8)
+    expect(migrations?.count).toBe(9)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {
@@ -164,6 +167,59 @@ describe('SqliteAgentSettingsRepository', () => {
       createdAtMs: NOW,
       updatedAtMs: NOW + 1,
     })
+  })
+})
+
+describe('SqliteCodexEventRepository', () => {
+  test('aggregates safe correlation metadata without persisting event payloads', () => {
+    let nowMs = NOW
+    let events = new SqliteCodexEventRepository(database, { now: () => nowMs })
+    events.recordUnhandledNotification({
+      method: 'future/progress',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        payload: 'private request body',
+      },
+    })
+    nowMs += 1
+    events.recordUnhandledNotification({
+      method: 'future/progress',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        payload: 'another private body',
+      },
+    })
+    expect(events.list()).toEqual([{
+      method: 'future/progress',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      occurrenceCount: 2,
+      firstSeenAtMs: NOW,
+      lastSeenAtMs: NOW + 1,
+    }])
+    expect(
+      JSON.stringify(database.query<Record<string, unknown>, []>(
+        'SELECT * FROM codex_unhandled_notifications',
+      ).all()),
+    ).not.toContain('private body')
+
+    database.close()
+    database = openDurableDatabase(filename)
+    events = new SqliteCodexEventRepository(database)
+    expect(events.list()[0]?.occurrenceCount).toBe(2)
+  })
+
+  test('bounds unknown notification cardinality', () => {
+    const events = new SqliteCodexEventRepository(database, {
+      now: () => NOW,
+      maxRows: 2,
+    })
+    for (const method of ['future/one', 'future/two', 'future/three']) {
+      events.recordUnhandledNotification({ method })
+    }
+    expect(events.list().map((event) => event.method)).toEqual(['future/three', 'future/two'])
   })
 })
 

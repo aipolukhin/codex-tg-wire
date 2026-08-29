@@ -6,6 +6,7 @@ import type {
 import type {
   CommandHandler,
   InteractionHandler,
+  PreparedIncomingMessage,
   SessionCoordinator,
   TelegramGateway,
 } from './contracts.js'
@@ -172,15 +173,52 @@ export class InboxProcessingWorker {
       return { outcome: 'ignored', updateId: update.id }
     }
 
+    let preparedMessage: PreparedIncomingMessage = {
+      chatId: message.chatId,
+      projectId: message.projectId,
+      text: message.text,
+      attachments: [],
+    }
+    if (this.telegram.prepareInboundMessage !== undefined) {
+      const prepared = await this.telegram.prepareInboundMessage(update, message)
+      if (prepared.outcome === 'rejected') {
+        const buildDelivery = this.telegram.buildInboundRejectionDelivery
+        if (buildDelivery === undefined) {
+          throw new Error('Telegram gateway cannot build inbound rejection replies')
+        }
+        const rejectedAtMs = this.now()
+        const rejectionKey = `${operationKey(update)}:rejected`
+        const enqueue = this.outbox.enqueue({
+          ...buildDelivery.call(this.telegram, {
+            update,
+            message,
+            text: prepared.text,
+            sourceKey: rejectionKey,
+            nowMs: rejectedAtMs,
+          }),
+          sourceKey: rejectionKey,
+          createdAtMs: rejectedAtMs,
+        })
+        this.inbox.markProcessed(update.id, this.workerId, rejectedAtMs)
+        return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
+      }
+      preparedMessage = prepared.message
+    } else if ((message.attachments?.length ?? 0) > 0) {
+      throw new Error('Telegram gateway cannot prepare inbound attachments')
+    }
+
     const turnKey = operationKey(update)
     const result = await this.coordinator.runTextTurn({
       operationKey: turnKey,
       inboxUpdateId: update.id,
       botId: update.botId,
       updateId: update.updateId,
-      chatId: message.chatId,
-      projectId: message.projectId,
-      text: message.text,
+      chatId: preparedMessage.chatId,
+      projectId: preparedMessage.projectId,
+      text: preparedMessage.text,
+      ...(preparedMessage.attachments.length === 0
+        ? {}
+        : { attachments: preparedMessage.attachments }),
     })
     const completedAtMs = this.now()
     const enqueue = this.outbox.enqueue({

@@ -11,6 +11,23 @@
     "allowedUserIds": ["123456789"],
     "allowedChatIds": ["123456789"]
   },
+  "attachments": {
+    "directory": "./state/attachments",
+    "maxBytes": 20971520,
+    "allowedMimeTypes": [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "application/json",
+      "application/pdf",
+      "application/xml",
+      "text/xml"
+    ]
+  },
   "codex": {
     "approvalPolicy": "on-request",
     "sandboxMode": "workspace-write",

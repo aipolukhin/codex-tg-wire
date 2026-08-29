@@ -62,6 +62,15 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    ux: z
+      .object({
+        enabled: z.boolean().default(true),
+        heartbeatAfterMs: z.number().int().min(10_000).default(2 * 60_000),
+        heartbeatIntervalMs: z.number().int().min(10_000).default(5 * 60_000),
+        pollIntervalMs: z.number().int().min(1_000).default(30_000),
+      })
+      .strict()
+      .default({}),
     workers: z
       .object({
         leaseDurationMs: z.number().int().min(1_000).default(60_000),
@@ -103,6 +112,13 @@ export const BridgeConfigFileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['codex', 'sandboxMode'],
         message: 'must be included in codex.allowedSandboxModes',
+      })
+    }
+    if (config.ux.heartbeatIntervalMs < config.ux.pollIntervalMs) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ux', 'heartbeatIntervalMs'],
+        message: 'must be greater than or equal to ux.pollIntervalMs',
       })
     }
   })

@@ -1,6 +1,8 @@
 import type {
   AgentBackend,
   AgentSettingsProvider,
+  AgentTurnSettings,
+  AgentTurnUxObserver,
   SessionCoordinator,
   TextTurnOperation,
   TextTurnResult,
@@ -103,6 +105,7 @@ export interface DurableSessionCoordinatorOptions {
   now?: () => number
   backendName?: string
   settingsProvider?: AgentSettingsProvider
+  uxObserver?: AgentTurnUxObserver
 }
 
 export class DurableSessionCoordinator implements SessionCoordinator {
@@ -110,6 +113,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
   private readonly now: () => number
   private readonly backendName: string
   private readonly settingsProvider: AgentSettingsProvider | undefined
+  private readonly uxObserver: AgentTurnUxObserver | undefined
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -120,6 +124,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     this.now = options.now ?? Date.now
     this.backendName = options.backendName ?? 'codex'
     this.settingsProvider = options.settingsProvider
+    this.uxObserver = options.uxObserver
   }
 
   runTextTurn(operation: TextTurnOperation): Promise<TextTurnResult> {
@@ -167,6 +172,12 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     let dispatching = false
     let readyThreadId: string | null = null
     let startedTurnId: string | null = null
+    const settings: AgentTurnSettings = this.settingsProvider?.getTurnSettings(
+      operation.botId,
+      operation.chatId,
+      operation.projectId,
+    ) ?? {}
+    this.notifyUx(() => this.uxObserver?.onPreparing(operation, settings))
     try {
       const result = await this.backend.runTextTurn(
         {
@@ -178,11 +189,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           ...(operation.attachments === undefined || operation.attachments.length === 0
             ? {}
             : { attachments: operation.attachments }),
-          settings: this.settingsProvider?.getTurnSettings(
-            operation.botId,
-            operation.chatId,
-            operation.projectId,
-          ) ?? {},
+          settings,
         },
         {
           onThreadReady: (threadId, created) => {
@@ -195,6 +202,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
             )
             dispatching = true
             readyThreadId = threadId
+            this.notifyUx(() => this.uxObserver?.onThreadReady(operation, threadId))
           },
           onTurnStarted: (threadId, turnId) => {
             this.sessions.markBackendTurnStarted(
@@ -205,6 +213,10 @@ export class DurableSessionCoordinator implements SessionCoordinator {
               this.now(),
             )
             startedTurnId = turnId
+            this.notifyUx(() => this.uxObserver?.onTurnStarted(operation, threadId, turnId))
+          },
+          onProgress: (progress) => {
+            this.notifyUx(() => this.uxObserver?.onProgress(operation, progress))
           },
         },
       )
@@ -217,13 +229,28 @@ export class DurableSessionCoordinator implements SessionCoordinator {
         )
       }
       this.sessions.completeTurn(prepared.turn.id, result, this.now())
+      this.notifyUx(() => this.uxObserver?.onCompleted(operation, result))
       return result
     } catch (error) {
+      let uxState: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN' = 'UNKNOWN'
       if (dispatching) {
-        const state = isDefiniteTurnError(error) ? error.agentTurnState : 'UNKNOWN'
-        this.sessions.markTerminal(prepared.turn.id, state, safeErrorSummary(error), this.now())
+        uxState = isDefiniteTurnError(error) ? error.agentTurnState : 'UNKNOWN'
+        this.sessions.markTerminal(prepared.turn.id, uxState, safeErrorSummary(error), this.now())
       }
+      this.notifyUx(() => this.uxObserver?.onTerminal(
+        operation,
+        uxState,
+        error instanceof Error && error.name.trim().length > 0 ? error.name : 'UnknownError',
+      ))
       throw error
+    }
+  }
+
+  private notifyUx(callback: () => void): void {
+    try {
+      callback()
+    } catch {
+      // UX projection must never change the durable turn outcome.
     }
   }
 }

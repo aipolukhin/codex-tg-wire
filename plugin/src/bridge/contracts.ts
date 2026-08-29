@@ -218,6 +218,73 @@ export interface AgentTextTurnInput {
 export interface AgentTurnLifecycle {
   onThreadReady?(threadId: string, created: boolean): void | Promise<void>
   onTurnStarted?(threadId: string, turnId: string): void | Promise<void>
+  onProgress?(progress: AgentTurnProgress): void | Promise<void>
+}
+
+export type AgentActivity =
+  | 'starting'
+  | 'reasoning'
+  | 'planning'
+  | 'command'
+  | 'file_change'
+  | 'mcp'
+  | 'web_search'
+  | 'image'
+  | 'compacting'
+  | 'working'
+
+export type AgentTurnProgress =
+  | {
+      kind: 'activity'
+      threadId: string
+      turnId: string
+      activity: AgentActivity
+      atMs: number
+    }
+  | {
+      kind: 'plan'
+      threadId: string
+      turnId: string
+      completed: number
+      total: number
+      atMs: number
+    }
+  | {
+      kind: 'usage'
+      threadId: string
+      turnId: string
+      totalTokens: number
+      inputTokens: number
+      outputTokens: number
+      contextWindow: number | null
+      atMs: number
+    }
+
+export interface AgentTurnUxObserver {
+  onPreparing(operation: TextTurnOperation, settings: AgentTurnSettings): void
+  onThreadReady(operation: TextTurnOperation, threadId: string): void
+  onTurnStarted(operation: TextTurnOperation, threadId: string, turnId: string): void
+  onProgress(operation: TextTurnOperation, progress: AgentTurnProgress): void
+  onCompleted(operation: TextTurnOperation, result: TextTurnResult): void
+  onTerminal(
+    operation: TextTurnOperation,
+    state: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN',
+    errorName: string,
+  ): void
+}
+
+export interface AgentUxStatusSnapshot {
+  phase: 'PREPARING' | 'ACTIVE' | 'COMPLETED' | 'FAILED' | 'INTERRUPTED' | 'UNKNOWN'
+  activity: AgentActivity
+  planCompleted: number
+  planTotal: number
+  totalTokens: number | null
+  contextWindow: number | null
+  updatedAtMs: number
+}
+
+export interface AgentUxStatusProvider {
+  getStatus(botId: string, chatId: string, projectId: string): AgentUxStatusSnapshot | null
 }
 
 export type AgentTurnInspection =

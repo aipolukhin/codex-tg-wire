@@ -62,6 +62,7 @@ export interface DurableTelegramTextGatewayOptions {
   botUsername?: string
   projectIdForChat?: (chatId: string) => string
   attachmentStore?: InboundAttachmentStore
+  deliveryProofForSourceKey?: (sourceKey: string) => string | null
 }
 
 export type PreparedTextDelivery = {
@@ -127,6 +128,7 @@ interface SendTextPayload {
 
 interface EditTextPayload extends SendTextPayload {
   messageId?: unknown
+  targetSourceKey?: unknown
 }
 
 interface AnswerCallbackPayload {
@@ -231,6 +233,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly botUsername: string | null
   private readonly projectIdForChat: (chatId: string) => string
   private readonly attachmentStore: InboundAttachmentStore | undefined
+  private readonly deliveryProofForSourceKey: ((sourceKey: string) => string | null) | undefined
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -244,6 +247,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.botUsername = options.botUsername?.replace(/^@/, '').toLowerCase() ?? null
     this.projectIdForChat = options.projectIdForChat ?? (() => this.defaultProjectId)
     this.attachmentStore = options.attachmentStore
+    this.deliveryProofForSourceKey = options.deliveryProofForSourceKey
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -564,14 +568,22 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       )
     }
     if (job.kind === 'edit') {
-      if (!Number.isSafeInteger(payload.messageId) || (payload.messageId as number) <= 0) {
-        throw new TelegramDeliveryPayloadError('edit messageId must be a positive safe integer')
+      let messageId = Number.isSafeInteger(payload.messageId) && (payload.messageId as number) > 0
+        ? payload.messageId as number
+        : null
+      if (messageId === null && typeof payload.targetSourceKey === 'string') {
+        const proof = this.deliveryProofForSourceKey?.(payload.targetSourceKey) ?? null
+        const match = proof?.match(/^telegram:([1-9]\d*)$/)
+        if (match?.[1] !== undefined) messageId = Number.parseInt(match[1], 10)
+      }
+      if (messageId === null || !Number.isSafeInteger(messageId)) {
+        throw new TelegramDeliveryPayloadError('edit target has no proven Telegram message_id')
       }
       return {
         kind: 'edit',
         jobId: job.id,
         chatId: payload.chatId,
-        messageId: payload.messageId as number,
+        messageId,
         text,
         options,
       }

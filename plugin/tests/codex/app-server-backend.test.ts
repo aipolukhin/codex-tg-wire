@@ -28,6 +28,7 @@ import type {
   TurnSteerResult,
 } from '../../src/codex/protocol.js'
 import type { TransportClose } from '../../src/codex/transport.js'
+import type { AgentTurnProgress } from '../../src/bridge/contracts.js'
 
 class FakeBackendClient {
   readonly threadStarts: ThreadStartParams[] = []
@@ -147,6 +148,70 @@ async function waitForTurnStart(client: FakeBackendClient, count = 1): Promise<v
 }
 
 describe('CodexAppServerBackend text turns', () => {
+  test('projects progress and usage without forwarding command, plan or reasoning content', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    const progress: AgentTurnProgress[] = []
+    const running = backend.runTextTurn(turnInput(), {
+      onProgress: (event) => { progress.push(event) },
+    })
+    await waitForTurnStart(client)
+
+    client.emit({
+      method: 'item/started',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        startedAtMs: 123,
+        item: { type: 'commandExecution', command: 'echo private-command' },
+      },
+    })
+    client.emit({
+      method: 'turn/plan/updated',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        explanation: 'private-plan',
+        plan: [
+          { step: 'private-step-a', status: 'completed' },
+          { step: 'private-step-b', status: 'inProgress' },
+        ],
+      },
+    })
+    client.emit({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 1200, inputTokens: 900, outputTokens: 300 },
+          last: { totalTokens: 200, inputTokens: 150, outputTokens: 50 },
+          modelContextWindow: 10_000,
+        },
+      },
+    })
+    emitCompleted(client, 'thread-1', 'turn-1', 'done')
+    await running
+
+    expect(progress).toEqual([
+      {
+        kind: 'activity', threadId: 'thread-1', turnId: 'turn-1',
+        activity: 'command', atMs: 123,
+      },
+      {
+        kind: 'plan', threadId: 'thread-1', turnId: 'turn-1',
+        completed: 1, total: 2, atMs: expect.any(Number),
+      },
+      {
+        kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
+        totalTokens: 1200, inputTokens: 900, outputTokens: 300,
+        contextWindow: 10_000, atMs: expect.any(Number),
+      },
+    ])
+    expect(JSON.stringify(progress)).not.toContain('private-')
+    backend.close()
+  })
+
   test('paginates the live model catalog and exposes reasoning capabilities', async () => {
     const client = new FakeBackendClient()
     client.modelPages = [

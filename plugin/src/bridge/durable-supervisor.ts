@@ -3,7 +3,7 @@ import type { DeliveryRunResult } from './outbox-delivery-worker.js'
 import type { LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import type { DurablePollResult } from '../telegram/durable-poller.js'
 
-export type SupervisorComponent = 'poller' | 'inbox' | 'outbox' | 'reaper'
+export type SupervisorComponent = 'poller' | 'inbox' | 'outbox' | 'reaper' | 'ux'
 
 export interface SupervisorErrorEvent {
   component: SupervisorComponent
@@ -19,6 +19,7 @@ export interface DurableSupervisorRuntime {
   processInboundOnce(): Promise<InboxRunResult>
   deliverOutboundOnce(): Promise<DeliveryRunResult>
   recoverExpiredLeases(): LeaseRecoverySweep
+  runUxHeartbeat?(): number
 }
 
 export interface DurableBridgeSupervisorOptions {
@@ -27,6 +28,7 @@ export interface DurableBridgeSupervisorOptions {
   workerIdleDelayMs?: number
   errorDelayMs?: number
   reaperIntervalMs?: number
+  uxIntervalMs?: number
   onError?: (event: SupervisorErrorEvent) => void
 }
 
@@ -40,6 +42,7 @@ const DEFAULT_POLL_IDLE_DELAY_MS = 100
 const DEFAULT_WORKER_IDLE_DELAY_MS = 50
 const DEFAULT_ERROR_DELAY_MS = 1_000
 const DEFAULT_REAPER_INTERVAL_MS = 5_000
+const DEFAULT_UX_INTERVAL_MS = 30_000
 
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -72,6 +75,7 @@ export class DurableBridgeSupervisor {
   private readonly workerIdleDelayMs: number
   private readonly errorDelayMs: number
   private readonly reaperIntervalMs: number
+  private readonly uxIntervalMs: number
   private readonly onError: ((event: SupervisorErrorEvent) => void) | undefined
   private active: ActiveRun | null = null
 
@@ -97,6 +101,7 @@ export class DurableBridgeSupervisor {
       options.reaperIntervalMs ?? DEFAULT_REAPER_INTERVAL_MS,
       'reaperIntervalMs',
     )
+    this.uxIntervalMs = positiveInteger(options.uxIntervalMs ?? DEFAULT_UX_INTERVAL_MS, 'uxIntervalMs')
     this.onError = options.onError
   }
 
@@ -109,6 +114,7 @@ export class DurableBridgeSupervisor {
     const controller = new AbortController()
     const loops: Promise<void>[] = [
       this.runReaperLoop(controller.signal),
+      this.runUxLoop(controller.signal),
       this.runPollerLoop(controller.signal),
       ...Array.from({ length: this.inboundConcurrency }, (_, index) =>
         this.runInboxLoop(index, controller.signal),
@@ -177,6 +183,17 @@ export class DurableBridgeSupervisor {
         this.reportError('reaper', null, error)
       }
       await abortableDelay(this.reaperIntervalMs, signal)
+    }
+  }
+
+  private async runUxLoop(signal: AbortSignal): Promise<void> {
+    while (!signal.aborted) {
+      try {
+        this.runtime.runUxHeartbeat?.()
+      } catch (error) {
+        this.reportError('ux', null, error)
+      }
+      await abortableDelay(this.uxIntervalMs, signal)
     }
   }
 

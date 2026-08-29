@@ -3,6 +3,7 @@ import type {
   AgentApprovalPolicy,
   AgentModel,
   AgentSandboxMode,
+  AgentUxStatusProvider,
   CommandHandler,
   CommandOperation,
   CommandResult,
@@ -25,6 +26,7 @@ export interface PersonalAlphaCommandsOptions {
   defaultApprovalPolicy?: AgentApprovalPolicy
   defaultSandbox?: AgentSandboxMode
   allowedSandboxModes?: readonly AgentSandboxMode[]
+  uxStatus?: AgentUxStatusProvider
 }
 
 const PROBLEM_LIST_LIMIT = 10
@@ -42,6 +44,7 @@ export class PersonalAlphaCommands implements CommandHandler {
   private readonly defaultApprovalPolicy: AgentApprovalPolicy
   private readonly defaultSandbox: AgentSandboxMode
   private readonly allowedSandboxModes: ReadonlySet<AgentSandboxMode>
+  private readonly uxStatus: AgentUxStatusProvider | undefined
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -59,6 +62,7 @@ export class PersonalAlphaCommands implements CommandHandler {
     this.allowedSandboxModes = new Set(
       options.allowedSandboxModes ?? ['read-only', 'workspace-write'],
     )
+    this.uxStatus = options.uxStatus
     if (!this.projects.has(this.defaultProjectId)) {
       throw new TypeError(`default project is not configured: ${this.defaultProjectId}`)
     }
@@ -131,6 +135,20 @@ export class PersonalAlphaCommands implements CommandHandler {
       command.projectId,
       this.backendName,
     )
+    const ux = this.uxStatus?.getStatus(
+      operation.botId,
+      command.chatId,
+      command.projectId,
+    ) ?? null
+    const uxLines = ux === null
+      ? []
+      : [
+          `UX: ${ux.phase} · ${ux.activity}`,
+          ...(ux.planTotal > 0 ? [`План: ${ux.planCompleted}/${ux.planTotal}`] : []),
+          ...(ux.totalTokens === null
+            ? []
+            : [`Контекст: ${ux.totalTokens}${ux.contextWindow === null ? '' : ` / ${ux.contextWindow}`}`]),
+        ]
     if (overview.session === null) {
       return [
         `Проект: ${command.projectId}`,
@@ -139,6 +157,7 @@ export class PersonalAlphaCommands implements CommandHandler {
         `Effort: ${settings?.effort ?? 'model default'}`,
         `Sandbox: ${settings?.sandbox ?? this.defaultSandbox}`,
         `Approval: ${settings?.approvalPolicy ?? this.defaultApprovalPolicy}`,
+        ...uxLines,
       ].join('\n')
     }
     const thread = overview.binding === null
@@ -155,6 +174,7 @@ export class PersonalAlphaCommands implements CommandHandler {
       `Effort: ${settings?.effort ?? 'model default'}`,
       `Sandbox: ${settings?.sandbox ?? this.defaultSandbox}`,
       `Approval: ${settings?.approvalPolicy ?? this.defaultApprovalPolicy}`,
+      ...uxLines,
     ].join('\n')
   }
 

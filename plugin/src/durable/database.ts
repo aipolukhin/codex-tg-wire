@@ -397,6 +397,46 @@ const MIGRATIONS: readonly Migration[] = [
         ON delivery_jobs (depends_on_source_key, state, created_at_ms)`,
     ],
   },
+  {
+    version: 14,
+    name: 'codex_turn_ux_projection',
+    statements: [
+      `CREATE TABLE codex_turn_ux (
+        operation_key TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        thread_id TEXT,
+        turn_id TEXT,
+        root_source_key TEXT NOT NULL UNIQUE,
+        tail_source_key TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        phase TEXT NOT NULL DEFAULT 'PREPARING'
+          CHECK (phase IN ('PREPARING', 'ACTIVE', 'COMPLETED', 'FAILED', 'INTERRUPTED', 'UNKNOWN')),
+        activity TEXT NOT NULL DEFAULT 'starting'
+          CHECK (activity IN ('starting', 'reasoning', 'planning', 'command', 'file_change',
+            'mcp', 'web_search', 'image', 'compacting', 'working')),
+        model TEXT,
+        effort TEXT,
+        sandbox TEXT,
+        approval_policy TEXT,
+        plan_completed INTEGER NOT NULL DEFAULT 0 CHECK (plan_completed >= 0),
+        plan_total INTEGER NOT NULL DEFAULT 0 CHECK (plan_total >= 0),
+        total_tokens INTEGER CHECK (total_tokens IS NULL OR total_tokens >= 0),
+        input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
+        output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
+        context_window INTEGER CHECK (context_window IS NULL OR context_window >= 0),
+        last_activity_at_ms INTEGER NOT NULL,
+        last_heartbeat_at_ms INTEGER,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      )`,
+      `CREATE INDEX codex_turn_ux_chat_idx
+        ON codex_turn_ux (bot_id, chat_id, project_id, updated_at_ms)`,
+      `CREATE INDEX codex_turn_ux_heartbeat_idx
+        ON codex_turn_ux (phase, last_activity_at_ms, last_heartbeat_at_ms)`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

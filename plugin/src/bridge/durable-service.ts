@@ -164,6 +164,11 @@ export async function bootstrapDurableBridgeService(
       },
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
+      ux: {
+        enabled: config.ux.enabled,
+        heartbeatAfterMs: config.ux.heartbeatAfterMs,
+        heartbeatIntervalMs: config.ux.heartbeatIntervalMs,
+      },
     })
     const recovery = await runtime.recoverStartup()
     options.logger?.info('durable startup recovery completed', recovery)
@@ -177,6 +182,7 @@ export async function bootstrapDurableBridgeService(
     const supervisorOptions: DurableBridgeSupervisorOptions = {
       inboundConcurrency: config.workers.inboundConcurrency,
       reaperIntervalMs: config.workers.reaperIntervalMs,
+      uxIntervalMs: config.ux.pollIntervalMs,
       onError: (event) => options.logger?.warn('durable loop failed', { ...event }),
     }
     const supervisor = new DurableBridgeSupervisor(poller, runtime, supervisorOptions)

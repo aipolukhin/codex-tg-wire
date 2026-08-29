@@ -1,9 +1,11 @@
 import type {
   AgentBackend,
+  AgentActivity,
   AgentEventDiagnostics,
   AgentModel,
   AgentSandboxMode,
   AgentTextTurnInput,
+  AgentTurnProgress,
   AgentTurnInspection,
   AgentTurnInspectionInput,
   AgentTurnLifecycle,
@@ -59,6 +61,7 @@ interface PendingTurn {
   threadId: string
   turnId: string | null
   messages: Map<string, AgentMessage>
+  lifecycle: AgentTurnLifecycle
   resolve: (turn: TerminalTurn) => void
   reject: (error: Error) => void
   promise: Promise<TerminalTurn>
@@ -262,6 +265,86 @@ function finalText(turn: TerminalTurn, streamed: Map<string, AgentMessage>): str
   return legacy.at(-1)?.text ?? ''
 }
 
+function eventCorrelation(params: unknown): { threadId: string; turnId: string } | null {
+  if (!isRecord(params) || typeof params.threadId !== 'string' || typeof params.turnId !== 'string') {
+    return null
+  }
+  return { threadId: params.threadId, turnId: params.turnId }
+}
+
+function eventTime(params: Record<string, unknown>): number {
+  return Number.isSafeInteger(params.startedAtMs) && (params.startedAtMs as number) >= 0
+    ? params.startedAtMs as number
+    : Date.now()
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null
+}
+
+function itemActivity(item: unknown): AgentActivity | null {
+  if (!isRecord(item) || typeof item.type !== 'string') return null
+  switch (item.type) {
+    case 'reasoning': return 'reasoning'
+    case 'plan': return 'planning'
+    case 'commandExecution': return 'command'
+    case 'fileChange': return 'file_change'
+    case 'mcpToolCall':
+    case 'dynamicToolCall': return 'mcp'
+    case 'webSearch': return 'web_search'
+    case 'imageView':
+    case 'imageGeneration': return 'image'
+    case 'contextCompaction': return 'compacting'
+    case 'agentMessage': return 'working'
+    default: return null
+  }
+}
+
+/** Projects raw App Server notifications into payload-free UX facts. */
+function parseTurnProgress(notification: ServerNotification): AgentTurnProgress | null {
+  const correlation = eventCorrelation(notification.params)
+  if (correlation === null || !isRecord(notification.params)) return null
+  const params = notification.params
+  if (notification.method === 'item/started') {
+    const activity = itemActivity(params.item)
+    return activity === null
+      ? null
+      : { kind: 'activity', ...correlation, activity, atMs: eventTime(params) }
+  }
+  if (notification.method === 'thread/compacted') {
+    return { kind: 'activity', ...correlation, activity: 'compacting', atMs: Date.now() }
+  }
+  if (notification.method === 'turn/plan/updated') {
+    if (!Array.isArray(params.plan)) return null
+    const steps = params.plan.filter(isRecord)
+    return {
+      kind: 'plan',
+      ...correlation,
+      completed: steps.filter((step) => step.status === 'completed').length,
+      total: steps.length,
+      atMs: Date.now(),
+    }
+  }
+  if (notification.method !== 'thread/tokenUsage/updated' || !isRecord(params.tokenUsage)) {
+    return null
+  }
+  const total = params.tokenUsage.total
+  if (!isRecord(total)) return null
+  const totalTokens = nonNegativeInteger(total.totalTokens)
+  const inputTokens = nonNegativeInteger(total.inputTokens)
+  const outputTokens = nonNegativeInteger(total.outputTokens)
+  if (totalTokens === null || inputTokens === null || outputTokens === null) return null
+  return {
+    kind: 'usage',
+    ...correlation,
+    totalTokens,
+    inputTokens,
+    outputTokens,
+    contextWindow: nonNegativeInteger(params.tokenUsage.modelContextWindow),
+    atMs: Date.now(),
+  }
+}
+
 export class CodexAppServerBackend implements AgentBackend {
   private readonly client: CodexBackendClient
   private readonly turnTimeoutMs: number
@@ -324,7 +407,7 @@ export class CodexAppServerBackend implements AgentBackend {
     const threadId = thread.id
     if (this.pendingByThread.has(threadId)) throw new CodexTurnBusyError(threadId)
 
-    const pending = this.createPending(threadId)
+    const pending = this.createPending(threadId, lifecycle)
     this.pendingByThread.set(threadId, pending)
     try {
       await lifecycle.onThreadReady?.(threadId, thread.created)
@@ -470,7 +553,7 @@ export class CodexAppServerBackend implements AgentBackend {
     return { id: resumed.thread.id, created: false }
   }
 
-  private createPending(threadId: string): PendingTurn {
+  private createPending(threadId: string, lifecycle: AgentTurnLifecycle): PendingTurn {
     let resolve!: (turn: TerminalTurn) => void
     let reject!: (error: Error) => void
     const promise = new Promise<TerminalTurn>((resolvePromise, rejectPromise) => {
@@ -482,6 +565,7 @@ export class CodexAppServerBackend implements AgentBackend {
       threadId,
       turnId: null,
       messages: new Map(),
+      lifecycle,
       resolve,
       reject,
       promise,
@@ -498,6 +582,13 @@ export class CodexAppServerBackend implements AgentBackend {
   private handleNotification(notification: ServerNotification): void {
     if (!KNOWN_CODEX_NOTIFICATION_METHODS.has(notification.method)) {
       this.eventDiagnostics?.recordUnhandledNotification(notification)
+    }
+    const progress = parseTurnProgress(notification)
+    if (progress !== null) {
+      const pending = this.pendingByThread.get(progress.threadId)
+      if (pending !== undefined && (pending.turnId === null || pending.turnId === progress.turnId)) {
+        void Promise.resolve(pending.lifecycle.onProgress?.(progress)).catch(() => undefined)
+      }
     }
     if (notification.method === 'turn/started') {
       const started = parseThreadTurn(notification.params)

@@ -55,12 +55,18 @@ class FakeTransport implements AppServerTransport {
 
 class FakeTelegramApi {
   readonly sent: Array<{ chatId: string; text: string }> = []
+  readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly downloads = new Map<string, TelegramAttachmentDownload>()
   readonly downloadCalls: string[] = []
 
   async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
     this.sent.push({ chatId, text })
-    return { message_id: 901 }
+    return { message_id: 900 + this.sent.length }
+  }
+
+  async editMessageText(chatId: string, messageId: number, text: string): Promise<true> {
+    this.edits.push({ chatId, messageId, text })
+    return true
   }
 
   async downloadAttachment(fileId: string): Promise<TelegramAttachmentDownload> {
@@ -180,19 +186,21 @@ describe('durable text runtime composition', () => {
     })
 
     expect((await processing).outcome).toBe('enqueued')
-    expect(await runtime.deliverOutboundOnce()).toEqual({
-      outcome: 'delivered',
-      jobId: expect.any(String),
-      remoteId: 'telegram:901',
-    })
-    expect(telegram.sent).toEqual([{ chatId: '7001', text: 'Готово.' }])
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if ((await runtime.deliverOutboundOnce()).outcome === 'idle') break
+    }
+    expect(telegram.sent.at(0)?.text).toContain('Codex · подготовка')
+    expect(telegram.edits.at(-1)?.text).toContain('Codex · готово')
+    expect(telegram.sent.at(-1)).toEqual({ chatId: '7001', text: 'Готово.' })
 
     expect(
       database.query<{ state: string }, []>('SELECT state FROM telegram_updates').get()?.state,
     ).toBe('PROCESSED')
     expect(
-      database.query<{ state: string }, []>('SELECT state FROM delivery_jobs').get()?.state,
-    ).toBe('DELIVERED')
+      database.query<{ count: number }, []>(
+        `SELECT count(*) AS count FROM delivery_jobs WHERE state != 'DELIVERED'`,
+      ).get()?.count,
+    ).toBe(0)
     expect(database.query<{ state: string }, []>('SELECT state FROM turns').get()?.state).toBe(
       'COMPLETED',
     )

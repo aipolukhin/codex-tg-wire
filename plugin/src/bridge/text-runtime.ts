@@ -38,6 +38,7 @@ import {
   StaticProjectResolver,
   type ProjectDefinition,
 } from './durable-session-coordinator.js'
+import { DurableTurnUxProjector, type DurableTurnUxOptions } from './durable-turn-ux.js'
 import {
   InboxProcessingWorker,
   type InboxProcessingWorkerOptions,
@@ -70,6 +71,7 @@ export interface DurableTextRuntimeOptions {
   }
   inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId' | 'commandHandler'> & { workerId?: string }
   outboxWorker?: Omit<OutboxDeliveryWorkerOptions, 'workerId'> & { workerId?: string }
+  ux?: DurableTurnUxOptions
 }
 
 export interface DurableTextRuntime {
@@ -77,9 +79,11 @@ export interface DurableTextRuntime {
   processInboundOnce(): Promise<InboxRunResult>
   deliverOutboundOnce(): Promise<DeliveryRunResult>
   recoverExpiredLeases(): LeaseRecoverySweep
+  runUxHeartbeat(): number
   recoverStartup(): Promise<{
     turns: TurnRecoverySweep
     interactions: CodexInteractionRecoverySweep
+    uxRecovered: number
   }>
   close(): void
 }
@@ -187,6 +191,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     outbox,
     interactionTimeoutMs === undefined ? {} : { interactionTimeoutMs },
   )
+  const ux = new DurableTurnUxProjector(options.database, outbox, sessions, options.ux)
   const telegram = new DurableTelegramTextGateway(options.telegramApi, {
     ...options.telegram,
     ...(attachmentStore === undefined ? {} : { attachmentStore }),
@@ -196,12 +201,14 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
         ? selected
         : options.telegram.defaultProjectId
     },
+    deliveryProofForSourceKey: (sourceKey) =>
+      outbox.getBySourceKey(sourceKey)?.remoteId ?? null,
   })
   const coordinator = new DurableSessionCoordinator(
     sessions,
     backend,
     new StaticProjectResolver(options.projects),
-    { settingsProvider: settings },
+    { settingsProvider: settings, uxObserver: ux },
   )
   const approvalDefault = options.codex?.turnDefaults?.approvalPolicy
   const sandboxDefault = options.codex?.threadStartDefaults?.sandbox
@@ -215,6 +222,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(options.codex?.allowedSandboxModes === undefined
       ? {}
       : { allowedSandboxModes: options.codex.allowedSandboxModes }),
+    uxStatus: ux,
   })
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
@@ -245,10 +253,12 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     processInboundOnce: () => inbound.runOnce(),
     deliverOutboundOnce: () => outbound.runOnce(),
     recoverExpiredLeases: () => reaper.runOnce(),
+    runUxHeartbeat: () => ux.runHeartbeat(),
     async recoverStartup() {
       const interactionSweep = interactions.recoverStartup()
       const turnSweep = await startupRecovery.run()
-      return { turns: turnSweep, interactions: interactionSweep }
+      const uxRecovered = ux.recoverStartup()
+      return { turns: turnSweep, interactions: interactionSweep, uxRecovered }
     },
     close(): void {
       interactions.close()

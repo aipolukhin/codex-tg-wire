@@ -33,5 +33,11 @@
     "sandboxMode": "workspace-write",
     "allowedSandboxModes": ["read-only", "workspace-write"],
     "interactionTimeoutMs": 600000
+  },
+  "ux": {
+    "enabled": true,
+    "heartbeatAfterMs": 120000,
+    "heartbeatIntervalMs": 300000,
+    "pollIntervalMs": 30000
   }
 }

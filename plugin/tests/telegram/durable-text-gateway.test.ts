@@ -487,6 +487,37 @@ describe('DurableTelegramTextGateway outbound', () => {
     expect(api.sendOptions).toEqual([{}])
   })
 
+  test('resolves a durable edit target only from predecessor delivery proof', async () => {
+    const proofGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: ['7001'],
+      defaultProjectId: 'workspace',
+      deliveryProofForSourceKey: (sourceKey) => outbox.getBySourceKey(sourceKey)?.remoteId ?? null,
+    })
+    const rootJob = outbox.enqueue({
+      id: 'status-root-job',
+      sourceKey: 'turn:status-root',
+      kind: 'send_text',
+      payload: { chatId: '7001', text: 'starting' },
+      createdAtMs: NOW,
+    }).job
+    expect(() => outbox.enqueue({
+      id: 'status-early-edit',
+      sourceKey: 'turn:status-early-edit',
+      dependsOnSourceKey: rootJob.sourceKey,
+      kind: 'edit',
+      payload: { chatId: '7001', targetSourceKey: rootJob.sourceKey, text: 'working' },
+      createdAtMs: NOW + 1,
+    })).not.toThrow()
+    const rootLease = outbox.claimNext({ workerId: 'root', nowMs: NOW, leaseDurationMs: 60_000 })!
+    outbox.markSendStarted(rootLease.id, 'root', NOW)
+    outbox.markDelivered(rootLease.id, 'root', 'telegram:345', NOW)
+
+    const editLease = outbox.claimNext({ workerId: 'edit', nowMs: NOW + 1, leaseDurationMs: 60_000 })!
+    const prepared = await proofGateway.prepareDelivery(editLease)
+    expect(prepared).toMatchObject({ kind: 'edit', messageId: 345, text: 'working' })
+  })
+
   test('rejects non-allowlisted destinations and oversized text before send_started', async () => {
     await expect(gateway.prepareDelivery(claimedJob('hello', '9999'))).rejects.toBeInstanceOf(
       TelegramDeliveryPayloadError,

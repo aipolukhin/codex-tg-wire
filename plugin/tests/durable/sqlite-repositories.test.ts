@@ -50,6 +50,7 @@ describe('durable database migrations', () => {
     expect(tables).toEqual([
       'agent_project_settings',
       'codex_interactions',
+      'codex_turn_ux',
       'codex_unhandled_notifications',
       'delivery_jobs',
       'delivery_problem_actions',
@@ -69,7 +70,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(13)
+    expect(migrations?.count).toBe(14)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {

@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { loadBridgeServiceConfig } from '../../src/bridge/service-config.js'
+import {
+  loadBridgeRuntimeConfig,
+  loadBridgeServiceConfig,
+} from '../../src/bridge/service-config.js'
 
 let roots: string[] = []
 
@@ -33,6 +36,19 @@ function fixture(overrides: Record<string, unknown> = {}): { root: string; path:
 }
 
 describe('loadBridgeServiceConfig', () => {
+  test('loads the resolved non-secret runtime config without credentials', () => {
+    const { root, path } = fixture()
+    const config = loadBridgeRuntimeConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: path },
+    })
+
+    expect(config.configPath).toBe(path)
+    expect(config.stateDatabase).toBe(join(root, 'state', 'runtime.sqlite3'))
+    expect(config.projects[0]?.cwd).toBe(join(root, 'workspace'))
+    expect('telegramToken' in config).toBeFalse()
+    expect('voiceApiKey' in config).toBeFalse()
+  })
+
   test('resolves state and project paths from the config file directory', () => {
     const { root, path } = fixture()
     const config = loadBridgeServiceConfig({

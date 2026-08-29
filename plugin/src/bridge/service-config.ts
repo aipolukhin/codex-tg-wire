@@ -155,8 +155,11 @@ export const BridgeConfigFileSchema = z
 
 type ParsedBridgeConfigFile = z.infer<typeof BridgeConfigFileSchema>
 
-export interface BridgeServiceConfig extends ParsedBridgeConfigFile {
+export interface BridgeRuntimeConfig extends ParsedBridgeConfigFile {
   configPath: string
+}
+
+export interface BridgeServiceConfig extends BridgeRuntimeConfig {
   telegramToken: string
   voiceApiKey: string | null
 }
@@ -171,9 +174,10 @@ function absoluteFrom(baseDirectory: string, value: string): string {
   return resolve(baseDirectory, value)
 }
 
-export function loadBridgeServiceConfig(
+/** Loads and resolves the non-secret JSON configuration without requiring credentials. */
+export function loadBridgeRuntimeConfig(
   options: LoadBridgeServiceConfigOptions = {},
-): BridgeServiceConfig {
+): BridgeRuntimeConfig {
   const env = options.env ?? process.env
   const cwd = options.cwd ?? process.cwd()
   const configPath = absoluteFrom(
@@ -204,23 +208,10 @@ export function loadBridgeServiceConfig(
     )
   }
 
-  const telegramToken = (
-    env.DASHI_TELEGRAM_BOT_TOKEN ?? env.TELEGRAM_BOT_TOKEN ?? ''
-  ).trim()
-  if (telegramToken.length === 0) {
-    throw new Error('DASHI_TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is required')
-  }
-  const voiceApiKey = (env.GROQ_API_KEY ?? '').trim() || null
-  if (parsed.voice.provider === 'groq' && voiceApiKey === null) {
-    throw new Error('GROQ_API_KEY is required when voice.provider is groq')
-  }
-
   const baseDirectory = dirname(configPath)
   return {
     ...parsed,
     configPath,
-    telegramToken,
-    voiceApiKey,
     stateDatabase: absoluteFrom(baseDirectory, parsed.stateDatabase),
     attachments: {
       ...parsed.attachments,
@@ -235,4 +226,23 @@ export function loadBridgeServiceConfig(
       cwd: absoluteFrom(baseDirectory, project.cwd),
     })),
   }
+}
+
+export function loadBridgeServiceConfig(
+  options: LoadBridgeServiceConfigOptions = {},
+): BridgeServiceConfig {
+  const env = options.env ?? process.env
+  const config = loadBridgeRuntimeConfig(options)
+  const telegramToken = (
+    env.DASHI_TELEGRAM_BOT_TOKEN ?? env.TELEGRAM_BOT_TOKEN ?? ''
+  ).trim()
+  if (telegramToken.length === 0) {
+    throw new Error('DASHI_TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is required')
+  }
+  const voiceApiKey = (env.GROQ_API_KEY ?? '').trim() || null
+  if (config.voice.provider === 'groq' && voiceApiKey === null) {
+    throw new Error('GROQ_API_KEY is required when voice.provider is groq')
+  }
+
+  return { ...config, telegramToken, voiceApiKey }
 }

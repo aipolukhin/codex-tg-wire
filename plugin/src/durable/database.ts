@@ -484,6 +484,8 @@ const MIGRATIONS: readonly Migration[] = [
   },
 ]
 
+export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0
+
 function ensureParentDirectory(filename: string): void {
   if (filename === ':memory:' || filename.length === 0) return
   mkdirSync(dirname(filename), { recursive: true })
@@ -507,7 +509,7 @@ function migrate(database: Database): void {
     .query<{ version: number }, []>('SELECT version FROM schema_migrations ORDER BY version')
     .all()
   const applied = new Set(appliedRows.map((row) => row.version))
-  const newestKnownVersion = MIGRATIONS.at(-1)?.version ?? 0
+  const newestKnownVersion = LATEST_DURABLE_SCHEMA_VERSION
   const newestAppliedVersion = appliedRows.at(-1)?.version ?? 0
   if (newestAppliedVersion > newestKnownVersion) {
     throw new Error(

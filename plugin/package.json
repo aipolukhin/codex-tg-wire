@@ -11,6 +11,7 @@
     "test": "bun test",
     "test:codex": "bun test tests/codex",
     "typecheck": "tsc --noEmit",
+    "doctor:codex": "bun run scripts/codex-bridge-doctor.ts",
     "codex:smoke": "bun run scripts/codex-app-server-smoke.ts",
     "codex:schema:check": "bun run scripts/check-codex-schema.ts"
   },

@@ -2,18 +2,69 @@
 
 This guide installs bridge `1.0.x` as a single-owner daemon. It does not use the legacy Claude channel runtime. Supported versions are pinned in [the compatibility matrix](codex-compatibility.md).
 
+## Recommended user installation
+
+For a personal Linux host, clone the repository and run the onboarding:
+
+```bash
+git clone https://github.com/aipolukhin/codex-tg-wire.git
+cd codex-tg-wire
+./install.sh
+```
+
+The installer is resumable and safe to run again. It installs frozen Bun
+dependencies and the pinned Codex CLI locally, reuses the current user's
+`CODEX_HOME` (normally `~/.codex`), asks for the project and private Telegram
+allowlist, stores the bot token separately with mode `0600`, runs doctor and
+creates `~/.config/systemd/user/codex-tg-wire.service`. SQLite and media state
+default to `~/.local/share/codex-tg-wire`. No root privileges or service account
+are required.
+
+The execution choice is explicit in onboarding:
+
+| Profile | Codex settings | Intended use |
+|---|---|---|
+| `YOLO` (default) | `approvalPolicy=never`, `danger-full-access` | A private, single-owner bot where uninterrupted remote work matters more than host isolation. Telegram compromise becomes full access as that Linux user. |
+| `Safe` | `approvalPolicy=on-request`, `workspace-write` | Shared or higher-risk hosts where command approvals and a workspace boundary are desired. |
+
+For a scripted Safe install, pass all non-secret values on the command line and
+the secret by file:
+
+```bash
+./install.sh \
+  --project /home/me/code/project \
+  --telegram-user 123456789 \
+  --telegram-chat 123456789 \
+  --token-file /safe/path/telegram-token \
+  --profile safe
+```
+
+Useful lifecycle commands:
+
+```bash
+systemctl --user status codex-tg-wire.service
+journalctl --user -u codex-tg-wire.service -f
+systemctl --user restart codex-tg-wire.service
+./install.sh --uninstall  # removes the service, preserves config/state
+```
+
+On a headless server, an administrator may enable user lingering if the service
+must remain alive after logout. The advanced installations below remain useful
+for multi-user machines, immutable releases or container policy; they are no
+longer the default onboarding path.
+
 ## Prerequisites
 
 - Linux with systemd 252+ or Docker Engine with Compose;
 - Bun `1.4.x` for a host installation;
-- Codex CLI `0.149.1` for a host installation;
+- Codex CLI `0.149.1` for the advanced system-wide host installation (the user installer vendors it locally);
 - a private Telegram bot token and numeric owner user/chat ids;
 - a local project directory writable by the service account;
 - an authenticated Codex CLI account.
 
 Official Codex setup supports interactive login, device-code login on headless hosts, and API-key login through stdin. Never place the OpenAI credential, Telegram token, or `CODEX_HOME/auth.json` in this repository. See the [official Codex CLI guide](https://developers.openai.com/codex/cli/) and [official authentication guide](https://learn.chatgpt.com/codex/auth).
 
-## systemd installation
+## systemd installation (advanced, system-wide)
 
 Download the release tar, external CycloneDX SBOM and checksum file into a staging directory. Verify any detached release signature first when one is published, then verify the files:
 
@@ -51,7 +102,8 @@ sudo -u dashi-codex bun /opt/dashi-codex-bridge/current/scripts/codex-bridge-ini
   --state-dir /var/lib/dashi-codex-bridge \
   --project /srv/my-project \
   --telegram-user 123456789 \
-  --telegram-chat 123456789
+  --telegram-chat 123456789 \
+  --profile safe
 sudoedit /etc/dashi-codex-bridge/telegram-token
 ```
 

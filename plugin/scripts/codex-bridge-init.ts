@@ -11,6 +11,7 @@ function usage(): never {
     '  --telegram-user <id>',
     '  --telegram-chat <id>',
     '  [--project-id <id>]',
+    '  [--profile <yolo|safe>] (default: yolo)',
     '',
   ].join(' '))
   process.exit(2)
@@ -33,12 +34,16 @@ const allowed = new Set([
   '--telegram-user',
   '--telegram-chat',
   '--project-id',
+  '--profile',
 ])
 if ([...values.keys()].some((name) => !allowed.has(name))) usage()
 
 function required(name: string): string {
   return values.get(name) ?? usage()
 }
+
+const executionProfile = values.get('--profile') ?? 'yolo'
+if (executionProfile !== 'yolo' && executionProfile !== 'safe') usage()
 
 try {
   const result = initializeBridgeInstallation({
@@ -48,6 +53,7 @@ try {
     telegramUserId: required('--telegram-user'),
     telegramChatId: required('--telegram-chat'),
     ...(values.has('--project-id') ? { projectId: required('--project-id') } : {}),
+    executionProfile,
   })
   process.stdout.write([
     'codex-tg-wire configuration initialized.',

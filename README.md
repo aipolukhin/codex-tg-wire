@@ -57,33 +57,36 @@ silently duplicating work.
 - systemd and non-root read-only Docker packaging;
 - doctor, health/readiness/watchdog, backup/restore, retention, SBOM and atomic upgrade/rollback.
 
-## Quick start from source
+## Install
 
-Requirements: Linux, Bun `1.4.x`, an authenticated Codex CLI `0.149.1`, a
-Telegram bot token, numeric owner user/chat IDs and an absolute project path.
+Requirements: Linux with `systemd --user`, Bun `1.4.x`, an authenticated Codex
+login, a Telegram bot token, numeric owner user/chat IDs and an absolute project
+path. The compatible Codex CLI is installed locally by the bridge; your existing
+`~/.codex` login is reused.
 
 ```bash
 git clone https://github.com/aipolukhin/codex-tg-wire.git
-cd codex-tg-wire/plugin
-bun install --frozen-lockfile
-cp bridge.config.example.json bridge.config.json
-install -m 0600 /dev/null telegram-token
+cd codex-tg-wire
+./install.sh
 ```
 
-Edit `bridge.config.json`, place only the bot token in `telegram-token`, then:
+The phone-friendly console onboarding asks for the project, execution profile,
+Telegram ids and token, runs doctor, then installs and starts
+`codex-tg-wire.service` for the current user. No `sudo`, `/srv`, dedicated Unix
+account, Docker or second Codex login is involved.
 
-```bash
-export DASHI_CODEX_BRIDGE_CONFIG="$PWD/bridge.config.json"
-export DASHI_TELEGRAM_BOT_TOKEN_FILE="$PWD/telegram-token"
-bun run doctor:codex --online
-bun run start:codex
-```
+The default profile is **YOLO**: `approvalPolicy=never` and
+`sandbox=danger-full-access`. It avoids remote confirmation for every command,
+but a compromised Telegram account or bot token can then act with all rights of
+your Linux user. Use only a private owner bot and the generated user/chat
+allowlist. Choose `Safe` in onboarding or run `./install.sh --profile safe` for
+`on-request` + `workspace-write`.
 
 The `DASHI_*` environment prefix is retained temporarily for configuration
 compatibility with the imported baseline. It does not select or start the
-legacy Claude runtime. Production users should follow the hardened
-[installation guide](plugin/docs/codex-installation.md) instead of running the
-source checkout as a daemon.
+legacy Claude runtime. See the [installation guide](plugin/docs/codex-installation.md)
+for non-interactive flags, service commands and advanced system-wide/Docker
+deployment.
 
 ## Documentation
 
@@ -126,7 +129,8 @@ backend and a SQLite durability boundary.
 The delivery state model was informed by
 [Telemax](https://github.com/aipolukhin/telemax): leases, `send_started`,
 `AMBIGUOUS`, problem-center actions and fault-injection discipline were ported
-semantically to TypeScript; the Python implementation was not copied.
+semantically to TypeScript; its narrow, resumable console-onboarding principles
+also shaped `install.sh`. The Python implementation was not copied.
 
 The repository retains the upstream Git history and Apache-2.0 attribution.
 See [NOTICE](NOTICE) and the detailed [provenance map](docs/provenance.md).

@@ -170,4 +170,37 @@ describe('runBridgeDoctor', () => {
     expect(report.ok).toBeTrue()
     expect(report.checks.find((item) => item.id === 'retention.policy')?.status).toBe('warn')
   })
+
+  test('describes YOLO as a host-level trust decision, not a network sandbox', async () => {
+    const { configPath } = fixture({
+      projects: [{
+        id: 'main',
+        cwd: './workspace',
+        sandboxMode: 'danger-full-access',
+        networkAccess: false,
+      }],
+      codex: {
+        approvalPolicy: 'never',
+        sandboxMode: 'danger-full-access',
+        allowedSandboxModes: ['read-only', 'workspace-write', 'danger-full-access'],
+      },
+    })
+    const report = await runBridgeDoctor({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: configPath,
+        DASHI_TELEGRAM_BOT_TOKEN: 'environment-only-token',
+      },
+      runCommand: compatibleCodex,
+    })
+
+    expect(report.ok).toBeTrue()
+    expect(report.checks.find((item) => item.id === 'project.main.network')).toMatchObject({
+      status: 'warn',
+      message: expect.stringContaining('not a sandbox boundary'),
+    })
+    expect(report.checks.find((item) => item.id === 'sandbox.policy')).toMatchObject({
+      status: 'warn',
+      message: expect.stringContaining('all rights of the service user'),
+    })
+  })
 })

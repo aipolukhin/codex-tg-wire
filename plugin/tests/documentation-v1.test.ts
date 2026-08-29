@@ -10,6 +10,10 @@ async function document(name: string): Promise<string> {
 describe('v1 operator documentation', () => {
   test('covers both supported installs and the restart acceptance flow', async () => {
     const installation = await document('codex-installation.md')
+    expect(installation).toContain('## Recommended user installation')
+    expect(installation).toContain('./install.sh')
+    expect(installation).toContain('`YOLO` (default)')
+    expect(installation).toContain('`Safe`')
     expect(installation).toContain('## systemd installation')
     expect(installation).toContain('## Docker Compose installation')
     expect(installation).toContain('LoadCredential')

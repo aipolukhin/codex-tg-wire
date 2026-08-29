@@ -11,7 +11,7 @@ Telegram text, filenames, media, callback payloads, Codex output and project con
 - Bot and voice credentials come from environment/file credentials; production templates use systemd `LoadCredential` or Docker secrets.
 - Codex authentication lives under a private persistent `CODEX_HOME`. `auth.json` must be treated like a password.
 - Project ids and paths are configured by the operator. Telegram cannot submit an arbitrary `cwd`, writable root or network policy.
-- `danger-full-access` is excluded from the default sandbox allowlist. Enabling it explicitly removes the writable-root and network sandbox boundary.
+- The personal installer defaults to the `YOLO` profile (`approvalPolicy=never`, `danger-full-access`) so an allowlisted owner can work without per-command prompts. This removes the writable-root, network and approval boundaries: compromise of the Telegram account or bot token becomes code execution with all rights of the service's Linux user. `./install.sh --profile safe` restores `on-request` + `workspace-write`. The [official Codex CLI reference](https://learn.chatgpt.com/codex/developer-commands?surface=cli) recommends YOLO only inside an externally hardened environment; the user installer does not pretend that an allowlist is a host sandbox.
 - The container itself needs outbound access to Telegram and OpenAI. `projects[].networkAccess=false` applies to the Codex turn sandbox; it is not a container-wide firewall.
 - All Telegram mutations use the durable outbox boundary. Tests reject direct production imports that bypass it.
 - Health and normal incident logs omit prompts, message bodies, tokens, ids, filesystem paths and transport error details.
@@ -45,7 +45,14 @@ The practical contract is: every acknowledged update remains represented durably
 
 The operator must keep the OS, Docker daemon, Bun and the pinned Codex binary trustworthy; restrict access to the service account, project, config, state, backup and `CODEX_HOME`; rotate leaked credentials; and maintain project-level version control/backups. A compromised root user, Docker daemon or writable release directory can replace the bridge and is out of scope.
 
-The systemd unit makes release code and system paths read-only, hides home directories and removes common kernel/device capabilities. The Docker profile runs non-root with a read-only root filesystem, no Linux capabilities and `no-new-privileges`. Neither profile makes unsafe Codex approvals harmless: owner approval still authorizes work inside the configured execution boundary.
+The simple user unit runs without root as the current user, applies
+`NoNewPrivileges` and a private `/tmp`, but intentionally leaves that user's home
+visible so Codex can work on normal projects. In YOLO, every file and process
+available to that user is therefore in scope. The advanced system-wide unit
+makes release/system paths read-only and hides home directories; the Docker
+profile runs non-root with a read-only root filesystem, no Linux capabilities
+and `no-new-privileges`. Those are the appropriate choices when host isolation
+matters more than one-command onboarding.
 
 ## Supply chain and release status
 

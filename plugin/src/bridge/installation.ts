@@ -18,6 +18,7 @@ export interface InitializeBridgeInstallationInput {
   telegramUserId: string
   telegramChatId: string
   projectId?: string
+  executionProfile?: 'yolo' | 'safe'
 }
 
 export interface InitializedBridgeInstallation {
@@ -54,7 +55,7 @@ function writePrivate(path: string, contents: string): void {
   chmodSync(path, 0o600)
 }
 
-/** Creates a credential-free, deny-by-default production configuration. */
+/** Creates a credential-free, owner-allowlisted configuration for the selected execution profile. */
 export function initializeBridgeInstallation(
   input: InitializeBridgeInstallationInput,
 ): InitializedBridgeInstallation {
@@ -62,6 +63,7 @@ export function initializeBridgeInstallation(
   const stateDirectory = safeAbsoluteDirectory(input.stateDirectory, 'stateDirectory')
   const projectPath = requireDirectory(input.projectPath, 'projectPath')
   const projectId = input.projectId?.trim() || 'main'
+  const executionProfile = input.executionProfile ?? 'yolo'
   if (!PROJECT_ID.test(projectId)) throw new Error('projectId has an invalid format')
   if (!USER_ID.test(input.telegramUserId)) throw new Error('telegramUserId is invalid')
   if (!CHAT_ID.test(input.telegramChatId)) throw new Error('telegramChatId is invalid')
@@ -80,7 +82,7 @@ export function initializeBridgeInstallation(
     projects: [{
       id: projectId,
       cwd: projectPath,
-      sandboxMode: 'workspace-write',
+      sandboxMode: executionProfile === 'yolo' ? 'danger-full-access' : 'workspace-write',
       writableRoots: [],
       networkAccess: false,
     }],
@@ -95,9 +97,11 @@ export function initializeBridgeInstallation(
       directory: join(stateDirectory, 'outbound-media'),
     },
     codex: {
-      approvalPolicy: 'on-request',
-      sandboxMode: 'workspace-write',
-      allowedSandboxModes: ['read-only', 'workspace-write'],
+      approvalPolicy: executionProfile === 'yolo' ? 'never' : 'on-request',
+      sandboxMode: executionProfile === 'yolo' ? 'danger-full-access' : 'workspace-write',
+      allowedSandboxModes: executionProfile === 'yolo'
+        ? ['read-only', 'workspace-write', 'danger-full-access']
+        : ['read-only', 'workspace-write'],
       interactionTimeoutMs: 600_000,
     },
     health: {

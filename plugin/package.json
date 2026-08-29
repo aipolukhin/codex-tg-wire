@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@openai/codex": "0.149.1",
     "grammy": "1.44.0",
     "js-yaml": "^4.1.0",
     "zod": "^3.23.0"

@@ -17,6 +17,7 @@ describe('v1 deployment packaging', () => {
     const dockerEnvironment = await text('deploy/docker/.env.example')
     const bunVersion = pkg.packageManager.replace(/^bun@/, '')
 
+    expect(pkg.dependencies['@openai/codex']).toBe(compatibility.codexCliVersion)
     expect(dockerfile).toContain(`ARG CODEX_CLI_VERSION=${compatibility.codexCliVersion}`)
     expect(compose).toContain(`CODEX_CLI_VERSION: \${CODEX_CLI_VERSION:-${compatibility.codexCliVersion}}`)
     expect(dockerEnvironment).toContain(`CODEX_CLI_VERSION=${compatibility.codexCliVersion}`)

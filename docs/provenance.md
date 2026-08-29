@@ -27,25 +27,29 @@ Codex-oriented реализации вокруг этих primitives.
 
 ### Не перенесено в Codex runtime v1
 
-- Claude Code channel/MCP lifecycle и запуск через
-  `--dangerously-load-development-channels`.
-- Привязка к Anthropic Max subscription и Claude-specific notifications.
-- tmux как транспорт: terminal mirror, pane classifier, `/keys`, `/cc` и
-  отправка keystrokes в живой terminal.
-- Claude hooks: `PreToolUse`/`PostToolUse`/`Stop`, TaskMirror, transcript-based
-  read receipt и fallback reply.
-- Полный Dashi multichat: группы/topics, per-chat tmux sessions, persona overlay
-  и public/private policy.
-- Guest Mode и ответы недоверенным внешним чатам.
-- Dashi autonomy lease/ask-guard и fleet orchestration.
-- Memory hooks в `recent.md`/verbose JSONL.
-- launchd/macOS production packaging.
-- File inbox/outbox как основной recovery contract и автоматический restart
-  живой Claude-сессии.
+Это не механически потерянные функции. Мы не стали переносить runtime-механизмы,
+которые решали ограничения Claude Code/tmux или противоречили owner-only модели
+первого релиза.
 
-Эти функции не объявляются поддерживаемыми возможностями codex-tg-wire. Для v1
-группы/topics, fleet и второй Claude backend сознательно оставлены за границей
-релиза.
+| Функция Dashi | Почему исключена | Что используется вместо неё / когда вернётся |
+|---|---|---|
+| Claude Code channel/MCP lifecycle, `--dangerously-load-development-channels` и Anthropic Max billing model | Это lifecycle, auth и экономика другого провайдера. Если оставить его внутри основного процесса, продукт снова потребует две несовместимые схемы запуска и перестанет быть понятным Codex-мостом. | Нативный Codex App Server по supervised stdio, официальный Codex login и provider-neutral `AgentBackend`. Второй Claude backend возможен отдельно после v1, без смешивания lifecycle. |
+| tmux transport, terminal mirror, pane classifier, `/keys`, `/cc` | tmux был API к интерактивному terminal Claude: приходилось распознавать состояние pane и посылать keystrokes. App Server уже даёт typed threads, turns, approvals и interrupt/steer. Эмуляция клавиатуры здесь добавила бы гонки, потерю correlation ids и лишний remote-shell surface. | JSONL/RPC App Server transport и структурированные `/stop`, `/steer`, `/threads`, `/resume`. |
+| Claude hooks `PreToolUse`, `PostToolUse`, `Stop`, TaskMirror | Названия событий и payloads принадлежат Claude Code. Их адаптер поверх Codex дублировал бы настоящий протокол и мог расходиться с ним при restart. | App Server notifications, command/file approvals, user input и MCP elicitation фиксируются в SQLite interaction broker до ответа. |
+| Transcript-based read receipts и fallback reply | Dashi читает изменяемый transcript-файл и эвристически решает, был ли уже ответ. После crash такая эвристика способна отправить дубль или принять thinking/tool event за финал. | Typed turn events + transactional outbox. Неизвестная внешняя отправка становится `AMBIGUOUS`, а не скрытым fallback-дублем. |
+| Полный multichat: groups, topics, per-chat tmux и personas | v1 сознательно фиксирует один trust domain: приватные allowlisted user/chat IDs. Groups/topics требуют отдельной ACL-модели для sender/chat/topic, маршрутизации threads и тестов утечки контекста; `per-chat tmux` к Codex неприменим. | Durable thread registry уже разделяет Codex sessions. Groups/topics и их ACL запланированы после v1; personas вернутся только как backend-neutral overlay. |
+| Guest Mode и публичные чаты | Telegram-сообщение запускает coding agent, расходует quota и может менять файлы. Давать это неизвестному пользователю несовместимо с owner-only threat model, особенно при default YOLO. | Fail-closed user/chat allowlist. Публичный бот не считается поддерживаемым режимом и не планируется без отдельной tenant/sandbox архитектуры. |
+| Dashi autonomy lease и ask-guard | Они компенсировали self-gating Claude внутри terminal: отслеживали mandate и блокировали лишнее «спросить разрешение». В Codex approval policy и sandbox являются входными параметрами каждого thread/turn; второй guard создал бы конфликтующие решения. | Default YOLO передаёт `approvalPolicy=never` + `danger-full-access`; Safe profile передаёт `on-request` + `workspace-write`. Durable interaction broker обрабатывает только реальные запросы App Server. |
+| Fleet orchestration | Fleet — отдельный control plane: discovery, scheduling, tenant isolation, aggregate health и rollouts нескольких agents. Втаскивание его в первый single-owner daemon усложнило бы recovery раньше, чем стабилизирован один узел. | Один supervised App Server и один transactional state contour в v1. Fleet вынесен в post-v1 roadmap. |
+| Memory hooks в `recent.md` и verbose JSONL | Формат и пути привязаны к конкретному Claude workspace/cognee pipeline, дублируют историю Codex и повышают риск второго неочищенного хранилища prompts/secrets. | Codex threads + SQLite audit/state с retention и scrub. Экспорт памяти должен появиться как явный backend-neutral sink, а не скрытый hook. |
+| macOS/launchd production deployment | Текущий production gate, watchdog и canary проверены на Linux/systemd и Docker. Непроверенный launchd plist выглядел бы как поддержка, но не давал бы доказательств restart/readiness. | Linux user-systemd — простой путь; system-wide systemd и Docker — advanced. launchd можно добавить после отдельного macOS CI/canary. |
+| Файловая crash-модель: inbox/outbox и restart живой Claude-сессии | Отдельные JSON/JSONL-файлы не позволяют одной транзакцией связать dedupe update, lease, turn binding, outbound proof и polling offset. Автоматически «оживлять» неизвестный turn опасно дублем работы. | SQLite/WAL с транзакциями, leases, reaper, FIFO turns, `thread/read`, `UNKNOWN` и `AMBIGUOUS`. Файлы остались только для content-addressed media и проверяемых backup artifacts. |
+
+Legacy Claude-модули пока **физически остаются** в source tree: общий Telegram-код
+ещё извлекается из исходного графа импортов. Это временная мера, чтобы extraction
+не превратился в big-bang rewrite. Production entry point `bun run start:codex`
+их не загружает, README не объявляет их частью продукта, а удалить их можно
+после выделения общих primitives и отдельного regression gate.
 
 ## Telemax
 
@@ -63,7 +67,11 @@ Apache-2.0.
 - content-addressed media spool, integrity proof и безопасное повторное
   открытие файлов;
 - атомарная модель albums и запрет скрытого повтора после неизвестного remote
-  результата.
+  результата;
+- phone-friendly console onboarding: узкий banner, короткие нумерованные шаги,
+  скрытый ввод секрета, валидация рядом с prompt, спокойный Ctrl+C и идемпотентный
+  повтор setup. В `install.sh` этот UX реализован заново на Bash/ANSI без
+  зависимостей от Rich/questionary.
 
 В codex-tg-wire эта модель заново реализована на TypeScript/Bun и расширена на
 turn queue, Codex thread bindings, approvals, callbacks и App Server recovery.
@@ -107,4 +115,3 @@ transport не объявлен поддерживаемым.
 - HUD/event projector, heartbeat и unknown-notification journal.
 - Doctor, health/readiness/watchdog, backup/restore, retention, soak/chaos gates,
   SBOM, reproducible artifacts и atomic upgrade/rollback.
-

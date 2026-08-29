@@ -333,11 +333,17 @@ export async function runBridgeDoctor(
       )
     }
     checks.push(
-      check(
-        `project.${project.id}.network`,
-        'pass',
-        `project ${project.id} network access is explicitly ${project.networkAccess ? 'enabled' : 'disabled'}`,
-      ),
+      sandboxMode === 'danger-full-access'
+        ? check(
+            `project.${project.id}.network`,
+            'warn',
+            `project ${project.id} uses danger-full-access; its networkAccess setting is not a sandbox boundary`,
+          )
+        : check(
+            `project.${project.id}.network`,
+            'pass',
+            `project ${project.id} network access is explicitly ${project.networkAccess ? 'enabled' : 'disabled'}`,
+          ),
     )
   }
   checks.push(inspectDirectory('state.parent', dirname(config.stateDatabase), 'state database directory', false, true))
@@ -350,7 +356,7 @@ export async function runBridgeDoctor(
       check(
         'sandbox.policy',
         'warn',
-        'danger-full-access is allowlisted; remove it unless the owner explicitly needs unrestricted execution',
+        'danger-full-access is allowlisted; Telegram compromise can execute with all rights of the service user',
       ),
     )
   } else {

@@ -34,6 +34,7 @@ describe('initializeBridgeInstallation', () => {
       projectPath: paths.project,
       telegramUserId: '123456789',
       telegramChatId: '-1001234567890',
+      executionProfile: 'safe',
     })
 
     expect(statSync(result.configPath).mode & 0o777).toBe(0o600)
@@ -56,6 +57,30 @@ describe('initializeBridgeInstallation', () => {
     expect(config.telegramToken).toBe('test-file-token')
     expect(config.projects[0]?.cwd).toBe(paths.project)
     expect(config.stateDatabase).toBe(join(paths.stateDirectory, 'bridge.sqlite3'))
+  })
+
+  test('uses the owner-only YOLO execution profile by default', async () => {
+    const paths = fixture()
+    const result = initializeBridgeInstallation({
+      ...paths,
+      projectPath: paths.project,
+      telegramUserId: '123456789',
+      telegramChatId: '123456789',
+    })
+    const config = JSON.parse(await Bun.file(result.configPath).text()) as {
+      projects: Array<{ sandboxMode: string; networkAccess: boolean }>
+      codex: {
+        approvalPolicy: string
+        sandboxMode: string
+        allowedSandboxModes: string[]
+      }
+    }
+
+    expect(config.projects[0]?.sandboxMode).toBe('danger-full-access')
+    expect(config.projects[0]?.networkAccess).toBe(false)
+    expect(config.codex.approvalPolicy).toBe('never')
+    expect(config.codex.sandboxMode).toBe('danger-full-access')
+    expect(config.codex.allowedSandboxModes).toContain('danger-full-access')
   })
 
   test('refuses overwrites and leaves the previous config intact', async () => {

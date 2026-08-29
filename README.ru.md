@@ -57,33 +57,34 @@ codex-tg-wire не обещает невозможный end-to-end exactly-once
 - systemd и non-root read-only Docker;
 - doctor, health/readiness/watchdog, backup/restore, retention, SBOM и atomic upgrade/rollback.
 
-## Быстрый запуск из исходников
+## Установка
 
-Нужны Linux, Bun `1.4.x`, авторизованный Codex CLI `0.149.1`, Telegram bot
-token, числовые owner user/chat IDs и абсолютный путь к проекту.
+Нужны Linux с `systemd --user`, Bun `1.4.x`, выполненный Codex login, Telegram
+bot token, числовые owner user/chat IDs и абсолютный путь к проекту. Совместимый
+Codex CLI мост поставит локально сам и переиспользует ваш `~/.codex`.
 
 ```bash
 git clone https://github.com/aipolukhin/codex-tg-wire.git
-cd codex-tg-wire/plugin
-bun install --frozen-lockfile
-cp bridge.config.example.json bridge.config.json
-install -m 0600 /dev/null telegram-token
+cd codex-tg-wire
+./install.sh
 ```
 
-Отредактируйте `bridge.config.json`, положите только bot token в
-`telegram-token`, затем:
+Компактный консольный onboarding спросит project path, профиль исполнения,
+Telegram IDs и token, запустит doctor и установит пользовательский
+`codex-tg-wire.service`. Не нужны `sudo`, `/srv`, отдельный Unix account, Docker
+и второй Codex login.
 
-```bash
-export DASHI_CODEX_BRIDGE_CONFIG="$PWD/bridge.config.json"
-export DASHI_TELEGRAM_BOT_TOKEN_FILE="$PWD/telegram-token"
-bun run doctor:codex --online
-bun run start:codex
-```
+По умолчанию выбран **YOLO**: `approvalPolicy=never` и
+`sandbox=danger-full-access`, поэтому Codex не просит разрешение на каждый
+инструмент. Цена удобства: скомпрометированный Telegram account или bot token
+получит права вашего Linux-пользователя. Используйте только приватного бота и
+сгенерированный user/chat allowlist. Для `on-request` + `workspace-write`
+выберите `Safe` в onboarding или запустите `./install.sh --profile safe`.
 
 Префикс окружения `DASHI_*` временно сохранён для совместимости конфигурации с
 импортированным baseline. Он не выбирает и не запускает legacy Claude runtime.
-Для production используйте [инструкцию по установке](plugin/docs/codex-installation.md),
-а не source checkout как постоянный daemon.
+Non-interactive flags, команды сервиса и advanced system-wide/Docker-варианты
+описаны в [инструкции по установке](plugin/docs/codex-installation.md).
 
 ## Документация
 
@@ -125,7 +126,8 @@ Server backend и SQLite durability boundary.
 Модель доставки взята из опыта
 [Telemax](https://github.com/aipolukhin/telemax): leases, `send_started`,
 `AMBIGUOUS`, problem center и fault-injection дисциплина перенесены в TypeScript
-семантически; Python-реализация не копировалась.
+семантически; его компактный и возобновляемый console onboarding также стал
+референсом для `install.sh`. Python-реализация не копировалась.
 
 Репозиторий сохраняет upstream Git history и Apache-2.0 attribution. Подробности
 в [NOTICE](NOTICE) и [карте происхождения](docs/provenance.md). codex-tg-wire —

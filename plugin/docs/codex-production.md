@@ -34,7 +34,12 @@ Bot token и optional `GROQ_API_KEY` принимаются из environment и�
 
 `cwd` всегда входит в writable roots для `workspace-write`; дополнительные roots должны быть перечислены явно. Relative paths считаются от config file. `networkAccess` передаётся в `turn/start.sandboxPolicy`. Telegram `/cwd` принимает только project id, а `/sandbox` не меняет roots/network. Wire-форма соответствует [официальной документации Codex App Server](https://developers.openai.com/codex/app-server).
 
-`danger-full-access` отсутствует в default allowlist. Если оператор добавил его в `codex.allowedSandboxModes`, ограничения writable roots и network sandbox больше не являются security boundary; doctor выдаёт WARN.
+Персональный `./install.sh` по умолчанию выбирает YOLO и включает
+`danger-full-access`; это сознательная UX-настройка для приватного owner-only
+бота, а не security boundary. `./install.sh --profile safe` оставляет только
+`read-only`/`workspace-write`. В любом профиле doctor выдаёт WARN, когда
+`danger-full-access` активен: writable roots, network sandbox и approvals тогда
+не ограничивают Codex.
 
 ## Health и systemd watchdog
 

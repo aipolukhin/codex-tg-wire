@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   DurableBridgeSupervisor,
+  type SupervisorActivityEvent,
   type SupervisorErrorEvent,
 } from '../../src/bridge/durable-supervisor.js'
 import type { DurableSupervisorRuntime } from '../../src/bridge/durable-supervisor.js'
@@ -125,6 +126,28 @@ describe('DurableBridgeSupervisor', () => {
     expect(JSON.stringify(events)).not.toContain('sensitive request text')
     expect(runtime.inboundCalls).toBe(2)
 
+    const stopping = supervisor.stop()
+    runtime.release()
+    await stopping
+  })
+
+  test('reports successful loop activity without payloads', async () => {
+    const poller = new BlockingPoller()
+    const runtime = new ControlledRuntime()
+    const events: SupervisorActivityEvent[] = []
+    const supervisor = new DurableBridgeSupervisor(poller, runtime, {
+      inboundConcurrency: 1,
+      workerIdleDelayMs: 1,
+      reaperIntervalMs: 5,
+      uxIntervalMs: 5,
+      onActivity: (event) => events.push(event),
+    })
+
+    supervisor.start()
+    await waitUntil(() => events.some((event) => event.component === 'outbox'))
+    expect(events).toContainEqual({ component: 'reaper', workerIndex: null })
+    expect(events).toContainEqual({ component: 'ux', workerIndex: null })
+    expect(JSON.stringify(events)).not.toContain('request')
     const stopping = supervisor.stop()
     runtime.release()
     await stopping

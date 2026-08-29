@@ -11,6 +11,11 @@ export interface SupervisorErrorEvent {
   errorName: string
 }
 
+export interface SupervisorActivityEvent {
+  component: SupervisorComponent
+  workerIndex: number | null
+}
+
 export interface DurableSupervisorPoller {
   pollOnce(signal?: AbortSignal): Promise<DurablePollResult>
 }
@@ -30,6 +35,7 @@ export interface DurableBridgeSupervisorOptions {
   reaperIntervalMs?: number
   uxIntervalMs?: number
   onError?: (event: SupervisorErrorEvent) => void
+  onActivity?: (event: SupervisorActivityEvent) => void
 }
 
 interface ActiveRun {
@@ -77,6 +83,7 @@ export class DurableBridgeSupervisor {
   private readonly reaperIntervalMs: number
   private readonly uxIntervalMs: number
   private readonly onError: ((event: SupervisorErrorEvent) => void) | undefined
+  private readonly onActivity: ((event: SupervisorActivityEvent) => void) | undefined
   private active: ActiveRun | null = null
 
   constructor(
@@ -103,6 +110,7 @@ export class DurableBridgeSupervisor {
     )
     this.uxIntervalMs = positiveInteger(options.uxIntervalMs ?? DEFAULT_UX_INTERVAL_MS, 'uxIntervalMs')
     this.onError = options.onError
+    this.onActivity = options.onActivity
   }
 
   get running(): boolean {
@@ -140,6 +148,7 @@ export class DurableBridgeSupervisor {
     while (!signal.aborted) {
       try {
         const result = await this.poller.pollOnce(signal)
+        this.reportActivity('poller', null)
         if (result.fetched === 0) await abortableDelay(this.pollIdleDelayMs, signal)
       } catch (error) {
         if (signal.aborted) return
@@ -153,6 +162,7 @@ export class DurableBridgeSupervisor {
     while (!signal.aborted) {
       try {
         const result = await this.runtime.processInboundOnce()
+        this.reportActivity('inbox', workerIndex)
         if (result.outcome === 'idle') await abortableDelay(this.workerIdleDelayMs, signal)
       } catch (error) {
         if (signal.aborted) return
@@ -166,6 +176,7 @@ export class DurableBridgeSupervisor {
     while (!signal.aborted) {
       try {
         const result = await this.runtime.deliverOutboundOnce()
+        this.reportActivity('outbox', null)
         if (result.outcome === 'idle') await abortableDelay(this.workerIdleDelayMs, signal)
       } catch (error) {
         if (signal.aborted) return
@@ -179,6 +190,7 @@ export class DurableBridgeSupervisor {
     while (!signal.aborted) {
       try {
         this.runtime.recoverExpiredLeases()
+        this.reportActivity('reaper', null)
       } catch (error) {
         this.reportError('reaper', null, error)
       }
@@ -190,6 +202,7 @@ export class DurableBridgeSupervisor {
     while (!signal.aborted) {
       try {
         this.runtime.runUxHeartbeat?.()
+        this.reportActivity('ux', null)
       } catch (error) {
         this.reportError('ux', null, error)
       }
@@ -204,6 +217,14 @@ export class DurableBridgeSupervisor {
   ): void {
     try {
       this.onError?.({ component, workerIndex, errorName: errorName(error) })
+    } catch {
+      // Diagnostics must never terminate a transport loop.
+    }
+  }
+
+  private reportActivity(component: SupervisorComponent, workerIndex: number | null): void {
+    try {
+      this.onActivity?.({ component, workerIndex })
     } catch {
       // Diagnostics must never terminate a transport loop.
     }

@@ -109,6 +109,17 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    health: z
+      .object({
+        enabled: z.boolean().default(true),
+        host: z.enum(['127.0.0.1', '::1']).default('127.0.0.1'),
+        port: z.number().int().min(1).max(65_535).default(8_787),
+        startupGraceMs: z.number().int().min(1_000).default(60_000),
+        staleAfterMs: z.number().int().min(10_000).default(120_000),
+        maxConsecutiveErrors: z.number().int().min(1).max(100).default(3),
+      })
+      .strict()
+      .default({}),
   })
   .strict()
   .superRefine((config, context) => {
@@ -149,6 +160,13 @@ export const BridgeConfigFileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['ux', 'heartbeatIntervalMs'],
         message: 'must be greater than or equal to ux.pollIntervalMs',
+      })
+    }
+    if (config.health.staleAfterMs <= config.telegram.pollingTimeoutSeconds * 1_000) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['health', 'staleAfterMs'],
+        message: 'must be greater than telegram.pollingTimeoutSeconds',
       })
     }
   })

@@ -74,6 +74,14 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
     expect(config.voice.provider).toBe('none')
     expect(config.voiceApiKey).toBeNull()
+    expect(config.health).toEqual({
+      enabled: true,
+      host: '127.0.0.1',
+      port: 8_787,
+      startupGraceMs: 60_000,
+      staleAfterMs: 120_000,
+      maxConsecutiveErrors: 3,
+    })
   })
 
   test('accepts the legacy token env name but never a token inside JSON', () => {
@@ -189,5 +197,22 @@ describe('loadBridgeServiceConfig', () => {
         GROQ_API_KEY: 'env-groq-key',
       },
     })).toThrow('Unrecognized key')
+  })
+
+  test('keeps health staleness above the Telegram long-poll duration', () => {
+    const invalid = fixture({
+      telegram: {
+        allowedUserIds: ['123456789'],
+        allowedChatIds: ['123456789'],
+        pollingTimeoutSeconds: 30,
+      },
+      health: { staleAfterMs: 30_000 },
+    })
+    expect(() => loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: invalid.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+      },
+    })).toThrow('must be greater than telegram.pollingTimeoutSeconds')
   })
 })

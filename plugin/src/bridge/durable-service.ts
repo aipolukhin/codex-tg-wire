@@ -12,6 +12,11 @@ import {
   DurableBridgeSupervisor,
   type DurableBridgeSupervisorOptions,
 } from './durable-supervisor.js'
+import {
+  DurableBridgeHealth,
+  DurableHealthServer,
+  SystemdWatchdog,
+} from './health.js'
 import { createDurableTextRuntime, type DurableTextRuntime } from './text-runtime.js'
 import { GroqVoiceTranscriber } from '../telegram/durable-voice-transcriber.js'
 import type { BridgeServiceConfig } from './service-config.js'
@@ -34,6 +39,12 @@ interface ClosableDatabase {
   close(): void
 }
 
+export interface DurableBridgeOperations {
+  health?: DurableBridgeHealth
+  healthServer?: DurableHealthServer
+  watchdog?: SystemdWatchdog
+}
+
 export class DurableBridgeService {
   private stopPromise: Promise<void> | null = null
   private started = false
@@ -44,13 +55,23 @@ export class DurableBridgeService {
     private readonly runtime: DurableTextRuntime,
     private readonly codexClient: ClosableCodexClient,
     private readonly database: ClosableDatabase,
+    private readonly operations: DurableBridgeOperations = {},
   ) {}
 
   start(): void {
     if (this.stopPromise !== null) throw new Error('durable bridge service is stopped')
     if (this.started) throw new Error('durable bridge service is already started')
-    this.supervisor.start()
-    this.started = true
+    try {
+      this.operations.healthServer?.start()
+      this.supervisor.start()
+      this.operations.health?.markRunning()
+      this.operations.watchdog?.start()
+      this.started = true
+    } catch (error) {
+      this.operations.health?.markStopped()
+      this.operations.healthServer?.stop()
+      throw error
+    }
   }
 
   wait(): Promise<void> {
@@ -64,6 +85,12 @@ export class DurableBridgeService {
 
   private async stopResources(): Promise<void> {
     let firstError: unknown
+    this.operations.health?.markStopping()
+    try {
+      await this.operations.watchdog?.stop()
+    } catch (error) {
+      firstError = error
+    }
     try {
       await this.supervisor.stop()
     } catch (error) {
@@ -81,6 +108,12 @@ export class DurableBridgeService {
     }
     try {
       this.database.close()
+    } catch (error) {
+      firstError ??= error
+    }
+    this.operations.health?.markStopped()
+    try {
+      this.operations.healthServer?.stop()
     } catch (error) {
       firstError ??= error
     }
@@ -205,14 +238,43 @@ export async function bootstrapDurableBridgeService(
       new SqlitePollCursorRepository(database),
       { timeoutSeconds: config.telegram.pollingTimeoutSeconds },
     )
+    const health = new DurableBridgeHealth({
+      inboundConcurrency: config.workers.inboundConcurrency,
+      startupGraceMs: config.health.startupGraceMs,
+      staleAfterMs: config.health.staleAfterMs,
+      maxConsecutiveErrors: config.health.maxConsecutiveErrors,
+      databaseProbe: () => {
+        try {
+          return database?.query<{ value: number }, []>('SELECT 1 AS value').get()?.value === 1
+        } catch {
+          return false
+        }
+      },
+    })
+    const healthServer = new DurableHealthServer(health, {
+      enabled: config.health.enabled,
+      host: config.health.host,
+      port: config.health.port,
+    })
+    const watchdog = new SystemdWatchdog(health, {
+      onError: (event) => options.logger?.warn('systemd notification failed', event),
+    })
     const supervisorOptions: DurableBridgeSupervisorOptions = {
       inboundConcurrency: config.workers.inboundConcurrency,
       reaperIntervalMs: config.workers.reaperIntervalMs,
       uxIntervalMs: config.ux.pollIntervalMs,
-      onError: (event) => options.logger?.warn('durable loop failed', { ...event }),
+      onError: (event) => {
+        health.recordError(event)
+        options.logger?.warn('durable loop failed', { ...event })
+      },
+      onActivity: (event) => health.recordActivity(event),
     }
     const supervisor = new DurableBridgeSupervisor(poller, runtime, supervisorOptions)
-    const service = new DurableBridgeService(identity, supervisor, runtime, codexClient, database)
+    const service = new DurableBridgeService(identity, supervisor, runtime, codexClient, database, {
+      health,
+      healthServer,
+      watchdog,
+    })
     service.start()
     options.logger?.info('durable bridge started', {
       botId: identity.botId,

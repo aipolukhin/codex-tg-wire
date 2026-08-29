@@ -55,5 +55,13 @@
     "heartbeatAfterMs": 120000,
     "heartbeatIntervalMs": 300000,
     "pollIntervalMs": 30000
+  },
+  "health": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8787,
+    "startupGraceMs": 60000,
+    "staleAfterMs": 120000,
+    "maxConsecutiveErrors": 3
   }
 }

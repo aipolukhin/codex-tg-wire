@@ -65,6 +65,7 @@ const PermissionRequestNotificationSchema = z.object({
   method: z.literal('notifications/claude/channel/permission_request'),
   params: PermissionRequestParamsSchema,
 })
+type PermissionRequestNotification = z.infer<typeof PermissionRequestNotificationSchema>
 
 export function registerPermissionRelay(
   server: Server,
@@ -73,7 +74,14 @@ export function registerPermissionRelay(
 ): void {
   const { config, telegramApi, log } = deps
 
-  server.setNotificationHandler(PermissionRequestNotificationSchema, async ({ params }) => {
+  // Keep the local Zod 3 schema inference bounded across MCP SDK releases.
+  // The SDK's AnyObjectSchema conditional type can exceed TS's instantiation
+  // limit when inferred through the full Server notification union.
+  const setPermissionNotificationHandler = server.setNotificationHandler.bind(server) as unknown as (
+    schema: typeof PermissionRequestNotificationSchema,
+    handler: (notification: PermissionRequestNotification) => void | Promise<void>,
+  ) => void
+  setPermissionNotificationHandler(PermissionRequestNotificationSchema, async ({ params }) => {
     const { request_id, tool_name, description, input_preview } = params
     pending.set(request_id, {
       toolName: tool_name,

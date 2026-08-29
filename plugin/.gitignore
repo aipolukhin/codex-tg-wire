@@ -1,6 +1,5 @@
 node_modules/
 bun.lockb
-bun.lock
 *.log
 .env
 # Light FTS local SQLite store (2026-05-29) + WAL/SHM sidecars. The DB can

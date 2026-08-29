@@ -14,6 +14,11 @@
     "doctor:codex": "bun run scripts/codex-bridge-doctor.ts",
     "backup:codex": "bun run scripts/codex-bridge-backup.ts",
     "restore:codex": "bun run scripts/codex-bridge-restore.ts",
+    "licenses:codex": "bun run scripts/supply-chain.ts --check",
+    "sbom:codex": "bun run scripts/supply-chain.ts --sbom ./dist/dashi-codex-bridge.cdx.json",
+    "release:codex": "bun run scripts/build-release-artifacts.ts",
+    "soak:codex": "bun run scripts/codex-bridge-soak.ts --duration-seconds 259200 --rate 20",
+    "soak:codex:smoke": "bun run scripts/codex-bridge-soak.ts --duration-seconds 5 --rate 30",
     "codex:smoke": "bun run scripts/codex-app-server-smoke.ts",
     "codex:schema:check": "bun run scripts/check-codex-schema.ts"
   },

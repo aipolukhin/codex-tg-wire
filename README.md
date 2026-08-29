@@ -40,10 +40,10 @@ not a stateless chat wrapper.
 
 ## Quick start
 
-You need **Linux with systemd --user**, a **Telegram bot token**, and the numeric
-Telegram user/chat IDs of the owner. The installer adds its pinned Bun runtime
-under `~/.bun` when needed, brings the compatible Codex CLI, and automatically
-reuses your local `~/.codex` account when one exists. No `sudo` is used.
+You need **Linux with systemd --user** and a **Telegram bot token** from
+`@BotFather`. The installer adds its pinned Bun runtime under `~/.bun` when
+needed, brings the compatible Codex CLI, and automatically reuses your local
+`~/.codex` account when one exists. No `sudo` is used.
 
 ```bash
 git clone https://github.com/aipolukhin/codex-tg-wire.git
@@ -51,15 +51,18 @@ cd codex-tg-wire
 ./install.sh
 ```
 
-The guided console onboarding asks for one project, execution profile, Telegram
-IDs and token, checks the environment, then installs and starts a user service.
-No `sudo`, dedicated Unix account or Docker is required for the default path.
+The console asks only for the token, installs the user service and prints a
+one-time link to your own running bot. Press **START** there: the bot claims your
+private user/chat IDs, lets you create/use `~/codex-workspace` or enter another
+absolute project path, and asks for **YOLO** or **Safe**. The random link nonce
+prevents an unrelated `/start` from claiming ownership.
 
-When the service starts, open your bot and send `/start`. The rest is button
-first: **Connect Codex** opens device login when needed, **Check login** verifies
-it, **Create Groq key** optionally enables voice transcription, and **Start the
-first task** finishes onboarding. After this point normal operation needs no
-terminal.
+The service then restarts directly into the full bridge. Continue with the
+button in Telegram: **Connect Codex** opens device login only when local auth is
+missing, **Check login** verifies it, **Create Groq key** optionally enables
+voice transcription, and **Start the first task** finishes onboarding. After
+the token is entered, normal setup needs no more terminal input. No `sudo`,
+dedicated Unix account or Docker is required for this default path.
 
 ```text
 /start
@@ -72,11 +75,13 @@ Prefer containers? Docker is optional, not the default:
 ```
 
 It keeps config, SQLite and `CODEX_HOME` on the host, but uses a hardened
-non-root container. Codex login still happens from the bot; `./docker.sh login`
-is only a recovery fallback.
+non-root container. The installer mounts `~/codex-workspace` by default (or the
+absolute path passed with `--project`); confirm that project and choose the mode
+in the bot. Codex login still happens there, while `./docker.sh login` is only a
+recovery fallback.
 
 > [!CAUTION]
-> The default **YOLO** profile uses `approvalPolicy=never` and
+> The recommended **YOLO** profile uses `approvalPolicy=never` and
 > `sandbox=danger-full-access`. It is convenient, but anyone controlling the
 > allowed Telegram account can act with your Linux user rights. A stolen bot
 > token exposes bridge traffic and must also be treated as an incident. Choose

@@ -12,7 +12,7 @@ describe('v1 operator documentation', () => {
     const installation = await document('codex-installation.md')
     expect(installation).toContain('## Recommended user installation')
     expect(installation).toContain('./install.sh')
-    expect(installation).toContain('`YOLO` (default)')
+    expect(installation).toContain('`YOLO` (recommended)')
     expect(installation).toContain('`Safe`')
     expect(installation).toContain('## systemd installation')
     expect(installation).toContain('## Docker Compose installation')

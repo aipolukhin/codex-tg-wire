@@ -11,6 +11,12 @@ Claude package version is not the codex-tg-wire release version.
 - Fixed the host and Docker console frames so every row has the same width.
 - The default host installer now bootstraps the repository-pinned Bun release
   into `~/.bun` through Bun's official installer when it is missing or differs.
+- First install is now truly bot-first: the console accepts only the BotFather
+  token, starts a resumable bootstrap service, and hands off through a
+  nonce-bound deep link to the user's own bot.
+- The running bot claims owner IDs, creates/selects the host project, chooses
+  YOLO or Safe, atomically writes production config, and restarts into the full
+  bridge. Numeric IDs remain available only for automation/preseed.
 
 ### Telegram control plane (M6.5)
 

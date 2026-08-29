@@ -1,12 +1,14 @@
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path'
 
 import { BridgeConfigFileSchema } from './service-config.js'
@@ -28,6 +30,12 @@ export interface InitializedBridgeInstallation {
   environmentPath: string
   telegramCredentialPath: string
   groqCredentialPath: string | null
+  stateDirectory: string
+  projectPath: string
+}
+
+export interface FinalizedBridgeBootstrap {
+  configPath: string
   stateDirectory: string
   projectPath: string
 }
@@ -58,10 +66,33 @@ function writePrivate(path: string, contents: string): void {
   chmodSync(path, 0o600)
 }
 
-/** Creates a credential-free, owner-allowlisted configuration for the selected execution profile. */
-export function initializeBridgeInstallation(
-  input: InitializeBridgeInstallationInput,
-): InitializedBridgeInstallation {
+function writePrivateAtomic(path: string, contents: string): void {
+  if (existsSync(path)) throw new Error('bridge configuration already exists')
+  const temporary = join(dirname(path), `.bridge.config.${randomUUID()}.tmp`)
+  try {
+    writePrivate(temporary, contents)
+    // A hard-link publish is atomic and, unlike rename(), never replaces a
+    // config created by a concurrent bootstrap/recovery attempt.
+    linkSync(temporary, path)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
+function requirePrivateRegularFile(path: string, label: string, allowEmpty = false): void {
+  if (!existsSync(path)) throw new Error(`${label} does not exist`)
+  const stat = lstatSync(path)
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${label} must be a regular file`)
+  if (!allowEmpty && stat.size <= 0) throw new Error(`${label} must not be empty`)
+}
+
+function installationValues(input: InitializeBridgeInstallationInput): {
+  configDirectory: string
+  stateDirectory: string
+  projectPath: string
+  groqCredentialPath: string | null
+  configuration: ReturnType<typeof BridgeConfigFileSchema.parse>
+} {
   const configDirectory = safeAbsoluteDirectory(input.configDirectory, 'configDirectory')
   const stateDirectory = safeAbsoluteDirectory(input.stateDirectory, 'stateDirectory')
   const projectPath = requireDirectory(input.projectPath, 'projectPath')
@@ -77,20 +108,6 @@ export function initializeBridgeInstallation(
   if (!PROJECT_ID.test(projectId)) throw new Error('projectId has an invalid format')
   if (!USER_ID.test(input.telegramUserId)) throw new Error('telegramUserId is invalid')
   if (!CHAT_ID.test(input.telegramChatId)) throw new Error('telegramChatId is invalid')
-
-  const configPath = join(configDirectory, 'bridge.config.json')
-  const environmentPath = join(configDirectory, 'bridge.env')
-  const telegramCredentialPath = join(configDirectory, 'telegram-token')
-  const targets = [
-    configPath,
-    environmentPath,
-    telegramCredentialPath,
-    ...(groqCredentialPath === null ? [] : [groqCredentialPath]),
-  ]
-  const existing = targets.find((path) => existsSync(path))
-  if (existing !== undefined) {
-    throw new Error('installation target already contains bridge configuration; refusing overwrite')
-  }
 
   const configuration = BridgeConfigFileSchema.parse({
     stateDatabase: join(stateDirectory, 'bridge.sqlite3'),
@@ -134,11 +151,46 @@ export function initializeBridgeInstallation(
     },
     voice: { provider: voiceProvider },
   })
+  return { configDirectory, stateDirectory, projectPath, groqCredentialPath, configuration }
+}
 
-  mkdirSync(configDirectory, { recursive: true, mode: 0o700 })
+function ensureRuntimeDirectories(
+  stateDirectory: string,
+  configuration: ReturnType<typeof BridgeConfigFileSchema.parse>,
+): void {
   mkdirSync(stateDirectory, { recursive: true, mode: 0o700 })
   mkdirSync(configuration.attachments.directory, { recursive: true, mode: 0o700 })
   mkdirSync(configuration.outboundMedia.directory, { recursive: true, mode: 0o700 })
+}
+
+/** Creates a credential-free, owner-allowlisted configuration for the selected execution profile. */
+export function initializeBridgeInstallation(
+  input: InitializeBridgeInstallationInput,
+): InitializedBridgeInstallation {
+  const {
+    configDirectory,
+    stateDirectory,
+    projectPath,
+    groqCredentialPath,
+    configuration,
+  } = installationValues(input)
+
+  const configPath = join(configDirectory, 'bridge.config.json')
+  const environmentPath = join(configDirectory, 'bridge.env')
+  const telegramCredentialPath = join(configDirectory, 'telegram-token')
+  const targets = [
+    configPath,
+    environmentPath,
+    telegramCredentialPath,
+    ...(groqCredentialPath === null ? [] : [groqCredentialPath]),
+  ]
+  const existing = targets.find((path) => existsSync(path))
+  if (existing !== undefined) {
+    throw new Error('installation target already contains bridge configuration; refusing overwrite')
+  }
+
+  mkdirSync(configDirectory, { recursive: true, mode: 0o700 })
+  ensureRuntimeDirectories(stateDirectory, configuration)
 
   const created: string[] = []
   try {
@@ -176,4 +228,26 @@ export function initializeBridgeInstallation(
     stateDirectory,
     projectPath,
   }
+}
+
+/** Atomically writes the production config after the bot-first bootstrap owns its credentials. */
+export function finalizeBridgeBootstrap(
+  input: InitializeBridgeInstallationInput,
+): FinalizedBridgeBootstrap {
+  const {
+    configDirectory,
+    stateDirectory,
+    projectPath,
+    groqCredentialPath,
+    configuration,
+  } = installationValues(input)
+  const configPath = join(configDirectory, 'bridge.config.json')
+  requirePrivateRegularFile(join(configDirectory, 'telegram-token'), 'Telegram credential')
+  requirePrivateRegularFile(join(configDirectory, 'bridge.env'), 'bridge environment')
+  if (groqCredentialPath !== null) {
+    requirePrivateRegularFile(groqCredentialPath, 'Groq credential', true)
+  }
+  ensureRuntimeDirectories(stateDirectory, configuration)
+  writePrivateAtomic(configPath, `${JSON.stringify(configuration, null, 2)}\n`)
+  return { configPath, stateDirectory, projectPath }
 }

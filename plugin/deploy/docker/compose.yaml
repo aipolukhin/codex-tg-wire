@@ -35,12 +35,15 @@ services:
       HOME: /var/lib/codex
       CODEX_HOME: /var/lib/codex
       DASHI_CODEX_BRIDGE_CONFIG: /etc/codex-tg-wire/bridge.config.json
+      CODEX_TG_WIRE_BOOTSTRAP_FILE: /etc/codex-tg-wire/bootstrap-state.json
       DASHI_TELEGRAM_BOT_TOKEN_FILE: /etc/codex-tg-wire/telegram-token
     volumes:
       - type: bind
         source: ${CODEX_TG_WIRE_CONFIG_DIR:?run ./docker.sh setup}
         target: /etc/codex-tg-wire
-        read_only: true
+        # Bot-first bootstrap atomically persists its cursor and final config.
+        # The host directory remains private (0700; files 0600).
+        read_only: false
       - type: bind
         source: ${CODEX_TG_WIRE_PROJECT_PATH:?run ./docker.sh setup}
         target: ${CODEX_TG_WIRE_PROJECT_PATH:?run ./docker.sh setup}

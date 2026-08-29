@@ -197,4 +197,96 @@ exit 0
       '--user disable --now codex-tg-wire.service',
     )
   })
+
+  test('starts token-only bot-first onboarding without asking for project or Telegram ids', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-tg-wire-bot-first-'))
+    roots.push(root)
+    const home = join(root, 'home')
+    const configRoot = join(root, 'config')
+    const dataRoot = join(root, 'data')
+    const configDirectory = join(configRoot, 'codex-tg-wire')
+    const stateDirectory = join(dataRoot, 'codex-tg-wire')
+    const fakeBin = join(root, 'fake-bin')
+    const tokenSource = join(root, 'telegram-token-source')
+    const systemctlLog = join(root, 'systemctl.log')
+    const codex = join(fakeBin, 'codex')
+    const fakeBootstrap = join(root, 'fake-bootstrap')
+    const token = '123456789:test-secret-token'
+    mkdirSync(home, { recursive: true })
+    mkdirSync(fakeBin, { recursive: true })
+    writeFileSync(tokenSource, `${token}\n`, { mode: 0o600 })
+    executable(codex, `#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then printf 'codex-cli 0.149.1\\n'; exit 0; fi
+if [ "\${1:-}" = "login" ] && [ "\${2:-}" = "status" ]; then exit 0; fi
+exit 2
+`)
+    executable(join(fakeBin, 'bun'), `#!/bin/bash
+set -eu
+if [[ "\${1:-}" == "--version" ]]; then printf '1.4.0\\n'; exit 0; fi
+if [[ "\${1:-}" == *codex-bridge-bootstrap-init.ts ]]; then shift; exec "$FAKE_BOOTSTRAP" "$@"; fi
+exec "$REAL_BUN" "$@"
+`)
+    executable(fakeBootstrap, `#!/bin/bash
+set -eu
+config=''
+state=''
+project=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config-dir) config="$2"; shift 2 ;;
+    --state-dir) state="$2"; shift 2 ;;
+    --default-project) project="$2"; shift 2 ;;
+    --deployment|--profile) shift 2 ;;
+    *) exit 2 ;;
+  esac
+done
+mkdir -p "$config" "$state"
+token_value="$(command cat)"
+printf '%s\\n' "$token_value" > "$config/telegram-token"
+: > "$config/groq-api-key"
+printf 'DASHI_CODEX_BRIDGE_CONFIG="%s/bridge.config.json"\\n' "$config" > "$config/bridge.env"
+printf '{"botUsername":"codex_wire_test_bot","nonce":"owner_nonce_1234567890"}\\n' > "$config/bootstrap-state.json"
+chmod 600 "$config/telegram-token" "$config/groq-api-key" "$config/bridge.env" "$config/bootstrap-state.json"
+printf 'https://t.me/codex_wire_test_bot?start=owner_nonce_1234567890\\n'
+`)
+    executable(join(fakeBin, 'systemctl'), `#!/bin/sh
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+exit 0
+`)
+    const command = [
+      'bash', INSTALLER,
+      '--token-file', tokenSource,
+      '--config-dir', configDirectory,
+      '--state-dir', stateDirectory,
+      '--skip-deps', '--offline', '--no-start',
+    ]
+    const result = Bun.spawnSync({
+      cmd: command,
+      cwd: root,
+      env: {
+        ...process.env,
+        HOME: home,
+        XDG_CONFIG_HOME: configRoot,
+        XDG_DATA_HOME: dataRoot,
+        CODEX_BINARY_PATH: codex,
+        SYSTEMCTL_LOG: systemctlLog,
+        FAKE_BOOTSTRAP: fakeBootstrap,
+        REAL_BUN: process.execPath,
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+        TERM: 'dumb',
+      },
+    })
+    const stdout = result.stdout.toString()
+    const stderr = result.stderr.toString()
+    expect(result.exitCode, `${stdout}\n${stderr}`).toBe(0)
+    await expect(Bun.file(join(configDirectory, 'bridge.config.json')).exists()).resolves.toBeFalse()
+    await expect(Bun.file(join(configDirectory, 'bootstrap-state.json')).exists()).resolves.toBeTrue()
+    expect((await Bun.file(join(configDirectory, 'telegram-token')).text()).trim()).toBe(token)
+    expect(stdout).toContain('Bot token проверен')
+    expect(stdout).toContain('https://t.me/codex_wire_test_bot?start=owner_nonce_1234567890')
+    expect(stdout).not.toContain(token)
+    expect(stderr).not.toContain(token)
+    const unit = await Bun.file(join(configRoot, 'systemd/user/codex-tg-wire.service')).text()
+    expect(unit).toContain(`Environment="CODEX_TG_WIRE_BOOTSTRAP_FILE=${join(configDirectory, 'bootstrap-state.json')}"`)
+  })
 })

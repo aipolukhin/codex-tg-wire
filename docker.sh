@@ -15,6 +15,7 @@ TELEGRAM_USER=""
 TELEGRAM_CHAT=""
 TOKEN_SOURCE=""
 GROQ_SOURCE=""
+TELEGRAM_TOKEN=""
 EXECUTION_PROFILE="yolo"
 PROFILE_WAS_SET=0
 ENABLE_GROQ=1
@@ -108,8 +109,8 @@ Usage:
 
 Setup options:
   --project PATH          Project directory Codex may work in
-  --telegram-user ID      Allowed Telegram user id
-  --telegram-chat ID      Allowed chat id (defaults to the user id)
+  --telegram-user ID      Preseed owner id instead of interactive bot claim
+  --telegram-chat ID      Preseed chat id (defaults to the owner id)
   --token-file PATH       Read the Telegram bot token from a private file
   --groq-key-file PATH    Enable voice transcription with a private Groq key file
   --profile yolo|safe     Execution profile (default: yolo)
@@ -124,6 +125,11 @@ Setup options:
 
 No secret is accepted as a command-line value. Docker is an optional deployment
 path; the default host installation remains ./install.sh.
+
+The normal setup asks only for the BotFather token, starts the container, then
+moves owner claim and the YOLO/Safe choice into a nonce-protected Telegram flow.
+--project selects the host directory mounted into Docker; the default is
+~/codex-workspace. Numeric Telegram IDs are only for automation/preseed.
 EOF
 }
 
@@ -154,10 +160,17 @@ require_setup() {
   environment_path="$(compose_environment_path)"
   [[ -f "$environment_path" && ! -L "$environment_path" ]] || \
     fail "Docker setup is incomplete; run ./docker.sh setup"
-  [[ -s "$DOCKER_CONFIG_DIRECTORY/bridge.config.json" ]] || \
-    fail "bridge config is missing; run ./docker.sh setup"
+  if [[ ! -s "$DOCKER_CONFIG_DIRECTORY/bridge.config.json" ]]; then
+    [[ -s "$DOCKER_CONFIG_DIRECTORY/bootstrap-state.json" ]] || \
+      fail "bridge config and bootstrap state are missing; run ./docker.sh setup"
+  fi
   [[ -s "$DOCKER_CONFIG_DIRECTORY/telegram-token" ]] || \
     fail "Telegram credential is missing; run ./docker.sh setup"
+}
+
+require_production_config() {
+  [[ -s "$DOCKER_CONFIG_DIRECTORY/bridge.config.json" ]] || \
+    fail "bot-first onboarding is not complete; finish it in Telegram first"
 }
 
 compose_quote() {
@@ -263,11 +276,14 @@ setup() {
   local environment_path="$DOCKER_CONFIG_DIRECTORY/bridge.env"
   local token_path="$DOCKER_CONFIG_DIRECTORY/telegram-token"
   local groq_path="$STATE_DIRECTORY/credentials/groq-api-key"
+  local bootstrap_path="$DOCKER_CONFIG_DIRECTORY/bootstrap-state.json"
   local compose_path
   compose_path="$(compose_environment_path)"
   local new_install=0
+  local bootstrap_install=0
+  local onboarding_url=""
 
-  if [[ -e "$config_path" || -e "$environment_path" || -e "$token_path" || -e "$compose_path" ]]; then
+  if [[ -e "$config_path" ]]; then
     [[ -f "$config_path" && ! -L "$config_path" ]] || fail "unsafe or incomplete config: $config_path"
     [[ -f "$environment_path" && ! -L "$environment_path" ]] || fail "unsafe or incomplete environment: $environment_path"
     [[ -f "$token_path" && ! -L "$token_path" ]] || fail "unsafe or incomplete credential: $token_path"
@@ -285,12 +301,32 @@ setup() {
     step 2 4 "Persistent data"
     ok "Keeping existing config, Codex home and SQLite state"
     note "Nothing is recreated and docker compose down will not remove host data."
+  elif [[ -e "$bootstrap_path" ]]; then
+    [[ -f "$bootstrap_path" && ! -L "$bootstrap_path" ]] || fail "unsafe bootstrap state: $bootstrap_path"
+    [[ -f "$environment_path" && ! -L "$environment_path" ]] || fail "unsafe bootstrap environment"
+    [[ -s "$token_path" && ! -L "$token_path" ]] || fail "unsafe bootstrap credential"
+    [[ -f "$compose_path" && ! -L "$compose_path" ]] || fail "unsafe Compose environment"
+    [[ -f "$groq_path" && ! -L "$groq_path" ]] || fail "unsafe bootstrap Groq credential"
+    [[ $PROFILE_WAS_SET -eq 0 ]] || fail "--profile cannot replace active bot onboarding"
+    local bootstrap_bot bootstrap_nonce
+    bootstrap_bot="$(sed -n 's/.*"botUsername": "\([A-Za-z0-9_]*\)".*/\1/p' "$bootstrap_path")"
+    bootstrap_nonce="$(sed -n 's/.*"nonce": "\([A-Za-z0-9_-]*\)".*/\1/p' "$bootstrap_path")"
+    [[ "$bootstrap_bot" =~ ^[A-Za-z0-9_]{5,32}$ && "$bootstrap_nonce" =~ ^[A-Za-z0-9_-]{16,64}$ ]] || \
+      fail "bootstrap state has no valid Telegram link"
+    onboarding_url="https://t.me/$bootstrap_bot?start=$bootstrap_nonce"
+    bootstrap_install=1
+    ENABLE_GROQ=1
+    step 2 4 "Bot-first onboarding"
+    ok "Незавершённая настройка найдена — продолжаем без повторного ввода token."
+  elif [[ -e "$environment_path" || -e "$token_path" || -e "$compose_path" || -e "$groq_path" ]]; then
+    fail "Docker target contains incomplete credentials without config or bootstrap state"
   else
     new_install=1
-    if [[ -z "$PROJECT_INPUT" ]]; then
-      [[ -t 0 ]] || fail "--project is required for non-interactive setup"
-      prompt "Папка проекта (absolute path): "
-      read -r PROJECT_INPUT
+    PROJECT_INPUT="${PROJECT_INPUT:-$HOME/codex-workspace}"
+    [[ "$PROJECT_INPUT" == /* ]] || fail "--project must be an absolute path"
+    if [[ ! -e "$PROJECT_INPUT" ]]; then
+      mkdir -p -- "$PROJECT_INPUT" || fail "cannot create Docker project directory: $PROJECT_INPUT"
+      chmod 0700 "$PROJECT_INPUT"
     fi
     local project_directory
     project_directory="$(absolute_directory "$PROJECT_INPUT" "project")"
@@ -306,66 +342,96 @@ setup() {
     ok "Runtime image ready; credentials were not copied into it"
 
     step 2 4 "Persistent data"
-    if [[ $PROFILE_WAS_SET -eq 0 && -t 0 ]]; then
-      printf '  %s1)%s YOLO %s(default)%s — без approvals и sandbox\n' \
-        "$BOLD" "$RESET" "$GREEN" "$RESET"
-      printf '  2) Safe — workspace-write, опасные команды через Telegram approval\n\n'
-      while true; do
-        prompt "Режим [1]: "
-        read -r choice
-        case "$choice" in
-          ''|1) EXECUTION_PROFILE="yolo"; break ;;
-          2) EXECUTION_PROFILE="safe"; break ;;
-          *) warn "Выберите 1 или 2." ;;
-        esac
-      done
-    fi
-    if [[ "$EXECUTION_PROFILE" == "yolo" ]]; then
-      ok "YOLO: approvalPolicy=never · sandbox=danger-full-access"
-      warn "Only a private owner allowlist is safe for this profile."
-    else
-      ok "Safe: approvalPolicy=on-request · sandbox=workspace-write"
-    fi
     ok "Project is mounted at the same absolute path: $project_directory"
     ok "Codex threads persist in $CODEX_HOME_DIRECTORY"
 
     step 3 4 "Private Telegram"
-    if [[ -z "$TELEGRAM_USER" ]]; then
-      [[ -t 0 ]] || fail "--telegram-user is required for non-interactive setup"
-      prompt "Telegram owner user id: "
-      read -r TELEGRAM_USER
+    if [[ -n "$TELEGRAM_USER" ]]; then
+      [[ "$TELEGRAM_USER" =~ ^[1-9][0-9]*$ ]] || fail "--telegram-user must be a positive numeric id"
+      [[ -n "$TELEGRAM_CHAT" ]] || TELEGRAM_CHAT="$TELEGRAM_USER"
+      compose run --rm --no-deps setup \
+        --config-dir /etc/codex-tg-wire \
+        --state-dir /var/lib/codex-tg-wire \
+        --project "$project_directory" \
+        --telegram-user "$TELEGRAM_USER" \
+        --telegram-chat "$TELEGRAM_CHAT" \
+        --profile "$EXECUTION_PROFILE" \
+        --voice groq \
+        --groq-credential-path /var/lib/codex-tg-wire/credentials/groq-api-key >/dev/null
+      if [[ "$EXECUTION_PROFILE" == "yolo" ]]; then
+        ok "YOLO: approvalPolicy=never · sandbox=danger-full-access"
+      else
+        ok "Safe: approvalPolicy=on-request · sandbox=workspace-write"
+      fi
+    else
+      [[ -z "$TELEGRAM_CHAT" ]] || fail "--telegram-chat requires --telegram-user"
+      bootstrap_install=1
+      ENABLE_GROQ=1
+      if [[ -n "$TOKEN_SOURCE" ]]; then
+        [[ -f "$TOKEN_SOURCE" && ! -L "$TOKEN_SOURCE" ]] || \
+          fail "--token-file must be a regular, non-symlink file"
+      else
+        prompt "Telegram bot token от @BotFather (не отображается): "
+        read -r -s TELEGRAM_TOKEN
+        printf '\n'
+        [[ -n "$TELEGRAM_TOKEN" ]] || fail "Telegram bot token must not be empty"
+      fi
+      mkdir -p -- "$STATE_DIRECTORY/credentials"
+      chmod 0700 "$STATE_DIRECTORY/credentials"
+      local bootstrap_profile="auto"
+      [[ $PROFILE_WAS_SET -eq 0 ]] || bootstrap_profile="$EXECUTION_PROFILE"
+      if [[ -n "$TOKEN_SOURCE" ]]; then
+        onboarding_url="$(compose run --rm --no-deps -T --entrypoint bun setup \
+          /app/scripts/codex-bridge-bootstrap-init.ts \
+          --config-dir /etc/codex-tg-wire \
+          --state-dir /var/lib/codex-tg-wire \
+          --default-project "$project_directory" \
+          --deployment docker \
+          --profile "$bootstrap_profile" \
+          --groq-credential-path /var/lib/codex-tg-wire/credentials/groq-api-key \
+          < "$TOKEN_SOURCE")" || fail "не удалось инициализировать Telegram bot"
+      else
+        onboarding_url="$(printf '%s\n' "$TELEGRAM_TOKEN" | \
+          compose run --rm --no-deps -T --entrypoint bun setup \
+            /app/scripts/codex-bridge-bootstrap-init.ts \
+            --config-dir /etc/codex-tg-wire \
+            --state-dir /var/lib/codex-tg-wire \
+            --default-project "$project_directory" \
+            --deployment docker \
+            --profile "$bootstrap_profile" \
+            --groq-credential-path /var/lib/codex-tg-wire/credentials/groq-api-key)" || \
+          fail "не удалось инициализировать Telegram bot"
+        unset TELEGRAM_TOKEN
+      fi
+      ok "Bot token проверен; owner и режим выбираются дальше в Telegram."
     fi
-    [[ -n "$TELEGRAM_CHAT" ]] || TELEGRAM_CHAT="$TELEGRAM_USER"
-    local voice_provider="groq"
-    compose run --rm --no-deps setup \
-      --config-dir /etc/codex-tg-wire \
-      --state-dir /var/lib/codex-tg-wire \
-      --project "$project_directory" \
-      --telegram-user "$TELEGRAM_USER" \
-      --telegram-chat "$TELEGRAM_CHAT" \
-      --profile "$EXECUTION_PROFILE" \
-      --voice "$voice_provider" \
-      --groq-credential-path /var/lib/codex-tg-wire/credentials/groq-api-key >/dev/null
   fi
 
   if [[ $new_install -eq 0 ]]; then step 3 4 "Private Telegram"; fi
-  if [[ -n "$TOKEN_SOURCE" ]]; then
-    if [[ $new_install -eq 0 && $REPLACE_TOKEN -ne 1 ]]; then
-      fail "refusing to replace token without --replace-token"
+  if [[ $bootstrap_install -eq 0 ]]; then
+    if [[ -n "$TOKEN_SOURCE" ]]; then
+      if [[ $new_install -eq 0 && $REPLACE_TOKEN -ne 1 ]]; then
+        fail "refusing to replace token without --replace-token"
+      fi
+      write_token_file "$TOKEN_SOURCE"
+    elif [[ ! -s "$token_path" ]]; then
+      if [[ -z "$TELEGRAM_TOKEN" ]]; then
+        [[ -t 0 ]] || fail "--token-file is required for non-interactive setup"
+        prompt "Telegram bot token от @BotFather (не отображается): "
+        read -r -s TELEGRAM_TOKEN
+        printf '\n'
+      fi
+      [[ -n "$TELEGRAM_TOKEN" ]] || fail "Telegram bot token must not be empty"
+      TEMPORARY_PATH="$(mktemp "$DOCKER_CONFIG_DIRECTORY/.telegram-token.XXXXXX")"
+      chmod 0600 "$TEMPORARY_PATH"
+      printf '%s\n' "$TELEGRAM_TOKEN" > "$TEMPORARY_PATH"
+      unset TELEGRAM_TOKEN
+      mv -f -- "$TEMPORARY_PATH" "$token_path"
+      TEMPORARY_PATH=""
     fi
+  elif [[ -n "$TOKEN_SOURCE" && $new_install -eq 0 ]]; then
+    [[ $REPLACE_TOKEN -eq 1 ]] || fail "refusing to replace bootstrap token without --replace-token"
     write_token_file "$TOKEN_SOURCE"
-  elif [[ ! -s "$token_path" ]]; then
-    [[ -t 0 ]] || fail "--token-file is required for non-interactive setup"
-    prompt "Telegram bot token (не отображается): "
-    read -r -s telegram_token
-    printf '\n'
-    [[ -n "$telegram_token" ]] || fail "Telegram bot token must not be empty"
-    TEMPORARY_PATH="$(mktemp "$DOCKER_CONFIG_DIRECTORY/.telegram-token.XXXXXX")"
-    chmod 0600 "$TEMPORARY_PATH"
-    printf '%s\n' "$telegram_token" > "$TEMPORARY_PATH"
-    unset telegram_token
-    mv -f -- "$TEMPORARY_PATH" "$token_path"
-    TEMPORARY_PATH=""
   fi
   if [[ -n "$GROQ_SOURCE" ]]; then
     if [[ $new_install -eq 0 && $REPLACE_GROQ_KEY -ne 1 ]]; then
@@ -374,7 +440,9 @@ setup() {
     write_groq_file "$GROQ_SOURCE"
   fi
   chmod 0700 "$DOCKER_CONFIG_DIRECTORY" "$STATE_DIRECTORY" "$CODEX_HOME_DIRECTORY"
-  chmod 0600 "$config_path" "$environment_path" "$token_path" "$compose_path"
+  chmod 0600 "$environment_path" "$token_path" "$compose_path"
+  [[ ! -e "$config_path" ]] || chmod 0600 "$config_path"
+  [[ ! -e "$bootstrap_path" ]] || chmod 0600 "$bootstrap_path"
   [[ ! -e "$groq_path" ]] || chmod 0600 "$groq_path"
   ok "Token is a private bind-mounted file, never an image or environment value"
   if [[ $ENABLE_GROQ -eq 1 ]]; then
@@ -388,8 +456,12 @@ setup() {
   fi
 
   step 4 4 "Doctor and bot-first start"
-  say "Running bridge doctor"
-  run_doctor
+  if [[ $bootstrap_install -eq 0 ]]; then
+    say "Running bridge doctor"
+    run_doctor
+  else
+    ok "Bot identity and token verified; production config is checked on restart."
+  fi
   if [[ $START_SERVICE -eq 1 ]]; then
     say "Starting hardened bridge container"
     compose up -d --no-build bridge
@@ -406,7 +478,15 @@ setup() {
   printf '  Stop:   ./docker.sh down\n'
   printf '  Config: %s\n' "$DOCKER_CONFIG_DIRECTORY"
   printf '  State:  %s\n' "$STATE_DIRECTORY"
-  printf '  Next:   open the bot, send /start and follow the action buttons\n'
+  if [[ $bootstrap_install -eq 1 ]]; then
+    if [[ $START_SERVICE -eq 0 ]]; then
+      printf '  Start:  ./docker.sh up\n'
+    fi
+    printf '\n  Open the one-time link and press START:\n\n  %s\n\n' "$onboarding_url"
+    printf '  Next:   finish owner, project and mode setup in Telegram\n'
+  else
+    printf '  Next:   open the bot, send /start and follow the action buttons\n'
+  fi
 }
 
 case "$ACTION" in
@@ -416,7 +496,7 @@ case "$ACTION" in
   restart) require_docker; require_setup; compose restart bridge ;;
   status) require_docker; require_setup; compose ps bridge ;;
   logs) require_docker; require_setup; compose logs --tail 100 -f bridge ;;
-  doctor) require_docker; require_setup; run_doctor ;;
+  doctor) require_docker; require_setup; require_production_config; run_doctor ;;
   build) require_docker; require_setup; compose build --pull bridge codex-login ;;
   login)
     require_docker

@@ -15,24 +15,28 @@ cd codex-tg-wire
 The installer is resumable and safe to run again. When Bun is absent or has a
 different version, it installs the version pinned by `plugin/package.json` into
 `~/.bun` through Bun's official installer, without `sudo`. It then installs
-frozen Bun dependencies and the pinned Codex CLI locally, reuses the current user's
-`CODEX_HOME` (normally `~/.codex`), asks for the project and private Telegram
-allowlist, stores the bot token separately with mode `0600`, runs doctor and
-creates `~/.config/systemd/user/codex-tg-wire.service`. SQLite and media state
-default to `~/.local/share/codex-tg-wire`. No root privileges or service account
-are required.
+frozen Bun dependencies and the pinned Codex CLI locally, reuses the current
+user's `CODEX_HOME` (normally `~/.codex`), and stores the bot token separately
+with mode `0600`. It starts a bootstrap service and prints a nonce-protected
+deep link. The matching private `/start` update supplies the owner user/chat
+IDs; the running bot then creates/selects the project and asks for YOLO or Safe.
+It atomically writes the production allowlist/config and restarts itself into
+the full bridge. The service lives at
+`~/.config/systemd/user/codex-tg-wire.service`; SQLite and media state default to
+`~/.local/share/codex-tg-wire`. No root privileges or service account are
+required, and the terminal is no longer needed after the token is entered.
 
-After the service starts, send `/start` to the bot. If local Codex auth exists,
-the bridge uses it immediately. Otherwise **Connect Codex** opens official
-device login and **Check login** verifies it. The same onboarding card can open
-Groq API Keys for optional voice transcription. Once this card is complete,
-normal setup and operation require no terminal.
+After the bootstrap steps, use **Continue in the bot**. If local Codex auth
+exists, the bridge uses it immediately. Otherwise **Connect Codex** opens
+official device login and **Check login** verifies it. The same onboarding card
+can open Groq API Keys for optional voice transcription. Once this card is
+complete, normal setup and operation require no terminal.
 
 The execution choice is explicit in onboarding:
 
 | Profile | Codex settings | Intended use |
 |---|---|---|
-| `YOLO` (default) | `approvalPolicy=never`, `danger-full-access` | A private, single-owner bot where uninterrupted remote work matters more than host isolation. Telegram compromise becomes full access as that Linux user. |
+| `YOLO` (recommended) | `approvalPolicy=never`, `danger-full-access` | A private, single-owner bot where uninterrupted remote work matters more than host isolation. Telegram compromise becomes full access as that Linux user. |
 | `Safe` | `approvalPolicy=on-request`, `workspace-write` | Shared or higher-risk hosts where command approvals and a workspace boundary are desired. |
 
 For a scripted Safe install, pass all non-secret values on the command line and
@@ -67,8 +71,8 @@ longer the default onboarding path.
 - `curl` and `unzip` for the recommended host installer (it installs pinned Bun itself);
 - Bun `1.4.x` for advanced/manual host installations;
 - Codex CLI `0.149.1` for the advanced system-wide host installation (the user installer vendors it locally);
-- a private Telegram bot token and numeric owner user/chat ids;
-- a local project directory writable by the service account;
+- a private Telegram bot token (interactive onboarding discovers owner IDs itself);
+- a writable local project directory, or permission to create `~/codex-workspace`;
 - a Codex account that can be authenticated from the bot when local auth is absent.
 
 Official Codex setup supports interactive login, device-code login on headless hosts, and API-key login through stdin. Never place the OpenAI credential, Telegram token, or `CODEX_HOME/auth.json` in this repository. See the [official Codex CLI guide](https://developers.openai.com/codex/cli/) and [official authentication guide](https://learn.chatgpt.com/codex/auth).
@@ -164,10 +168,13 @@ From the repository root, run the guided wrapper:
 ./docker.sh setup
 ```
 
-The wrapper asks for the project, execution profile, Telegram owner IDs and bot
-token, generates private files, builds the pinned images, runs doctor and starts
-the bridge. It deliberately does not run a terminal login wizard. Open the bot,
-send `/start`, then use these actions:
+The wrapper creates or mounts `~/codex-workspace` by default; pass
+`--project /absolute/path` to mount another directory. It asks only for the bot
+token, builds the pinned images, starts a resumable bootstrap container and
+prints a nonce-protected link. Press **START** in Telegram to claim the owner,
+confirm the mounted project and choose YOLO or Safe. The same container writes
+the production config atomically, restarts into the full bridge and offers
+these next actions:
 
 - **Connect Codex** opens official device login for the persistent container
   `CODEX_HOME`;
@@ -199,11 +206,13 @@ helper is the recovery path:
 ```
 
 Credentials are never image layers or Compose environment values. The Telegram
-token lives in the read-only config mount; the optional Groq key lives in a
-private writable credentials directory under state so the bot can rotate it
-atomically. The health endpoint remains container-local and Docker evaluates it
-with the image `HEALTHCHECK`; do not publish port `8787` unless a trusted monitor
-requires it.
+token and bootstrap state live in a host-private config bind (`0700`, files
+`0600`); that bind remains writable so the bootstrap can persist its polling
+cursor and atomically create the final config. The optional Groq key lives in a
+private writable credentials directory under state so the bot can rotate it.
+The container root filesystem is still read-only. The health endpoint remains
+container-local and Docker evaluates it with the image `HEALTHCHECK`; do not
+publish port `8787` unless a trusted monitor requires it.
 
 ## First-run and restart acceptance
 

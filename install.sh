@@ -16,6 +16,7 @@ TELEGRAM_USER=""
 TELEGRAM_CHAT=""
 TOKEN_SOURCE=""
 GROQ_SOURCE=""
+TELEGRAM_TOKEN=""
 EXECUTION_PROFILE="yolo"
 PROFILE_WAS_SET=0
 ENABLE_GROQ=1
@@ -128,8 +129,8 @@ Usage:
 
 First-install options:
   --project PATH          Project directory Codex may work in
-  --telegram-user ID      Allowed Telegram user id
-  --telegram-chat ID      Allowed chat id (defaults to the user id)
+  --telegram-user ID      Preseed owner id instead of interactive bot claim
+  --telegram-chat ID      Preseed chat id (defaults to the owner id)
   --token-file PATH       Read the Telegram bot token from a private file
   --groq-key-file PATH    Enable voice transcription with a private Groq key file
   --profile yolo|safe     Execution profile (default: yolo)
@@ -147,6 +148,10 @@ Maintenance options:
 
 No token is accepted as a command-line value. Without --token-file, the first
 interactive install asks for it without echoing it.
+
+After the token, the running bot claims the owner through a nonce-protected
+START button, then creates/uses ~/codex-workspace or another host path and asks
+for YOLO/Safe. Numeric Telegram IDs are only needed for automation.
 
 If the pinned Bun runtime is missing, the installer adds it to ~/.bun through
 the official Bun installer. Set BUN_INSTALL to choose another absolute path.
@@ -386,91 +391,10 @@ CONFIG_PATH="$CONFIG_DIRECTORY/bridge.config.json"
 ENVIRONMENT_PATH="$CONFIG_DIRECTORY/bridge.env"
 TOKEN_PATH="$CONFIG_DIRECTORY/telegram-token"
 GROQ_PATH="$CONFIG_DIRECTORY/groq-api-key"
+BOOTSTRAP_PATH="$CONFIG_DIRECTORY/bootstrap-state.json"
 NEW_INSTALL=0
-
-if [[ -e "$CONFIG_PATH" || -e "$ENVIRONMENT_PATH" || -e "$TOKEN_PATH" ]]; then
-  [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" ]] || \
-    fail "existing installation has no safe regular config: $CONFIG_PATH"
-  [[ -f "$ENVIRONMENT_PATH" && ! -L "$ENVIRONMENT_PATH" ]] || \
-    fail "existing installation has no safe regular environment file: $ENVIRONMENT_PATH"
-  [[ -f "$TOKEN_PATH" && ! -L "$TOKEN_PATH" ]] || \
-    fail "existing installation has no safe regular Telegram credential: $TOKEN_PATH"
-  if grep -q '"provider": "groq"' "$CONFIG_PATH"; then
-    ENABLE_GROQ=1
-    [[ -f "$GROQ_PATH" && ! -L "$GROQ_PATH" ]] || \
-      fail "existing Groq voice config has no safe credential: $GROQ_PATH"
-  else
-    ENABLE_GROQ=0
-    if [[ -n "$GROQ_SOURCE" ]]; then
-      fail "existing config has Groq voice disabled; enable it explicitly in bridge.config.json first"
-    fi
-  fi
-  if [[ $PROFILE_WAS_SET -eq 1 ]]; then
-    fail "--profile only applies to a first install; edit the existing config explicitly"
-  fi
-  ui_step 2 4 "Доступ Codex"
-  ui_ok "Keeping the existing bridge configuration"
-  ui_note "Профиль, project path и allowlist не перезаписываются."
-else
-  NEW_INSTALL=1
-  ui_step 2 4 "Доступ Codex"
-  if [[ -z "$PROJECT_INPUT" ]]; then
-    [[ -t 0 ]] || fail "--project is required for a non-interactive first install"
-    ui_prompt "Папка проекта (absolute path): "
-    read -r PROJECT_INPUT
-  fi
-
-  [[ "$PROJECT_INPUT" == /* ]] || fail "--project must be an absolute path"
-  [[ -d "$PROJECT_INPUT" ]] || fail "project directory does not exist: $PROJECT_INPUT"
-  PROJECT_DIRECTORY="$(CDPATH= cd -- "$PROJECT_INPUT" && pwd -P)"
-
-  if [[ $PROFILE_WAS_SET -eq 0 && -t 0 ]]; then
-    printf '  %s1)%s YOLO %s(default)%s — без approvals и sandbox\n' \
-      "$BOLD" "$RESET" "$GREEN" "$RESET"
-    printf '  2) Safe — workspace-write, опасные команды через Telegram approval\n\n'
-    while true; do
-      ui_prompt "Режим [1]: "
-      read -r PROFILE_CHOICE
-      case "$PROFILE_CHOICE" in
-        ''|1) EXECUTION_PROFILE="yolo"; break ;;
-        2) EXECUTION_PROFILE="safe"; break ;;
-        *) ui_warn "Выберите 1 или 2." ;;
-      esac
-    done
-  fi
-  if [[ "$EXECUTION_PROFILE" == "yolo" ]]; then
-    ui_ok "YOLO: approvalPolicy=never · sandbox=danger-full-access"
-    ui_warn "Telegram-команды получат все права текущего Linux-пользователя."
-    ui_note "Доступ останется только у указанного user/chat id; публичный бот здесь недопустим."
-  else
-    ui_ok "Safe: approvalPolicy=on-request · sandbox=workspace-write"
-  fi
-  ui_ok "Проект: $PROJECT_DIRECTORY"
-
-  ui_step 3 4 "Приватный Telegram"
-  if [[ -z "$TELEGRAM_USER" ]]; then
-    [[ -t 0 ]] || fail "--telegram-user is required for a non-interactive first install"
-    ui_prompt "Telegram owner user id: "
-    read -r TELEGRAM_USER
-  fi
-  [[ -n "$TELEGRAM_CHAT" ]] || TELEGRAM_CHAT="$TELEGRAM_USER"
-
-  VOICE_PROVIDER="groq"
-
-  say "Creating private configuration and SQLite state directories"
-  "$BUN_BINARY" "$PLUGIN_DIRECTORY/scripts/codex-bridge-init.ts" \
-    --config-dir "$CONFIG_DIRECTORY" \
-    --state-dir "$STATE_DIRECTORY" \
-    --project "$PROJECT_DIRECTORY" \
-    --telegram-user "$TELEGRAM_USER" \
-    --telegram-chat "$TELEGRAM_CHAT" \
-    --profile "$EXECUTION_PROFILE" \
-    --voice "$VOICE_PROVIDER" >/dev/null
-fi
-
-if [[ $NEW_INSTALL -eq 0 ]]; then
-  ui_step 3 4 "Приватный Telegram"
-fi
+BOOTSTRAP_INSTALL=0
+ONBOARDING_URL=""
 
 write_token_file() {
   local source="$1"
@@ -496,23 +420,134 @@ write_groq_file() {
   TEMPORARY_PATH=""
 }
 
-if [[ -n "$TOKEN_SOURCE" ]]; then
-  if [[ $NEW_INSTALL -eq 0 && $REPLACE_TOKEN -ne 1 ]]; then
-    fail "refusing to replace the existing token without --replace-token"
+if [[ -e "$CONFIG_PATH" ]]; then
+  [[ -f "$CONFIG_PATH" && ! -L "$CONFIG_PATH" ]] || \
+    fail "existing installation has no safe regular config: $CONFIG_PATH"
+  [[ -f "$ENVIRONMENT_PATH" && ! -L "$ENVIRONMENT_PATH" ]] || \
+    fail "existing installation has no safe regular environment file: $ENVIRONMENT_PATH"
+  [[ -f "$TOKEN_PATH" && ! -L "$TOKEN_PATH" ]] || \
+    fail "existing installation has no safe regular Telegram credential: $TOKEN_PATH"
+  if grep -q '"provider": "groq"' "$CONFIG_PATH"; then
+    ENABLE_GROQ=1
+    [[ -f "$GROQ_PATH" && ! -L "$GROQ_PATH" ]] || \
+      fail "existing Groq voice config has no safe credential: $GROQ_PATH"
+  else
+    ENABLE_GROQ=0
+    if [[ -n "$GROQ_SOURCE" ]]; then
+      fail "existing config has Groq voice disabled; enable it explicitly in bridge.config.json first"
+    fi
   fi
+  if [[ $PROFILE_WAS_SET -eq 1 ]]; then
+    fail "--profile only applies to a first install; edit the existing config explicitly"
+  fi
+  ui_step 2 4 "Доступ Codex"
+  ui_ok "Keeping the existing bridge configuration"
+  ui_note "Профиль, project path и allowlist не перезаписываются."
+elif [[ -e "$BOOTSTRAP_PATH" ]]; then
+  [[ -f "$BOOTSTRAP_PATH" && ! -L "$BOOTSTRAP_PATH" ]] || \
+    fail "existing bootstrap has no safe state file: $BOOTSTRAP_PATH"
+  [[ -f "$ENVIRONMENT_PATH" && ! -L "$ENVIRONMENT_PATH" ]] || \
+    fail "existing bootstrap has no safe environment file: $ENVIRONMENT_PATH"
+  [[ -s "$TOKEN_PATH" && ! -L "$TOKEN_PATH" ]] || \
+    fail "existing bootstrap has no safe Telegram credential: $TOKEN_PATH"
+  [[ -f "$GROQ_PATH" && ! -L "$GROQ_PATH" ]] || \
+    fail "existing bootstrap has no safe Groq credential: $GROQ_PATH"
+  [[ $PROFILE_WAS_SET -eq 0 ]] || fail "--profile cannot replace an active bot onboarding"
+  BOOTSTRAP_INSTALL=1
+  ENABLE_GROQ=1
+  ONBOARDING_URL="$("$BUN_BINARY" -e \
+    'const s=await Bun.file(process.argv[1]).json(); console.log(`https://t.me/${s.botUsername}?start=${s.nonce}`)' \
+    "$BOOTSTRAP_PATH")"
+  ui_step 2 4 "Bot-first onboarding"
+  ui_ok "Незавершённая настройка найдена — продолжаем без повторного ввода token."
+elif [[ -e "$ENVIRONMENT_PATH" || -e "$TOKEN_PATH" || -e "$GROQ_PATH" ]]; then
+  fail "installation target contains incomplete credentials without config or bootstrap state"
+else
+  NEW_INSTALL=1
+  if [[ -n "$TELEGRAM_USER" ]]; then
+    [[ "$TELEGRAM_USER" =~ ^[1-9][0-9]*$ ]] || fail "--telegram-user must be a positive numeric id"
+    [[ -n "$PROJECT_INPUT" ]] || fail "--project is required with --telegram-user"
+    [[ "$PROJECT_INPUT" == /* ]] || fail "--project must be an absolute path"
+    [[ -d "$PROJECT_INPUT" ]] || fail "project directory does not exist: $PROJECT_INPUT"
+    PROJECT_DIRECTORY="$(CDPATH= cd -- "$PROJECT_INPUT" && pwd -P)"
+    [[ -n "$TELEGRAM_CHAT" ]] || TELEGRAM_CHAT="$TELEGRAM_USER"
+    ui_step 2 4 "Advanced preseed"
+    say "Creating the pre-allowlisted production configuration"
+    "$BUN_BINARY" "$PLUGIN_DIRECTORY/scripts/codex-bridge-init.ts" \
+      --config-dir "$CONFIG_DIRECTORY" \
+      --state-dir "$STATE_DIRECTORY" \
+      --project "$PROJECT_DIRECTORY" \
+      --telegram-user "$TELEGRAM_USER" \
+      --telegram-chat "$TELEGRAM_CHAT" \
+      --profile "$EXECUTION_PROFILE" \
+      --voice groq >/dev/null
+    if [[ "$EXECUTION_PROFILE" == "yolo" ]]; then
+      ui_ok "YOLO: approvalPolicy=never · sandbox=danger-full-access"
+    else
+      ui_ok "Safe: approvalPolicy=on-request · sandbox=workspace-write"
+    fi
+    ui_ok "Проект: $PROJECT_DIRECTORY"
+  else
+    [[ -z "$TELEGRAM_CHAT" ]] || fail "--telegram-chat requires --telegram-user"
+    BOOTSTRAP_INSTALL=1
+    ENABLE_GROQ=1
+    DEFAULT_PROJECT_DIRECTORY="${PROJECT_INPUT:-$HOME/codex-workspace}"
+    [[ "$DEFAULT_PROJECT_DIRECTORY" == /* ]] || fail "--project must be an absolute path"
+    ui_step 2 4 "Telegram bot"
+    if [[ -z "$TOKEN_SOURCE" ]]; then
+      [[ -t 0 ]] || fail "--token-file is required for a non-interactive first install"
+      ui_prompt "Telegram bot token от @BotFather (не отображается): "
+      read -r -s TELEGRAM_TOKEN
+      printf '\n'
+      [[ -n "$TELEGRAM_TOKEN" ]] || fail "Telegram bot token must not be empty"
+    fi
+    BOOTSTRAP_PROFILE="auto"
+    [[ $PROFILE_WAS_SET -eq 0 ]] || BOOTSTRAP_PROFILE="$EXECUTION_PROFILE"
+    BOOTSTRAP_COMMAND=(
+      "$BUN_BINARY" "$PLUGIN_DIRECTORY/scripts/codex-bridge-bootstrap-init.ts"
+      --config-dir "$CONFIG_DIRECTORY"
+      --state-dir "$STATE_DIRECTORY"
+      --default-project "$DEFAULT_PROJECT_DIRECTORY"
+      --deployment host
+      --profile "$BOOTSTRAP_PROFILE"
+    )
+    if [[ -n "$TOKEN_SOURCE" ]]; then
+      [[ -f "$TOKEN_SOURCE" && ! -L "$TOKEN_SOURCE" ]] || \
+        fail "--token-file must be a regular, non-symlink file"
+      ONBOARDING_URL="$("${BOOTSTRAP_COMMAND[@]}" < "$TOKEN_SOURCE")" || \
+        fail "не удалось инициализировать Telegram bot"
+    else
+      ONBOARDING_URL="$(printf '%s\n' "$TELEGRAM_TOKEN" | "${BOOTSTRAP_COMMAND[@]}")" || \
+        fail "не удалось инициализировать Telegram bot"
+      unset TELEGRAM_TOKEN
+    fi
+    ui_ok "Bot token проверен и сохранён отдельно · mode 0600"
+    ui_note "Owner, project и execution profile выбираются дальше в Telegram."
+  fi
+fi
+
+if [[ $BOOTSTRAP_INSTALL -eq 0 ]]; then
+  if [[ -n "$TOKEN_SOURCE" ]]; then
+    if [[ $NEW_INSTALL -eq 0 && $REPLACE_TOKEN -ne 1 ]]; then
+      fail "refusing to replace the existing token without --replace-token"
+    fi
+    write_token_file "$TOKEN_SOURCE"
+  elif [[ ! -s "$TOKEN_PATH" ]]; then
+    [[ -t 0 ]] || fail "--token-file is required for a non-interactive first install"
+    ui_prompt "Telegram bot token от @BotFather (не отображается): "
+    read -r -s TELEGRAM_TOKEN
+    printf '\n'
+    [[ -n "$TELEGRAM_TOKEN" ]] || fail "Telegram bot token must not be empty"
+    TEMPORARY_PATH="$(mktemp "$CONFIG_DIRECTORY/.telegram-token.XXXXXX")"
+    chmod 0600 "$TEMPORARY_PATH"
+    printf '%s\n' "$TELEGRAM_TOKEN" > "$TEMPORARY_PATH"
+    unset TELEGRAM_TOKEN
+    mv -f -- "$TEMPORARY_PATH" "$TOKEN_PATH"
+    TEMPORARY_PATH=""
+  fi
+elif [[ -n "$TOKEN_SOURCE" && $NEW_INSTALL -eq 0 ]]; then
+  [[ $REPLACE_TOKEN -eq 1 ]] || fail "refusing to replace bootstrap token without --replace-token"
   write_token_file "$TOKEN_SOURCE"
-elif [[ ! -s "$TOKEN_PATH" ]]; then
-  [[ -t 0 ]] || fail "--token-file is required for a non-interactive first install"
-  ui_prompt "Telegram bot token (не отображается): "
-  read -r -s TELEGRAM_TOKEN
-  printf '\n'
-  [[ -n "$TELEGRAM_TOKEN" ]] || fail "Telegram bot token must not be empty"
-  TEMPORARY_PATH="$(mktemp "$CONFIG_DIRECTORY/.telegram-token.XXXXXX")"
-  chmod 0600 "$TEMPORARY_PATH"
-  printf '%s\n' "$TELEGRAM_TOKEN" > "$TEMPORARY_PATH"
-  unset TELEGRAM_TOKEN
-  mv -f -- "$TEMPORARY_PATH" "$TOKEN_PATH"
-  TEMPORARY_PATH=""
 fi
 if [[ -n "$GROQ_SOURCE" ]]; then
   if [[ $NEW_INSTALL -eq 0 && $REPLACE_GROQ_KEY -ne 1 ]]; then
@@ -530,13 +565,19 @@ if [[ $ENABLE_GROQ -eq 1 ]]; then
 else
   ui_note "Groq voice пропущен; Telegram voice всё равно передаётся Codex как audio."
 fi
-ui_ok "Allowlist и конфигурация готовы"
+if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
+  ui_note "Allowlist появится только после одноразового START в Telegram."
+else
+  ui_ok "Allowlist и конфигурация готовы"
+fi
 
 chmod 0700 "$CONFIG_DIRECTORY"
 if [[ -d "$STATE_DIRECTORY" ]]; then
   chmod 0700 "$STATE_DIRECTORY"
 fi
-chmod 0600 "$CONFIG_PATH" "$ENVIRONMENT_PATH" "$TOKEN_PATH"
+chmod 0600 "$ENVIRONMENT_PATH" "$TOKEN_PATH"
+[[ ! -e "$CONFIG_PATH" ]] || chmod 0600 "$CONFIG_PATH"
+[[ ! -e "$BOOTSTRAP_PATH" ]] || chmod 0600 "$BOOTSTRAP_PATH"
 [[ ! -e "$GROQ_PATH" ]] || chmod 0600 "$GROQ_PATH"
 
 systemd_quote() {
@@ -548,7 +589,11 @@ systemd_quote() {
   printf '"%s"' "$value"
 }
 
-ui_step 4 4 "Проверка и запуск"
+if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
+  ui_step 3 4 "Bootstrap service"
+else
+  ui_step 4 4 "Проверка и запуск"
+fi
 say "Installing $SERVICE_NAME for the current user"
 mkdir -p -- "$SYSTEMD_USER_DIRECTORY"
 TEMPORARY_PATH="$(mktemp "$SYSTEMD_USER_DIRECTORY/.codex-tg-wire.service.XXXXXX")"
@@ -569,6 +614,7 @@ chmod 0600 "$TEMPORARY_PATH"
     "Environment=$(systemd_quote "CODEX_HOME=$CODEX_HOME_VALUE")" \
     "Environment=$(systemd_quote "CODEX_BINARY_PATH=$CODEX_BINARY")" \
     "Environment=$(systemd_quote "DASHI_CODEX_BRIDGE_CONFIG=$CONFIG_PATH")" \
+    "Environment=$(systemd_quote "CODEX_TG_WIRE_BOOTSTRAP_FILE=$BOOTSTRAP_PATH")" \
     "Environment=$(systemd_quote "DASHI_TELEGRAM_BOT_TOKEN_FILE=$TOKEN_PATH")" \
     "Environment=$(systemd_quote "PATH=$PATH")"
   if [[ $ENABLE_GROQ -eq 1 ]]; then
@@ -591,26 +637,30 @@ chmod 0600 "$TEMPORARY_PATH"
 mv -f -- "$TEMPORARY_PATH" "$UNIT_PATH"
 TEMPORARY_PATH=""
 
-say "Running bridge doctor"
-DOCTOR_ARGUMENTS=()
-if [[ $ONLINE_DOCTOR -eq 1 ]]; then
-  DOCTOR_ARGUMENTS+=(--online)
-fi
-(
-  cd -- "$PLUGIN_DIRECTORY"
-  DOCTOR_ENVIRONMENT=(
-    "HOME=$HOME"
-    "CODEX_HOME=$CODEX_HOME_VALUE"
-    "CODEX_BINARY_PATH=$CODEX_BINARY"
-    "DASHI_CODEX_BRIDGE_CONFIG=$CONFIG_PATH"
-    "DASHI_TELEGRAM_BOT_TOKEN_FILE=$TOKEN_PATH"
-  )
-  if [[ $ENABLE_GROQ -eq 1 ]]; then
-    DOCTOR_ENVIRONMENT+=("GROQ_API_KEY_FILE=$GROQ_PATH")
+if [[ $BOOTSTRAP_INSTALL -eq 0 ]]; then
+  say "Running bridge doctor"
+  DOCTOR_ARGUMENTS=()
+  if [[ $ONLINE_DOCTOR -eq 1 ]]; then
+    DOCTOR_ARGUMENTS+=(--online)
   fi
-  env "${DOCTOR_ENVIRONMENT[@]}" \
-    "$BUN_BINARY" run doctor:codex "${DOCTOR_ARGUMENTS[@]}"
-)
+  (
+    cd -- "$PLUGIN_DIRECTORY"
+    DOCTOR_ENVIRONMENT=(
+      "HOME=$HOME"
+      "CODEX_HOME=$CODEX_HOME_VALUE"
+      "CODEX_BINARY_PATH=$CODEX_BINARY"
+      "DASHI_CODEX_BRIDGE_CONFIG=$CONFIG_PATH"
+      "DASHI_TELEGRAM_BOT_TOKEN_FILE=$TOKEN_PATH"
+    )
+    if [[ $ENABLE_GROQ -eq 1 ]]; then
+      DOCTOR_ENVIRONMENT+=("GROQ_API_KEY_FILE=$GROQ_PATH")
+    fi
+    env "${DOCTOR_ENVIRONMENT[@]}" \
+      "$BUN_BINARY" run doctor:codex "${DOCTOR_ARGUMENTS[@]}"
+  )
+else
+  ui_ok "Bot identity и token проверены; production config проверится при перезапуске."
+fi
 
 "$SYSTEMCTL_BINARY" --user daemon-reload
 "$SYSTEMCTL_BINARY" --user enable "$SERVICE_NAME" >/dev/null
@@ -621,6 +671,12 @@ if [[ $START_SERVICE -eq 1 ]]; then
     fail "service did not become active; inspect: journalctl --user -u $SERVICE_NAME -n 100"
 fi
 
+if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
+  ui_step 4 4 "Продолжение в Telegram"
+  printf '  Открой одноразовую ссылку и нажми START:\n\n  %s\n\n' "$ONBOARDING_URL"
+  ui_note "Дальше бот сам закрепит owner ID, создаст/выберет project и предложит YOLO/Safe."
+fi
+
 printf '\n'
 ui_box_rule '╭' '╮' "$GREEN"
 ui_box_line 'codex-tg-wire готов' "$BOLD" "$GREEN"
@@ -628,9 +684,17 @@ ui_box_rule '╰' '╯' "$GREEN"
 printf '\n'
 printf '  Status: systemctl --user status %s\n' "$SERVICE_NAME"
 printf '  Logs:   journalctl --user -u %s -f\n' "$SERVICE_NAME"
-printf '  Config: %s\n' "$CONFIG_PATH"
+if [[ $BOOTSTRAP_INSTALL -eq 1 && ! -e "$CONFIG_PATH" ]]; then
+  printf '  Setup:  %s\n' "$BOOTSTRAP_PATH"
+else
+  printf '  Config: %s\n' "$CONFIG_PATH"
+fi
 printf '  State:  %s\n' "$STATE_DIRECTORY"
-printf '  Next:   open the bot, send /start and follow the action buttons\n'
+if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
+  printf '  Next:   open the one-time link above; no more terminal input is needed\n'
+else
+  printf '  Next:   open the bot, send /start and follow the action buttons\n'
+fi
 if [[ $START_SERVICE -eq 0 ]]; then
   printf '  Start:  systemctl --user start %s\n' "$SERVICE_NAME"
 fi

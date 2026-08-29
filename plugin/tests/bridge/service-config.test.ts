@@ -56,6 +56,8 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.codex.sandboxMode).toBe('workspace-write')
     expect(config.codex.allowedSandboxModes).toEqual(['read-only', 'workspace-write'])
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
+    expect(config.voice.provider).toBe('none')
+    expect(config.voiceApiKey).toBeNull()
   })
 
   test('accepts the legacy token env name but never a token inside JSON', () => {
@@ -148,5 +150,28 @@ describe('loadBridgeServiceConfig', () => {
         DASHI_TELEGRAM_BOT_TOKEN: 'safe',
       },
     })).toThrow('invalid bridge config')
+  })
+
+  test('keeps Groq credentials in env and requires them only for the selected adapter', () => {
+    const enabled = fixture({ voice: { provider: 'groq' } })
+    expect(() => loadBridgeServiceConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: enabled.path, DASHI_TELEGRAM_BOT_TOKEN: 'safe' },
+    })).toThrow('GROQ_API_KEY')
+    expect(loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: enabled.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+        GROQ_API_KEY: 'env-groq-key',
+      },
+    }).voiceApiKey).toBe('env-groq-key')
+
+    const hardcoded = fixture({ voice: { provider: 'groq', apiKey: 'must-not-be-in-json' } })
+    expect(() => loadBridgeServiceConfig({
+      env: {
+        DASHI_CODEX_BRIDGE_CONFIG: hardcoded.path,
+        DASHI_TELEGRAM_BOT_TOKEN: 'safe',
+        GROQ_API_KEY: 'env-groq-key',
+      },
+    })).toThrow('Unrecognized key')
   })
 })

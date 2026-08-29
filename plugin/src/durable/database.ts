@@ -470,6 +470,18 @@ const MIGRATIONS: readonly Migration[] = [
         ON telegram_album_fragments (group_id, update_row_id)`,
     ],
   },
+  {
+    version: 16,
+    name: 'verified_audio_attachments',
+    statements: [
+      `CREATE TABLE telegram_attachment_proofs (
+        attachment_id TEXT PRIMARY KEY,
+        content_sha256 TEXT NOT NULL
+          CHECK (length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+        verified_at_ms INTEGER NOT NULL
+      )`,
+    ],
+  },
 ]
 
 function ensureParentDirectory(filename: string): void {

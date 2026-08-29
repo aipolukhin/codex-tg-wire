@@ -40,6 +40,7 @@ import {
   type TelegramAlbumMediaKind,
   type TelegramMediaKind,
 } from '../telegram/durable-outbound-media.js'
+import type { VoiceTranscriber } from '../telegram/durable-voice-transcriber.js'
 import {
   DurableSessionCoordinator,
   StaticProjectResolver,
@@ -83,6 +84,7 @@ export interface DurableTextRuntimeOptions {
     allowedRoots?: readonly string[]
   }
   albumFlushMs?: number
+  voiceTranscriber?: VoiceTranscriber
 }
 
 export interface EnqueueOutboundMediaInput {
@@ -151,6 +153,9 @@ function telegramRoute(update: unknown): {
       caption?: unknown
       photo?: unknown
       document?: unknown
+      voice?: unknown
+      audio?: unknown
+      video?: unknown
       media_group_id?: unknown
     }
     callback_query?: { message?: { chat?: { id?: unknown } } }
@@ -162,7 +167,10 @@ function telegramRoute(update: unknown): {
   const chatId = value.message?.chat?.id
   if (chatId === undefined) return { chatId: null, routingClass: 'OTHER', mediaGroupId: null }
   const hasAttachment = Array.isArray(value.message?.photo) ||
-    (typeof value.message?.document === 'object' && value.message.document !== null)
+    (typeof value.message?.document === 'object' && value.message.document !== null) ||
+    (typeof value.message?.voice === 'object' && value.message.voice !== null) ||
+    (typeof value.message?.audio === 'object' && value.message.audio !== null) ||
+    (typeof value.message?.video === 'object' && value.message.video !== null)
   const messageText = value.message?.text
   if (typeof messageText !== 'string' && !hasAttachment) {
     return { chatId: String(chatId), routingClass: 'OTHER', mediaGroupId: null }
@@ -262,6 +270,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
       outbox.getBySourceKey(sourceKey)?.remoteId ?? null,
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
     albumSource: inbox,
+    ...(options.voiceTranscriber === undefined ? {} : { voiceTranscriber: options.voiceTranscriber }),
   })
   const coordinator = new DurableSessionCoordinator(
     sessions,

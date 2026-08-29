@@ -13,6 +13,7 @@ import {
   type DurableBridgeSupervisorOptions,
 } from './durable-supervisor.js'
 import { createDurableTextRuntime, type DurableTextRuntime } from './text-runtime.js'
+import { GroqVoiceTranscriber } from '../telegram/durable-voice-transcriber.js'
 import type { BridgeServiceConfig } from './service-config.js'
 
 export interface DurableBridgeServiceLogger {
@@ -131,6 +132,16 @@ export async function bootstrapDurableBridgeService(
       config.telegramToken,
       config.telegram.apiRoot,
     )
+    const voiceTranscriber = config.voice.provider === 'groq' && config.voiceApiKey !== null
+      ? new GroqVoiceTranscriber({
+          apiKey: config.voiceApiKey,
+          model: config.voice.model,
+          language: config.voice.language,
+          apiRoot: config.voice.apiRoot,
+          maxBytes: config.voice.maxBytes,
+          requestTimeoutMs: config.voice.requestTimeoutMs,
+        })
+      : undefined
     runtime = createDurableTextRuntime({
       database,
       codexClient,
@@ -143,7 +154,10 @@ export async function bootstrapDurableBridgeService(
         defaultProjectId: config.defaultProjectId,
         maxTextLength: config.telegram.maxTextLength,
         botUsername: identity.botUsername,
-        extraSecrets: [config.telegramToken],
+        extraSecrets: [
+          config.telegramToken,
+          ...(config.voiceApiKey === null ? [] : [config.voiceApiKey]),
+        ],
         attachmentDirectory: config.attachments.directory,
         maxBytes: config.attachments.maxBytes,
         allowedMimeTypes: config.attachments.allowedMimeTypes,
@@ -165,6 +179,7 @@ export async function bootstrapDurableBridgeService(
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       albumFlushMs: config.albums.flushMs,
+      ...(voiceTranscriber === undefined ? {} : { voiceTranscriber }),
       ux: {
         enabled: config.ux.enabled,
         heartbeatAfterMs: config.ux.heartbeatAfterMs,

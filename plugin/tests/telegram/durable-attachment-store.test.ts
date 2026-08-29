@@ -121,6 +121,27 @@ describe('DurableAttachmentStore', () => {
     expect(api.calls).toBe(2)
   })
 
+  test('materializes Telegram voice as verified native audio', async () => {
+    const bytes = new TextEncoder().encode('OggSvoice-data')
+    api.download = { bytes, fileSize: bytes.length, uniqueId: 'voice-u1' }
+    const result = await store().materialize(sourceUpdateId, 0, image({
+      kind: 'audio',
+      fileId: 'voice-1',
+      uniqueId: 'voice-u1',
+      fileName: '../voice.oga',
+      mimeType: 'audio/ogg',
+      declaredSize: bytes.length,
+      transcribe: true,
+    }))
+    expect(result).toMatchObject({
+      outcome: 'accepted',
+      attachment: { kind: 'audio', fileName: 'voice.oga', mimeType: 'audio/ogg' },
+    })
+    expect(database.query<{ content_sha256: string }, []>(
+      'SELECT content_sha256 FROM telegram_attachment_proofs',
+    ).get()?.content_sha256).toHaveLength(64)
+  })
+
   test('rejects disallowed MIME and declared/streamed oversize before Codex', async () => {
     expect(await store().materialize(sourceUpdateId, 0, image({
       kind: 'file',

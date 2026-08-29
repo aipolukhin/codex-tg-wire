@@ -17,6 +17,7 @@ export interface AttachmentRecord {
   state: AttachmentState
   localPath: string | null
   actualSize: number | null
+  contentSha256: string | null
   rejectionReason: string | null
   createdAtMs: number
   updatedAtMs: number
@@ -35,9 +36,14 @@ interface AttachmentRow {
   state: AttachmentState
   local_path: string | null
   actual_size: number | null
+  content_sha256: string | null
   rejection_reason: string | null
   created_at_ms: number
   updated_at_ms: number
+}
+
+function durableKind(kind: IncomingTelegramAttachment['kind']): 'image' | 'file' {
+  return kind === 'audio' ? 'file' : kind
 }
 
 function fromRow(row: AttachmentRow): AttachmentRecord {
@@ -54,6 +60,7 @@ function fromRow(row: AttachmentRow): AttachmentRecord {
     state: row.state,
     localPath: row.local_path,
     actualSize: row.actual_size,
+    contentSha256: row.content_sha256,
     rejectionReason: row.rejection_reason,
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
@@ -66,8 +73,10 @@ export class SqliteAttachmentRepository {
   getBySource(sourceUpdateId: number, ordinal: number): AttachmentRecord | null {
     const row = this.database
       .query<AttachmentRow, [number, number]>(
-        `SELECT * FROM telegram_attachments
-         WHERE source_update_id = ? AND ordinal = ?`,
+        `SELECT attachments.*, proofs.content_sha256
+         FROM telegram_attachments AS attachments
+         LEFT JOIN telegram_attachment_proofs AS proofs ON proofs.attachment_id = attachments.id
+         WHERE attachments.source_update_id = ? AND attachments.ordinal = ?`,
       )
       .get(sourceUpdateId, ordinal)
     return row === null ? null : fromRow(row)
@@ -81,9 +90,10 @@ export class SqliteAttachmentRepository {
     nowMs: number,
   ): AttachmentRecord {
     const existing = this.getBySource(sourceUpdateId, ordinal)
+    const storedKind = durableKind(attachment.kind)
     if (existing !== null) {
       if (
-        existing.kind !== attachment.kind ||
+        existing.kind !== storedKind ||
         existing.telegramFileId !== attachment.fileId ||
         existing.telegramUniqueId !== attachment.uniqueId ||
         existing.fileName !== fileName ||
@@ -104,7 +114,7 @@ export class SqliteAttachmentRepository {
         id,
         sourceUpdateId,
         ordinal,
-        attachment.kind,
+        storedKind,
         attachment.fileId,
         attachment.uniqueId,
         fileName,
@@ -120,30 +130,48 @@ export class SqliteAttachmentRepository {
   }
 
   markReady(id: string, local: AgentLocalAttachment, nowMs: number): AttachmentRecord {
-    this.database.run(
-      `UPDATE telegram_attachments SET
-         state = 'READY', local_path = ?, actual_size = ?, rejection_reason = NULL,
-         updated_at_ms = ?
-       WHERE id = ?`,
-      [local.path, local.size, nowMs, id],
-    )
+    this.database.transaction(() => {
+      this.database.run(
+        `UPDATE telegram_attachments SET
+           state = 'READY', local_path = ?, actual_size = ?, rejection_reason = NULL,
+           updated_at_ms = ?
+         WHERE id = ?`,
+        [local.path, local.size, nowMs, id],
+      )
+      this.database.run(
+        `INSERT INTO telegram_attachment_proofs (attachment_id, content_sha256, verified_at_ms)
+         VALUES (?, ?, ?)
+         ON CONFLICT (attachment_id) DO UPDATE SET
+           content_sha256 = excluded.content_sha256,
+           verified_at_ms = excluded.verified_at_ms`,
+        [id, local.sha256, nowMs],
+      )
+    }).immediate()
     return this.require(id)
   }
 
   markRejected(id: string, reason: string, nowMs: number): AttachmentRecord {
-    this.database.run(
-      `UPDATE telegram_attachments SET
-         state = 'REJECTED', local_path = NULL, actual_size = NULL,
-         rejection_reason = ?, updated_at_ms = ?
-       WHERE id = ?`,
-      [reason, nowMs, id],
-    )
+    this.database.transaction(() => {
+      this.database.run(
+        `UPDATE telegram_attachments SET
+           state = 'REJECTED', local_path = NULL, actual_size = NULL,
+           rejection_reason = ?, updated_at_ms = ?
+         WHERE id = ?`,
+        [reason, nowMs, id],
+      )
+      this.database.run('DELETE FROM telegram_attachment_proofs WHERE attachment_id = ?', [id])
+    }).immediate()
     return this.require(id)
   }
 
   private require(id: string): AttachmentRecord {
     const row = this.database
-      .query<AttachmentRow, [string]>('SELECT * FROM telegram_attachments WHERE id = ?')
+      .query<AttachmentRow, [string]>(
+        `SELECT attachments.*, proofs.content_sha256
+         FROM telegram_attachments AS attachments
+         LEFT JOIN telegram_attachment_proofs AS proofs ON proofs.attachment_id = attachments.id
+         WHERE attachments.id = ?`,
+      )
       .get(id)
     if (row === null) throw new Error(`attachment ${id} not found`)
     return fromRow(row)

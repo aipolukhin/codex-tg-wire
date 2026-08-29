@@ -202,6 +202,53 @@ describe('DurableTelegramTextGateway inbound', () => {
     })
   })
 
+  test('transcribes voice only after the durable audio path is available', async () => {
+    const calls: string[] = []
+    const voiceGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: [7001],
+      defaultProjectId: 'workspace',
+      attachmentStore: {
+        materialize: async () => {
+          calls.push('materialize')
+          return {
+            outcome: 'accepted',
+            attachment: {
+              kind: 'audio', path: '/safe/voice.ogg', fileName: 'voice.ogg',
+              mimeType: 'audio/ogg', size: 12, sha256: '0'.repeat(64),
+            },
+          }
+        },
+      },
+      voiceTranscriber: {
+        transcribe: async (attachment) => {
+          calls.push(`transcribe:${attachment.path}`)
+          return { status: 'ok', transcript: 'проверь тесты' }
+        },
+      },
+    })
+    const update = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        voice: { file_id: 'voice-1', file_unique_id: 'voice-u1', mime_type: 'audio/ogg', file_size: 12 },
+      },
+    })
+    const message = voiceGateway.extractText(update)
+    expect(message).toMatchObject({
+      text: '',
+      attachments: [{ kind: 'audio', fileId: 'voice-1', transcribe: true }],
+    })
+    if (message === null) throw new Error('voice fixture was not extracted')
+    expect(await voiceGateway.prepareInboundMessage(update, message)).toMatchObject({
+      outcome: 'accepted',
+      message: {
+        text: expect.stringContaining('проверь тесты'),
+        attachments: [{ kind: 'audio', path: '/safe/voice.ogg' }],
+      },
+    })
+    expect(calls).toEqual(['materialize', 'transcribe:/safe/voice.ogg'])
+  })
+
   test('materializes accepted attachments and returns safe policy rejections', async () => {
     const update = acceptedUpdate({ update_id: 700 })
     const message = {
@@ -230,6 +277,7 @@ describe('DurableTelegramTextGateway inbound', () => {
             fileName: 'report.pdf',
             mimeType: 'application/pdf',
             size: 42,
+            sha256: '0'.repeat(64),
           },
         }),
       },
@@ -244,6 +292,7 @@ describe('DurableTelegramTextGateway inbound', () => {
           fileName: 'report.pdf',
           mimeType: 'application/pdf',
           size: 42,
+          sha256: '0'.repeat(64),
         }],
       },
     })

@@ -8,20 +8,22 @@ export interface IncomingTextMessage {
 }
 
 export interface IncomingTelegramAttachment {
-  kind: 'image' | 'file'
+  kind: 'image' | 'audio' | 'file'
   fileId: string
   uniqueId: string | null
   fileName: string | null
   mimeType: string
   declaredSize: number | null
+  transcribe?: boolean
 }
 
 export interface AgentLocalAttachment {
-  kind: 'image' | 'file'
+  kind: 'image' | 'audio' | 'file'
   path: string
   fileName: string
   mimeType: string
   size: number
+  sha256: string
 }
 
 export interface PreparedIncomingMessage {

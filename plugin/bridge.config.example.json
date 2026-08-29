@@ -36,6 +36,14 @@
   "albums": {
     "flushMs": 2000
   },
+  "voice": {
+    "provider": "none",
+    "model": "whisper-large-v3-turbo",
+    "language": "ru",
+    "apiRoot": "https://api.groq.com/openai/v1",
+    "maxBytes": 20971520,
+    "requestTimeoutMs": 60000
+  },
   "codex": {
     "approvalPolicy": "on-request",
     "sandboxMode": "workspace-write",

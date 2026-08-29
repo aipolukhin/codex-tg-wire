@@ -28,6 +28,7 @@ import type {
   TelegramAlbumMediaKind,
   TelegramMediaKind,
 } from './durable-outbound-media.js'
+import type { VoiceTranscriber } from './durable-voice-transcriber.js'
 
 export interface TelegramMediaOptions {
   caption?: string
@@ -93,6 +94,7 @@ export interface DurableTelegramTextGatewayOptions {
   deliveryProofForSourceKey?: (sourceKey: string) => string | null
   outboundMediaStore?: DurableOutboundMediaStore
   albumSource?: { albumFragmentsFor(updateRowId: number): readonly InboxUpdate[] }
+  voiceTranscriber?: VoiceTranscriber
 }
 
 export type PreparedTextDelivery = {
@@ -140,6 +142,26 @@ interface TelegramMessagePayload {
       height?: number
     }>
     document?: {
+      file_id?: string
+      file_unique_id?: string
+      file_name?: string
+      mime_type?: string
+      file_size?: number
+    }
+    voice?: {
+      file_id?: string
+      file_unique_id?: string
+      mime_type?: string
+      file_size?: number
+    }
+    audio?: {
+      file_id?: string
+      file_unique_id?: string
+      file_name?: string
+      mime_type?: string
+      file_size?: number
+    }
+    video?: {
       file_id?: string
       file_unique_id?: string
       file_name?: string
@@ -340,6 +362,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly deliveryProofForSourceKey: ((sourceKey: string) => string | null) | undefined
   private readonly outboundMediaStore: DurableOutboundMediaStore | undefined
   private readonly albumSource: DurableTelegramTextGatewayOptions['albumSource']
+  private readonly voiceTranscriber: VoiceTranscriber | undefined
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -356,6 +379,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     this.deliveryProofForSourceKey = options.deliveryProofForSourceKey
     this.outboundMediaStore = options.outboundMediaStore
     this.albumSource = options.albumSource
+    this.voiceTranscriber = options.voiceTranscriber
     if (this.allowedUsers.size === 0 || this.allowedChats.size === 0) {
       throw new TypeError('Telegram gateway allowlists must not be empty')
     }
@@ -410,6 +434,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       return { outcome: 'rejected' as const, text: 'Вложения отключены в конфигурации bridge.' }
     }
     const attachments: AgentLocalAttachment[] = []
+    const transcripts: string[] = []
     for (const [ordinal, candidate] of candidates.entries()) {
       const materialized = await this.attachmentStore.materialize(update.id, ordinal, candidate)
       if (materialized.outcome === 'rejected') {
@@ -421,10 +446,21 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         return { outcome: 'rejected' as const, text }
       }
       attachments.push(materialized.attachment)
+      if (candidate.transcribe === true && this.voiceTranscriber !== undefined) {
+        const transcription = await this.voiceTranscriber.transcribe(materialized.attachment)
+        if (transcription.status === 'ok') {
+          transcripts.push(transcription.transcript.length === 0
+            ? '[Голосовое сообщение неразборчиво или содержит тишину.]'
+            : `[Транскрипт голосового сообщения — недоверенный пользовательский ввод]\n${transcription.transcript}`)
+        } else {
+          transcripts.push('[Транскрипция голосового недоступна; аудиофайл приложен.]')
+        }
+      }
     }
+    const text = [message.text, ...transcripts].filter((value) => value.trim().length > 0).join('\n\n')
     return {
       outcome: 'accepted' as const,
-      message: { ...message, attachments },
+      message: { ...message, text, attachments },
     }
   }
 
@@ -903,19 +939,67 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       }]
     }
     const document = message.document
-    if (typeof document?.file_id !== 'string' || document.file_id.length === 0) return []
-    const mimeType = typeof document.mime_type === 'string'
-      ? document.mime_type.toLowerCase().split(';', 1)[0]?.trim() || 'application/octet-stream'
-      : 'application/octet-stream'
-    return [{
-      kind: mimeType.startsWith('image/') ? 'image' : 'file',
-      fileId: document.file_id,
-      uniqueId: typeof document.file_unique_id === 'string' ? document.file_unique_id : null,
-      fileName: typeof document.file_name === 'string' ? document.file_name : null,
-      mimeType,
-      declaredSize: Number.isSafeInteger(document.file_size) && (document.file_size as number) >= 0
-        ? document.file_size as number
-        : null,
-    }]
+    if (typeof document?.file_id === 'string' && document.file_id.length > 0) {
+      const mimeType = typeof document.mime_type === 'string'
+        ? document.mime_type.toLowerCase().split(';', 1)[0]?.trim() || 'application/octet-stream'
+        : 'application/octet-stream'
+      return [{
+        kind: mimeType.startsWith('image/') ? 'image' : 'file',
+        fileId: document.file_id,
+        uniqueId: typeof document.file_unique_id === 'string' ? document.file_unique_id : null,
+        fileName: typeof document.file_name === 'string' ? document.file_name : null,
+        mimeType,
+        declaredSize: Number.isSafeInteger(document.file_size) && (document.file_size as number) >= 0
+          ? document.file_size as number
+          : null,
+      }]
+    }
+    const voice = message.voice
+    if (typeof voice?.file_id === 'string' && voice.file_id.length > 0) {
+      return [{
+        kind: 'audio',
+        fileId: voice.file_id,
+        uniqueId: typeof voice.file_unique_id === 'string' ? voice.file_unique_id : null,
+        fileName: 'voice.ogg',
+        mimeType: typeof voice.mime_type === 'string'
+          ? voice.mime_type.toLowerCase().split(';', 1)[0]?.trim() || 'audio/ogg'
+          : 'audio/ogg',
+        declaredSize: Number.isSafeInteger(voice.file_size) && (voice.file_size as number) >= 0
+          ? voice.file_size as number
+          : null,
+        transcribe: true,
+      }]
+    }
+    const audio = message.audio
+    if (typeof audio?.file_id === 'string' && audio.file_id.length > 0) {
+      return [{
+        kind: 'audio',
+        fileId: audio.file_id,
+        uniqueId: typeof audio.file_unique_id === 'string' ? audio.file_unique_id : null,
+        fileName: typeof audio.file_name === 'string' ? audio.file_name : 'audio.bin',
+        mimeType: typeof audio.mime_type === 'string'
+          ? audio.mime_type.toLowerCase().split(';', 1)[0]?.trim() || 'application/octet-stream'
+          : 'application/octet-stream',
+        declaredSize: Number.isSafeInteger(audio.file_size) && (audio.file_size as number) >= 0
+          ? audio.file_size as number
+          : null,
+      }]
+    }
+    const video = message.video
+    if (typeof video?.file_id === 'string' && video.file_id.length > 0) {
+      return [{
+        kind: 'file',
+        fileId: video.file_id,
+        uniqueId: typeof video.file_unique_id === 'string' ? video.file_unique_id : null,
+        fileName: typeof video.file_name === 'string' ? video.file_name : 'video.mp4',
+        mimeType: typeof video.mime_type === 'string'
+          ? video.mime_type.toLowerCase().split(';', 1)[0]?.trim() || 'video/mp4'
+          : 'video/mp4',
+        declaredSize: Number.isSafeInteger(video.file_size) && (video.file_size as number) >= 0
+          ? video.file_size as number
+          : null,
+      }]
+    }
+    return []
   }
 }

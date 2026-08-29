@@ -64,6 +64,18 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    voice: z
+      .object({
+        provider: z.enum(['none', 'groq']).default('none'),
+        model: z.string().trim().min(1).default('whisper-large-v3-turbo'),
+        language: z.string().trim().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/).default('ru'),
+        apiRoot: z.string().url().refine((value) => new URL(value).protocol === 'https:', 'must use HTTPS')
+          .default('https://api.groq.com/openai/v1'),
+        maxBytes: z.number().int().min(1).max(20 * 1024 * 1024).default(20 * 1024 * 1024),
+        requestTimeoutMs: z.number().int().min(1_000).max(5 * 60_000).default(60_000),
+      })
+      .strict()
+      .default({}),
     codex: z
       .object({
         binary: z.string().trim().min(1).optional(),
@@ -146,6 +158,7 @@ type ParsedBridgeConfigFile = z.infer<typeof BridgeConfigFileSchema>
 export interface BridgeServiceConfig extends ParsedBridgeConfigFile {
   configPath: string
   telegramToken: string
+  voiceApiKey: string | null
 }
 
 export interface LoadBridgeServiceConfigOptions {
@@ -197,12 +210,17 @@ export function loadBridgeServiceConfig(
   if (telegramToken.length === 0) {
     throw new Error('DASHI_TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is required')
   }
+  const voiceApiKey = (env.GROQ_API_KEY ?? '').trim() || null
+  if (parsed.voice.provider === 'groq' && voiceApiKey === null) {
+    throw new Error('GROQ_API_KEY is required when voice.provider is groq')
+  }
 
   const baseDirectory = dirname(configPath)
   return {
     ...parsed,
     configPath,
     telegramToken,
+    voiceApiKey,
     stateDatabase: absoluteFrom(baseDirectory, parsed.stateDatabase),
     attachments: {
       ...parsed.attachments,

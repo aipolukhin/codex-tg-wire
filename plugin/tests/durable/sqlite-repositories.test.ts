@@ -58,6 +58,7 @@ describe('durable database migrations', () => {
       'sessions',
       'telegram_album_fragments',
       'telegram_album_groups',
+      'telegram_attachment_proofs',
       'telegram_attachments',
       'telegram_chat_preferences',
       'telegram_poll_cursors',
@@ -72,7 +73,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(15)
+    expect(migrations?.count).toBe(16)
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {

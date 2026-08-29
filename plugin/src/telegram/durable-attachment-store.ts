@@ -65,6 +65,13 @@ export const DEFAULT_ATTACHMENT_MIME_TYPES = [
   'application/pdf',
   'application/xml',
   'text/xml',
+  'audio/ogg',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/wav',
+  'audio/webm',
+  'video/mp4',
+  'video/webm',
 ] as const
 
 const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
@@ -79,6 +86,13 @@ const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
   'application/pdf': '.pdf',
   'application/xml': '.xml',
   'text/xml': '.xml',
+  'audio/ogg': '.ogg',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/wav': '.wav',
+  'audio/webm': '.webm',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
 }
 const NATIVE_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 
@@ -114,6 +128,27 @@ function matchesMagic(mimeType: string, bytes: Uint8Array): boolean {
   }
   if (mimeType === 'application/pdf') {
     return bytes.length >= 5 && String.fromCharCode(...bytes.slice(0, 5)) === '%PDF-'
+  }
+  if (mimeType === 'audio/ogg') {
+    return bytes.length >= 4 && String.fromCharCode(...bytes.slice(0, 4)) === 'OggS'
+  }
+  if (mimeType === 'audio/wav') {
+    return bytes.length >= 12 &&
+      String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+      String.fromCharCode(...bytes.slice(8, 12)) === 'WAVE'
+  }
+  if (mimeType === 'audio/mpeg') {
+    return bytes.length >= 3 && (
+      String.fromCharCode(...bytes.slice(0, 3)) === 'ID3' ||
+      (bytes[0] === 0xff && bytes[1] !== undefined && (bytes[1] & 0xe0) === 0xe0)
+    )
+  }
+  if (mimeType === 'audio/mp4' || mimeType === 'video/mp4') {
+    return bytes.length >= 12 && String.fromCharCode(...bytes.slice(4, 8)) === 'ftyp'
+  }
+  if (mimeType === 'audio/webm' || mimeType === 'video/webm') {
+    return bytes.length >= 4 &&
+      bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3
   }
   if (mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType.endsWith('/xml')) {
     return !bytes.includes(0)
@@ -183,6 +218,9 @@ export class DurableAttachmentStore implements InboundAttachmentStore {
     if (candidate.kind === 'image' && !NATIVE_IMAGE_MIME_TYPES.has(mimeType)) {
       return this.reject(record, 'mime_not_allowed')
     }
+    if (candidate.kind === 'audio' && !mimeType.startsWith('audio/')) {
+      return this.reject(record, 'mime_not_allowed')
+    }
     if (candidate.declaredSize !== null && candidate.declaredSize > this.maxBytes) {
       return this.reject(record, 'size_limit')
     }
@@ -193,8 +231,13 @@ export class DurableAttachmentStore implements InboundAttachmentStore {
         await existingRegularFile(record.localPath, record.actualSize)
       ) {
         const bytes = new Uint8Array(await readFile(record.localPath))
-        if (bytes.length === record.actualSize && matchesMagic(mimeType, bytes)) {
-          return { outcome: 'accepted', attachment: this.local(record) }
+        const digest = createHash('sha256').update(bytes).digest('hex')
+        if (
+          bytes.length === record.actualSize &&
+          record.contentSha256 === digest &&
+          matchesMagic(mimeType, bytes)
+        ) {
+          return { outcome: 'accepted', attachment: this.local(record, candidate.kind) }
         }
       }
     }
@@ -244,6 +287,7 @@ export class DurableAttachmentStore implements InboundAttachmentStore {
       fileName,
       mimeType,
       size: downloaded.fileSize,
+      sha256: createHash('sha256').update(downloaded.bytes).digest('hex'),
     }
     this.repository.markReady(record.id, local, this.now())
     return { outcome: 'accepted', attachment: local }
@@ -257,16 +301,20 @@ export class DurableAttachmentStore implements InboundAttachmentStore {
     return { outcome: 'rejected', reason }
   }
 
-  private local(record: AttachmentRecord): AgentLocalAttachment {
-    if (record.localPath === null || record.actualSize === null) {
+  private local(
+    record: AttachmentRecord,
+    kind: IncomingTelegramAttachment['kind'] = record.kind,
+  ): AgentLocalAttachment {
+    if (record.localPath === null || record.actualSize === null || record.contentSha256 === null) {
       throw new Error(`ready attachment ${record.id} has no local proof`)
     }
     return {
-      kind: record.kind,
+      kind,
       path: record.localPath,
       fileName: record.fileName,
       mimeType: record.mimeType,
       size: record.actualSize,
+      sha256: record.contentSha256,
     }
   }
 }

@@ -289,7 +289,7 @@ describe('CodexAppServerBackend text turns', () => {
     backend.close()
   })
 
-  test('maps images natively and exposes allowed files as sandbox-readable metadata', async () => {
+  test('maps images and audio natively and exposes allowed files as sandbox-readable metadata', async () => {
     const client = new FakeBackendClient()
     const backend = new CodexAppServerBackend(client)
     const running = backend.runTextTurn({
@@ -301,6 +301,15 @@ describe('CodexAppServerBackend text turns', () => {
           fileName: 'image.png',
           mimeType: 'image/png',
           size: 8,
+          sha256: '0'.repeat(64),
+        },
+        {
+          kind: 'audio',
+          path: '/state/attachments/voice.ogg',
+          fileName: 'voice.ogg',
+          mimeType: 'audio/ogg',
+          size: 12,
+          sha256: '2'.repeat(64),
         },
         {
           kind: 'file',
@@ -308,6 +317,7 @@ describe('CodexAppServerBackend text turns', () => {
           fileName: 'report.pdf',
           mimeType: 'application/pdf',
           size: 42,
+          sha256: '1'.repeat(64),
         },
       ],
     })
@@ -315,6 +325,7 @@ describe('CodexAppServerBackend text turns', () => {
     expect(client.turnStarts[0]?.input).toEqual([
       { type: 'text', text: 'проверь тесты', text_elements: [] },
       { type: 'localImage', path: '/state/attachments/image.png' },
+      { type: 'localAudio', path: '/state/attachments/voice.ogg' },
       {
         type: 'text',
         text: [

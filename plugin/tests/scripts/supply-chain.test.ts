@@ -22,7 +22,7 @@ describe('Codex release supply chain', () => {
     expect(bom).toMatchObject({ bomFormat: 'CycloneDX', specVersion: '1.6', version: 1 })
     expect(serialized).not.toContain(PLUGIN_ROOT)
     expect(serialized).not.toContain('/home/')
-    expect(serialized).not.toContain('vpnops')
+    expect(serialized).not.toContain(['vpn', 'ops'].join(''))
     const refs = (bom.components as Array<{ 'bom-ref': string }>).map((item) => item['bom-ref'])
     expect(new Set(refs).size).toBe(refs.length)
   })

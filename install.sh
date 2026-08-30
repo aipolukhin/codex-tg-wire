@@ -589,6 +589,23 @@ systemd_quote() {
   printf '"%s"' "$value"
 }
 
+systemd_path() {
+  local value="$1"
+  [[ "$value" == /* ]] || fail "systemd paths must be absolute"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail "paths must not contain newlines"
+  # Path-valued directives such as WorkingDirectory= do not use the item
+  # quoting understood by Environment=/ExecStart=. A quoted absolute path is
+  # therefore parsed as starting with a literal `"` and systemd rejects the
+  # unit. Encode the few unit-file metacharacters without adding quotes.
+  value="${value//\\/\\x5c}"
+  value="${value//%/%%}"
+  value="${value//$'\t'/\\x09}"
+  value="${value// /\\x20}"
+  value="${value//\"/\\x22}"
+  value="${value//\'/\\x27}"
+  printf '%s' "$value"
+}
+
 if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
   ui_step 3 4 "Bootstrap service"
 else
@@ -596,7 +613,7 @@ else
 fi
 say "Installing $SERVICE_NAME for the current user"
 mkdir -p -- "$SYSTEMD_USER_DIRECTORY"
-TEMPORARY_PATH="$(mktemp "$SYSTEMD_USER_DIRECTORY/.codex-tg-wire.service.XXXXXX")"
+TEMPORARY_PATH="$(mktemp "$SYSTEMD_USER_DIRECTORY/.codex-tg-wire.XXXXXX.service")"
 chmod 0600 "$TEMPORARY_PATH"
 {
   printf '%s\n' \
@@ -609,7 +626,7 @@ chmod 0600 "$TEMPORARY_PATH"
     '[Service]' \
     'Type=notify' \
     'NotifyAccess=all' \
-    "WorkingDirectory=$(systemd_quote "$PLUGIN_DIRECTORY")" \
+    "WorkingDirectory=$(systemd_path "$PLUGIN_DIRECTORY")" \
     "Environment=$(systemd_quote "HOME=$HOME")" \
     "Environment=$(systemd_quote "CODEX_HOME=$CODEX_HOME_VALUE")" \
     "Environment=$(systemd_quote "CODEX_BINARY_PATH=$CODEX_BINARY")" \
@@ -634,6 +651,15 @@ chmod 0600 "$TEMPORARY_PATH"
     '[Install]' \
     'WantedBy=default.target'
 } > "$TEMPORARY_PATH"
+
+SYSTEMD_ANALYZE_BINARY="$(absolute_command systemd-analyze || true)"
+if [[ -n "$SYSTEMD_ANALYZE_BINARY" ]]; then
+  if ! UNIT_DIAGNOSTIC="$("$SYSTEMD_ANALYZE_BINARY" --user verify "$TEMPORARY_PATH" 2>&1)"; then
+    rm -f -- "$TEMPORARY_PATH"
+    TEMPORARY_PATH=""
+    fail "generated systemd unit is invalid: $UNIT_DIAGNOSTIC"
+  fi
+fi
 mv -f -- "$TEMPORARY_PATH" "$UNIT_PATH"
 TEMPORARY_PATH=""
 
@@ -666,7 +692,10 @@ fi
 "$SYSTEMCTL_BINARY" --user enable "$SERVICE_NAME" >/dev/null
 if [[ $START_SERVICE -eq 1 ]]; then
   say "Starting $SERVICE_NAME"
-  "$SYSTEMCTL_BINARY" --user restart "$SERVICE_NAME"
+  if ! "$SYSTEMCTL_BINARY" --user restart "$SERVICE_NAME"; then
+    "$SYSTEMCTL_BINARY" --user status "$SERVICE_NAME" --no-pager -l || true
+    fail "service failed to start; inspect: journalctl --user -u $SERVICE_NAME -n 100"
+  fi
   "$SYSTEMCTL_BINARY" --user is-active --quiet "$SERVICE_NAME" || \
     fail "service did not become active; inspect: journalctl --user -u $SERVICE_NAME -n 100"
 fi

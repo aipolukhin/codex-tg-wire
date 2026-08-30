@@ -136,7 +136,8 @@ exit 0
     expect((await Bun.file(groqCredentialPath).text()).trim()).toBe(groqKey)
 
     const unit = await Bun.file(unitPath).text()
-    expect(unit).toContain(`WorkingDirectory="${join(REPOSITORY_ROOT, 'plugin')}"`)
+    expect(unit).toContain(`WorkingDirectory=${join(REPOSITORY_ROOT, 'plugin')}`)
+    expect(unit).not.toContain('WorkingDirectory="')
     expect(unit).toContain(`Environment="CODEX_BINARY_PATH=${codex}"`)
     expect(unit).toContain(`ExecStart="${join(bunInstall, 'bin/bun')}" run start:codex`)
     expect(unit).toContain(`Environment="DASHI_CODEX_BRIDGE_CONFIG=${configPath}"`)

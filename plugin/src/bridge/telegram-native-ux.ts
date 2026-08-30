@@ -115,8 +115,8 @@ function renderStatus(
     ? `${Math.min(100, Math.round((snapshot.inputTokens / snapshot.contextWindow) * 100))}%`
     : '—'
   parts.push(`ctx:${context}`)
-  if (elapsedMs !== null) parts.push(`· ${renderElapsed(elapsedMs)}`)
-  return parts.join(' ')
+  const status = parts.join(' ')
+  return elapsedMs === null ? status : `${renderElapsed(elapsedMs)} · ${status}`
 }
 
 /**

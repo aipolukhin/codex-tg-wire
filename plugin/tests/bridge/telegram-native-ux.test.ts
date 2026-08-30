@@ -257,12 +257,12 @@ describe('Telegram native UX', () => {
 
     ux.onPreparing(operation, {})
     await ux.refreshChat(operation.chatId, operation.projectId)
-    expect(telegram.sent[0]?.text).toBe('default ctx:— · 0″')
+    expect(telegram.sent[0]?.text).toBe('0″ · default ctx:—')
 
     now += 92_000
     await Bun.sleep(15)
     await ux.refreshChat(operation.chatId, operation.projectId)
-    expect(telegram.edits.at(-1)?.text).toBe('default ctx:— · 1′32″')
+    expect(telegram.edits.at(-1)?.text).toBe('1′32″ · default ctx:—')
 
     ux.onCompleted(operation, { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' })
     await ux.refreshChat(operation.chatId, operation.projectId)

@@ -58,6 +58,16 @@ class FakeCoordinator implements SessionCoordinator {
   }
 }
 
+class FakeTurnTimeoutError extends Error {
+  readonly agentTurnState = 'INTERRUPTED' as const
+  readonly turnId = 'turn-timeout'
+
+  constructor() {
+    super('prompt content must not be persisted as an error')
+    this.name = 'CodexTurnTimeoutError'
+  }
+}
+
 interface PreparedDelivery {
   jobId: string
   payload: unknown
@@ -534,6 +544,54 @@ describe('durable text vertical slice', () => {
     expect((await worker.runOnce()).outcome).toBe('retry_wait')
     expect(inbox.get(accepted.update.id)?.lastError).toBe('Error')
     expect(inbox.get(accepted.update.id)?.lastError).not.toContain('secret-value')
+  })
+
+  test('turn timeout becomes a durable user notice instead of a silent failed update', async () => {
+    const accepted = inbox.ingest(textUpdate(508))
+    coordinator.failure = new FakeTurnTimeoutError()
+    const worker = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-timeout',
+      now: () => nowMs,
+      retryPolicy: exponentialRetryPolicy({ maxAttempts: 1 }),
+    })
+
+    expect(await worker.runOnce()).toEqual({
+      outcome: 'enqueued',
+      updateId: accepted.update.id,
+      deliveryJobId: `rejected-${accepted.update.id}`,
+    })
+    expect(inbox.get(accepted.update.id)).toMatchObject({
+      state: 'PROCESSED',
+      attemptCount: 1,
+      lastError: null,
+    })
+    expect(outbox.getBySourceKey('telegram:primary-bot:508:turn:terminal')?.payload).toEqual({
+      chatId: '7001',
+      text: '⏱ Codex не завершил turn за отведённое время и был остановлен. Контекст thread сохранён — отправь «продолжай», чтобы продолжить.',
+    })
+  })
+
+  test('exhausted infrastructure retries also produce a durable user notice', async () => {
+    const accepted = inbox.ingest(textUpdate(509))
+    coordinator.failure = new Error('private failure detail')
+    const worker = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-exhausted',
+      now: () => nowMs,
+      retryPolicy: exponentialRetryPolicy({ maxAttempts: 1 }),
+    })
+
+    expect(await worker.runOnce()).toEqual({
+      outcome: 'enqueued',
+      updateId: accepted.update.id,
+      deliveryJobId: `rejected-${accepted.update.id}`,
+    })
+    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+    expect(outbox.getBySourceKey('telegram:primary-bot:509:turn:failed')?.payload).toEqual({
+      chatId: '7001',
+      text: '⚠️ Мост не смог обработать сообщение после допустимого числа попыток. Автоповтор остановлен; проверь /status перед повторной отправкой.',
+    })
+    expect(JSON.stringify(outbox.getBySourceKey('telegram:primary-bot:509:turn:failed')))
+      .not.toContain('private failure detail')
   })
 
   test('keeps a long Codex turn leased while the lease reaper runs', async () => {

@@ -102,7 +102,7 @@ export const BridgeConfigFileSchema = z
           z.enum(['read-only', 'workspace-write', 'danger-full-access']),
         ).min(1).default(['read-only', 'workspace-write']),
         requestTimeoutMs: z.number().int().positive().default(30_000),
-        turnTimeoutMs: z.number().int().positive().default(30 * 60_000),
+        turnTimeoutMs: z.number().int().nonnegative().default(0),
         interactionTimeoutMs: z.number().int().positive().default(10 * 60_000),
       })
       .strict()
@@ -183,7 +183,10 @@ export const BridgeConfigFileSchema = z
         })
       }
     }
-    if (config.codex.interactionTimeoutMs >= config.codex.turnTimeoutMs) {
+    if (
+      config.codex.turnTimeoutMs > 0 &&
+      config.codex.interactionTimeoutMs >= config.codex.turnTimeoutMs
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['codex', 'interactionTimeoutMs'],

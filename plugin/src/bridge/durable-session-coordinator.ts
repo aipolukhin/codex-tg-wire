@@ -77,12 +77,12 @@ export class AgentLifecycleProtocolError extends Error {
   }
 }
 
-interface DefiniteTurnError extends Error {
+export interface DefiniteTurnError extends Error {
   agentTurnState: 'FAILED' | 'INTERRUPTED'
   turnId: string
 }
 
-function isDefiniteTurnError(error: unknown): error is DefiniteTurnError {
+export function isDefiniteTurnError(error: unknown): error is DefiniteTurnError {
   if (!(error instanceof Error)) return false
   const value = error as Partial<DefiniteTurnError>
   return (

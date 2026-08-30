@@ -163,7 +163,7 @@ export GROQ_API_KEY='...'
 
 Неизвестные notification methods от App Server агрегируются в `codex_unhandled_notifications`. Журнал ограничен 1000 строками и содержит только method, thread/turn correlation, счётчик и timestamps — `params`, prompt и file content туда не записываются. Каталог известных методов сверяется с generated schema командой `bun run codex:schema:check`.
 
-По умолчанию `codex.approvalPolicy` равен `on-request`, `codex.sandboxMode` — `workspace-write`, а `codex.allowedSandboxModes` разрешает только `read-only` и `workspace-write`. `danger-full-access` нельзя включить одной Telegram-командой: оператор должен сначала явно добавить его в allowlist конфигурации. Интерактивный запрос живёт 10 минут (`codex.interactionTimeoutMs`); этот timeout должен быть меньше `codex.turnTimeoutMs`. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
+По умолчанию `codex.approvalPolicy` равен `on-request`, `codex.sandboxMode` — `workspace-write`, а `codex.allowedSandboxModes` разрешает только `read-only` и `workspace-write`. `danger-full-access` нельзя включить одной Telegram-командой: оператор должен сначала явно добавить его в allowlist конфигурации. Общий wall-clock timeout turn отключён (`codex.turnTimeoutMs: 0`): активная автономная задача может работать сколько нужно. Если оператор задаёт ненулевой лимит, он должен быть больше 10-минутного `codex.interactionTimeoutMs`; по истечении лимита мост отправляет `turn/interrupt`, фиксирует `INTERRUPTED` и ставит пользовательское уведомление в durable outbox. `SIGINT`/`SIGTERM` прекращает polling и новые lease, дожидается уже взятой работы, затем закрывает App Server и SQLite.
 
 ## Граница безопасности
 

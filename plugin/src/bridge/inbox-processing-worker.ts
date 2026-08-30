@@ -10,6 +10,7 @@ import type {
   PreparedIncomingMessage,
   SessionCoordinator,
   TelegramGateway,
+  TextTurnResult,
   TurnCompletionReporter,
 } from './contracts.js'
 import {
@@ -18,7 +19,11 @@ import {
   type RetryPolicy,
 } from './retry-policy.js'
 import { LeaseHeartbeatError, withLeaseHeartbeat } from './lease-heartbeat.js'
-import { TurnQueuedBehindTurnError } from './durable-session-coordinator.js'
+import {
+  isDefiniteTurnError,
+  TurnQueuedBehindTurnError,
+  TurnRecoveryRequiredError,
+} from './durable-session-coordinator.js'
 
 export type InboxRunResult =
   | { outcome: 'idle' }
@@ -45,6 +50,29 @@ const DEFAULT_LEASE_MS = 60_000
 
 function operationKey(update: InboxUpdate): string {
   return `telegram:${encodeURIComponent(update.botId)}:${update.updateId}:turn`
+}
+
+function terminalTurnNotice(error: unknown): string | null {
+  if (error instanceof TurnRecoveryRequiredError) {
+    if (error.state === 'INTERRUPTED') {
+      return '⏹ Предыдущий turn был остановлен. Контекст thread сохранён — отправь «продолжай» или начни новый через /new.'
+    }
+    if (error.state === 'FAILED') {
+      return '⚠️ Codex завершил предыдущий turn с ошибкой. Контекст thread сохранён — повтори запрос или начни новый через /new.'
+    }
+    return '⚠️ Состояние предыдущего turn нельзя надёжно определить, поэтому мост не стал повторять запрос и рисковать двойным выполнением. Проверь результат и используй /new force, если нужен новый thread.'
+  }
+  if (error instanceof Error && error.name === 'CodexTurnTimeoutError') {
+    if (isDefiniteTurnError(error)) {
+      return '⏱ Codex не завершил turn за отведённое время и был остановлен. Контекст thread сохранён — отправь «продолжай», чтобы продолжить.'
+    }
+    return '⚠️ Истёк настроенный timeout до получения turn ID. Мост не может доказать результат и не будет повторять запрос автоматически.'
+  }
+  if (!isDefiniteTurnError(error)) return null
+  if (error.agentTurnState === 'INTERRUPTED') {
+    return '⏹ Turn был остановлен. Контекст thread сохранён — отправь «продолжай» или начни новый через /new.'
+  }
+  return '⚠️ Codex завершил turn с ошибкой. Контекст thread сохранён — повтори запрос или начни новый через /new.'
 }
 
 export class InboxProcessingWorker {
@@ -236,22 +264,47 @@ export class InboxProcessingWorker {
     }
 
     const turnKey = operationKey(update)
-    const result = await this.coordinator.runTextTurn({
-      operationKey: turnKey,
-      inboxUpdateId: update.id,
-      botId: update.botId,
-      updateId: update.updateId,
-      chatId: preparedMessage.chatId,
-      projectId: preparedMessage.projectId,
-      text: preparedMessage.text,
-      ...(preparedMessage.attachments.length === 0
-        ? {}
-        : { attachments: preparedMessage.attachments }),
-      ...(preparedMessage.quote === undefined ? {} : { quote: preparedMessage.quote }),
-      ...(preparedMessage.preferredThreadId === undefined
-        ? {}
-        : { preferredThreadId: preparedMessage.preferredThreadId }),
-    })
+    let result: TextTurnResult
+    try {
+      result = await this.coordinator.runTextTurn({
+        operationKey: turnKey,
+        inboxUpdateId: update.id,
+        botId: update.botId,
+        updateId: update.updateId,
+        chatId: preparedMessage.chatId,
+        projectId: preparedMessage.projectId,
+        text: preparedMessage.text,
+        ...(preparedMessage.attachments.length === 0
+          ? {}
+          : { attachments: preparedMessage.attachments }),
+        ...(preparedMessage.quote === undefined ? {} : { quote: preparedMessage.quote }),
+        ...(preparedMessage.preferredThreadId === undefined
+          ? {}
+          : { preferredThreadId: preparedMessage.preferredThreadId }),
+      })
+    } catch (error) {
+      const notice = terminalTurnNotice(error)
+      if (notice === null) throw error
+      const buildDelivery = this.telegram.buildInboundRejectionDelivery
+      if (buildDelivery === undefined) {
+        throw new Error('Telegram gateway cannot build terminal turn notices')
+      }
+      const terminalAtMs = this.now()
+      const terminalKey = `${turnKey}:terminal`
+      const enqueue = this.outbox.enqueue({
+        ...buildDelivery.call(this.telegram, {
+          update,
+          message,
+          text: notice,
+          sourceKey: terminalKey,
+          nowMs: terminalAtMs,
+        }),
+        sourceKey: terminalKey,
+        createdAtMs: terminalAtMs,
+      })
+      this.inbox.markProcessed(update.id, this.workerId, terminalAtMs)
+      return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
+    }
     const completedAtMs = this.now()
     const finalSourceKey = `${turnKey}:final`
     const textDeliveries = this.telegram.buildFinalTextDeliveries({
@@ -316,6 +369,29 @@ export class InboxProcessingWorker {
     const retryAtMs = this.retryPolicy.nextRetryAt(update, failedAtMs)
     const summary = this.errorSummary(error)
     if (retryAtMs === null) {
+      const message = this.telegram.extractText(update)
+      const buildDelivery = this.telegram.buildInboundRejectionDelivery
+      if (message !== null && buildDelivery !== undefined) {
+        const failureKey = `${operationKey(update)}:failed`
+        try {
+          const enqueue = this.outbox.enqueue({
+            ...buildDelivery.call(this.telegram, {
+              update,
+              message,
+              text: '⚠️ Мост не смог обработать сообщение после допустимого числа попыток. Автоповтор остановлен; проверь /status перед повторной отправкой.',
+              sourceKey: failureKey,
+              nowMs: failedAtMs,
+            }),
+            sourceKey: failureKey,
+            createdAtMs: failedAtMs,
+          })
+          this.inbox.markProcessed(update.id, this.workerId, failedAtMs)
+          return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
+        } catch {
+          // If even the durable notice cannot be enqueued, preserve FAILED for
+          // operator recovery instead of acknowledging the source update.
+        }
+      }
       this.inbox.fail(update.id, this.workerId, summary, failedAtMs)
       return { outcome: 'failed', updateId: update.id }
     }

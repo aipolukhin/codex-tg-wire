@@ -170,13 +170,19 @@ export class CodexTurnProtocolError extends Error {
 }
 
 export class CodexTurnTimeoutError extends Error {
+  readonly agentTurnState = 'INTERRUPTED' as const
+  readonly turnId: string | null
+  readonly timeoutMs: number
+
   constructor(turnId: string | null, timeoutMs: number) {
     super(`Codex turn ${turnId ?? '<pending>'} timed out after ${timeoutMs}ms`)
     this.name = 'CodexTurnTimeoutError'
+    this.turnId = turnId
+    this.timeoutMs = timeoutMs
   }
 }
 
-const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000
+const DEFAULT_TURN_TIMEOUT_MS = 0
 
 function sandboxPolicy(mode: AgentSandboxMode, executionPolicy?: AgentExecutionPolicy) {
   const networkAccess = executionPolicy?.networkAccess ?? false
@@ -958,7 +964,13 @@ export class CodexAppServerBackend implements AgentBackend {
     }
     if (this.turnTimeoutMs > 0) {
       pending.timer = setTimeout(() => {
-        pending.reject(new CodexTurnTimeoutError(pending.turnId, this.turnTimeoutMs))
+        const turnId = pending.turnId
+        if (turnId !== null) {
+          // Stop the upstream turn as well as the local wait. Otherwise App Server
+          // keeps working after the bridge has forgotten the pending turn.
+          void this.client.interruptTurn({ threadId, turnId }).catch(() => undefined)
+        }
+        pending.reject(new CodexTurnTimeoutError(turnId, this.turnTimeoutMs))
       }, this.turnTimeoutMs)
     }
     return pending

@@ -103,6 +103,7 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.codex.approvalPolicy).toBe('on-request')
     expect(config.codex.sandboxMode).toBe('workspace-write')
     expect(config.codex.allowedSandboxModes).toEqual(['read-only', 'workspace-write'])
+    expect(config.codex.turnTimeoutMs).toBe(0)
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
     expect(config.ux.chatStatusMessages).toBeFalse()
     expect(config.ux.typingIndicator).toBeTrue()

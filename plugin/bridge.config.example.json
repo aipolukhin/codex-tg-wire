@@ -60,6 +60,7 @@
     "approvalPolicy": "on-request",
     "sandboxMode": "workspace-write",
     "allowedSandboxModes": ["read-only", "workspace-write"],
+    "turnTimeoutMs": 0,
     "interactionTimeoutMs": 600000
   },
   "ux": {

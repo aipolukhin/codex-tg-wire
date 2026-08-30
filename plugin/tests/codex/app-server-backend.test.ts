@@ -905,7 +905,14 @@ describe('CodexAppServerBackend text turns', () => {
   test('times out a turn that never emits a terminal event', async () => {
     const client = new FakeBackendClient()
     const backend = new CodexAppServerBackend(client, { turnTimeoutMs: 5 })
-    await expect(backend.runTextTurn(turnInput())).rejects.toBeInstanceOf(CodexTurnTimeoutError)
+    const error = await backend.runTextTurn(turnInput()).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(CodexTurnTimeoutError)
+    expect(error).toMatchObject({
+      agentTurnState: 'INTERRUPTED',
+      turnId: 'turn-1',
+      timeoutMs: 5,
+    })
+    expect(client.interrupts).toEqual([{ threadId: 'thread-1', turnId: 'turn-1' }])
     backend.close()
   })
 })

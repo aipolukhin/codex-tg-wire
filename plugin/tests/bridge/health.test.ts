@@ -122,7 +122,7 @@ describe('DurableBridgeHealth', () => {
 })
 
 describe('SystemdWatchdog', () => {
-  test('notifies READY, pulses only while ready, then notifies STOPPING', async () => {
+  test('keeps liveness pulses during readiness degradation, then stops with lifecycle', async () => {
     const fixture = healthFixture()
     fixture.health.markRunning()
     const notifier = new RecordingNotifier()
@@ -141,11 +141,20 @@ describe('SystemdWatchdog', () => {
     expect(notifier.calls).toContainEqual(['--ready'])
     expect(notifier.calls).toContainEqual(['WATCHDOG=1'])
 
-    fixture.health.markStopping()
+    recordEveryLoop(fixture.health)
+    fixture.advance(5_001)
+    expect(fixture.health.snapshot()).toMatchObject({ live: true, ready: false })
     const callsBeforeDegradedPulse = notifier.calls.length
     watchdog.pulse()
     await Bun.sleep(0)
-    expect(notifier.calls).toHaveLength(callsBeforeDegradedPulse)
+    expect(notifier.calls).toHaveLength(callsBeforeDegradedPulse + 1)
+    expect(notifier.calls.at(-1)).toEqual(['WATCHDOG=1'])
+
+    fixture.health.markStopping()
+    const callsBeforeStoppedPulse = notifier.calls.length
+    watchdog.pulse()
+    await Bun.sleep(0)
+    expect(notifier.calls).toHaveLength(callsBeforeStoppedPulse)
     await watchdog.stop()
     expect(notifier.calls.at(-1)).toEqual(['--stopping'])
   })

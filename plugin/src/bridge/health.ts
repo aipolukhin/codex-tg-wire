@@ -245,7 +245,11 @@ export interface SystemdWatchdogOptions {
   onError?: (event: { operation: 'ready' | 'watchdog' | 'stopping'; errorName: string }) => void
 }
 
-/** Sends READY/WATCHDOG only when systemd activation is present and health is ready. */
+/**
+ * Sends READY while running and keeps systemd's process-liveness watchdog fed.
+ * Readiness degradation remains observable on /ready, but must not kill a
+ * legitimate long Codex turn whose inbox worker is awaiting App Server.
+ */
 export class SystemdWatchdog {
   private readonly env: NodeJS.ProcessEnv
   private readonly pid: number
@@ -278,7 +282,7 @@ export class SystemdWatchdog {
     if (intervalMs === null) return
     this.watchdogActive = true
     this.timer = setInterval(() => {
-      if (this.health.snapshot().ready) this.send('watchdog', ['WATCHDOG=1'])
+      if (this.health.snapshot().live) this.send('watchdog', ['WATCHDOG=1'])
     }, intervalMs)
     this.timer.unref()
   }
@@ -294,7 +298,7 @@ export class SystemdWatchdog {
   }
 
   pulse(): void {
-    if (this.active && this.watchdogActive && this.health.snapshot().ready) {
+    if (this.active && this.watchdogActive && this.health.snapshot().live) {
       this.send('watchdog', ['WATCHDOG=1'])
     }
   }

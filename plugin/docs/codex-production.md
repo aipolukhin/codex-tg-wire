@@ -66,7 +66,12 @@ RestartSec=5s
 WatchdogSec=180s
 ```
 
-`NotifyAccess=all` нужен, потому что bridge вызывает `systemd-notify` как дочерний процесс. При потере readiness bridge прекращает `WATCHDOG=1`, и systemd выполняет restart. До production проверь наличие `systemd-notify` и согласуй `health.staleAfterMs < WatchdogSec`.
+`NotifyAccess=all` нужен, потому что bridge вызывает `systemd-notify` как дочерний
+процесс. Watchdog подтверждает liveness event loop и продолжает пульсировать при
+readiness degradation: долгий Codex turn законно держит один inbox worker дольше
+`health.staleAfterMs` и не должен быть убит. `/ready` при этом остаётся degraded
+для мониторинга. Если сам event loop зависнет, watchdog timer не выполнится и
+systemd перезапустит процесс.
 
 При запуске вне systemd можно передать `DASHI_TELEGRAM_BOT_TOKEN_FILE`; внутри unit файл `telegram-token` автоматически находится через `CREDENTIALS_DIRECTORY`. Credential resolver не следует symlink, ограничивает размер и не печатает secret path/value.
 

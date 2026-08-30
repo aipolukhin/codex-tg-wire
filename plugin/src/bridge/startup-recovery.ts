@@ -31,10 +31,16 @@ function recoveryNotice(
 ): string {
   const turn = safeTurnLabel(candidate, inspection.turnId)
   if (inspection.state === 'FAILED') {
-    return `⚠️ Turn ${turn} завершился ошибкой во время перезапуска. Автоповтор не выполнялся.`
+    return [
+      `⚠️ Turn ${turn} завершился ошибкой во время перезапуска.`,
+      'Напиши «продолжай»: новый turn продолжит тот же Codex thread с сохранённым контекстом.',
+    ].join('\n')
   }
   if (inspection.state === 'INTERRUPTED') {
-    return `⏹ Turn ${turn} был прерван во время перезапуска. Автоповтор не выполнялся.`
+    return [
+      `⏹ Turn ${turn} был прерван во время перезапуска.`,
+      'Напиши «продолжай»: новый turn продолжит тот же Codex thread с сохранённым контекстом.',
+    ].join('\n')
   }
   return [
     `⚠️ После перезапуска состояние turn ${turn} нельзя доказать.`,

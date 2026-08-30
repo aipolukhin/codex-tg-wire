@@ -16,6 +16,10 @@ describe('GrammyDurableAdapter', () => {
         calls.push(args)
         return { message_id: 99 }
       },
+      async sendRichMessage(...args: unknown[]): Promise<{ message_id: number }> {
+        calls.push(args)
+        return { message_id: 100 }
+      },
     } as unknown as Api
     const adapter = new GrammyDurableAdapter(api)
     const signal = new AbortController().signal
@@ -27,12 +31,15 @@ describe('GrammyDurableAdapter', () => {
       ),
     ).toEqual([{ update_id: 10 }])
     expect(await adapter.sendMessage('7001', 'hello', {})).toEqual({ message_id: 99 })
+    expect(await adapter.sendRichMessage('7001', '# hello', { disable_notification: true }))
+      .toEqual({ message_id: 100 })
     expect(calls).toEqual([
       [
         { offset: 10, timeout: 30, allowed_updates: ['message', 'callback_query'] },
         signal,
       ],
       ['7001', 'hello', {}],
+      ['7001', { markdown: '# hello' }, { disable_notification: true }],
     ])
   })
 

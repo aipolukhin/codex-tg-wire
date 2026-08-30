@@ -18,6 +18,11 @@ import {
   isTelegramHtmlParseError,
   markdownToTelegramHtml,
 } from '../format/html.js'
+import {
+  contentFitsRichLimits,
+  hardenSoftBreaks,
+  richErrorClass,
+} from '../format/rich.js'
 import { redactSecrets } from '../safety/redact.js'
 import { validateTelegramHtml } from '../safety/html-validator.js'
 import type {
@@ -33,10 +38,16 @@ import type {
 } from './durable-outbound-media.js'
 import type { VoiceTranscriber } from './durable-voice-transcriber.js'
 import type { SqliteTelegramMessageRouteRepository } from '../durable/message-route-repository.js'
+import { normalizeTelegramRichMessage } from './rich-message.js'
 
 export interface TelegramMediaOptions {
   caption?: string
   parse_mode?: 'HTML'
+}
+
+export interface TelegramRichMessageOptions {
+  disable_notification?: boolean
+  reply_markup?: { inline_keyboard: TelegramInlineButton[][] }
 }
 
 export interface TelegramAlbumUploadItem {
@@ -74,6 +85,11 @@ export interface TelegramTextApi {
     chatId: string,
     text: string,
     options: TelegramMessageOptions,
+  ): Promise<{ message_id: number }>
+  sendRichMessage?(
+    chatId: string,
+    markdown: string,
+    options: TelegramRichMessageOptions,
   ): Promise<{ message_id: number }>
   deleteMessage?(chatId: string, messageId: number): Promise<true>
   sendChatAction?(chatId: string, action: 'typing'): Promise<true>
@@ -114,6 +130,16 @@ export type PreparedTextDelivery = {
   text: string
   options: TelegramMessageOptions
 } | {
+  kind: 'send_rich'
+  jobId: string
+  chatId: string
+  markdown: string
+  options: TelegramRichMessageOptions
+  fallback: readonly {
+    text: string
+    options: TelegramMessageOptions
+  }[]
+} | {
   kind: 'send_media'
   jobId: string
   chatId: string
@@ -149,6 +175,7 @@ interface TelegramMessagePayload {
     chat?: { id?: string | number; type?: string }
     from?: { id?: string | number; is_bot?: boolean }
     text?: string
+    rich_message?: unknown
     reply_to_message?: { message_id?: number }
     quote?: {
       text?: string
@@ -209,6 +236,8 @@ interface SendTextPayload {
   chatId?: unknown
   text?: unknown
   options?: unknown
+  format?: unknown
+  fallback?: unknown
 }
 
 interface EditTextPayload extends SendTextPayload {
@@ -399,6 +428,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   private readonly albumSource: DurableTelegramTextGatewayOptions['albumSource']
   private readonly voiceTranscriber: VoiceTranscriber | undefined
   private readonly messageRoutes: SqliteTelegramMessageRouteRepository | undefined
+  private richMessagesDisabled = false
 
   constructor(
     private readonly api: TelegramTextApi,
@@ -440,17 +470,28 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const attachments = [] as NonNullable<IncomingTextMessage['attachments']>[number][]
     for (const envelope of envelopes) {
       if (envelope === null) continue
-      const text = typeof envelope.message.text === 'string'
+      const plainText = typeof envelope.message.text === 'string'
         ? envelope.message.text
         : typeof envelope.message.caption === 'string'
           ? envelope.message.caption
           : ''
-      if (text.trim().length > 0 && !textParts.includes(text)) textParts.push(text)
+      const rich = normalizeTelegramRichMessage(envelope.message.rich_message)
+      for (const text of [plainText, rich?.text ?? '']) {
+        if (text.trim().length > 0 && !textParts.includes(text)) textParts.push(text)
+      }
       attachments.push(...this.extractAttachments(envelope.message))
+      if (rich !== null) attachments.push(...rich.attachments)
     }
     const text = textParts.join('\n\n')
     const trimmed = text.trim()
-    if (trimmed.startsWith('/') || (trimmed.length === 0 && attachments.length === 0)) return null
+    const seenAttachments = new Set<string>()
+    const uniqueAttachments = attachments.filter((attachment) => {
+      const key = attachment.uniqueId ?? attachment.fileId
+      if (seenAttachments.has(key)) return false
+      seenAttachments.add(key)
+      return true
+    })
+    if (trimmed.startsWith('/') || (trimmed.length === 0 && uniqueAttachments.length === 0)) return null
     const projectId = this.projectIdForChat(authorized.chatId)
     const replyId = authorized.message.reply_to_message?.message_id
     const rawQuote = authorized.message.quote
@@ -475,7 +516,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       chatId: authorized.chatId,
       projectId: route?.projectId ?? projectId,
       text,
-      ...(attachments.length === 0 ? {} : { attachments }),
+      ...(uniqueAttachments.length === 0 ? {} : { attachments: uniqueAttachments }),
       ...(quote === undefined ? {} : { quote }),
       ...(route === null ? {} : { preferredThreadId: route.threadId }),
     }
@@ -744,6 +785,53 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       // so split it again before it becomes a durable delivery job.
       return splitMessage(checked.text, chunkLimit).map((text) => ({ text, html: false }))
     })
+    const replyMarkup = input.result.buttons === undefined
+      ? undefined
+      : {
+          inline_keyboard: input.result.buttons.map((row) => row.map((button) => (
+            'callbackData' in button
+              ? { text: button.text, callback_data: button.callbackData }
+              : { text: button.text, url: button.url }
+          ))),
+        }
+    const fallback = chunks.map((chunk, index) => ({
+      text: chunk.text,
+      options: {
+        ...(chunk.html ? { parse_mode: 'HTML' as const } : {}),
+        ...(index === chunks.length - 1 && replyMarkup !== undefined
+          ? { reply_markup: replyMarkup }
+          : {}),
+      },
+    }))
+    const richBody = hardenSoftBreaks(input.result.finalText)
+    const richEligible =
+      (input.result.presentation === undefined || input.result.presentation === 'answer') &&
+      contentFitsRichLimits(richBody) &&
+      fallback.length <= 64
+    if (richEligible) {
+      if (input.result.presentation !== 'busy_choice') {
+        this.messageRoutes?.register({
+          sourceKey: input.sourceKey,
+          botId: input.update.botId,
+          chatId: input.message.chatId,
+          projectId: input.message.projectId,
+          threadId: input.result.threadId,
+          createdAtMs: input.nowMs,
+        })
+      }
+      return [{
+        sourceKey: input.sourceKey,
+        kind: 'send_text',
+        payload: {
+          chatId: input.message.chatId,
+          text: richBody,
+          format: 'rich',
+          ...(replyMarkup === undefined ? {} : { options: { reply_markup: replyMarkup } }),
+          fallback,
+        },
+        createdAtMs: input.nowMs,
+      }]
+    }
     const sourceKeys = chunks.map((_, index) => index === 0
       ? input.sourceKey
       : `${input.sourceKey}:chunk:${index + 1}`)
@@ -766,20 +854,9 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       payload: {
         chatId: input.message.chatId,
         text: chunk.text,
-        ...(chunk.html || (index === chunks.length - 1 && input.result.buttons !== undefined)
-          ? {
-              options: {
-                ...(chunk.html ? { parse_mode: 'HTML' as const } : {}),
-                ...(index === chunks.length - 1 && input.result.buttons !== undefined
-                  ? { reply_markup: { inline_keyboard: input.result.buttons.map((row) => row.map((button) => (
-                      'callbackData' in button
-                        ? { text: button.text, callback_data: button.callbackData }
-                        : { text: button.text, url: button.url }
-                    ))) } }
-                  : {}),
-              },
-            }
-          : {}),
+        ...(Object.keys(fallback[index]?.options ?? {}).length === 0
+          ? {}
+          : { options: fallback[index]?.options }),
       },
       createdAtMs: input.nowMs + index,
       }
@@ -1005,6 +1082,50 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     let text = redactSecrets(payload.text, this.extraSecrets)
     if (text.trim().length === 0) throw new TelegramDeliveryPayloadError('send_text text is empty')
     let options = parseMessageOptions(payload.options, this.extraSecrets)
+    if (payload.format !== undefined && payload.format !== 'rich') {
+      throw new TelegramDeliveryPayloadError('send_text format is invalid')
+    }
+    if (payload.format === 'rich') {
+      if (job.kind !== 'send_text') {
+        throw new TelegramDeliveryPayloadError('rich payload cannot edit a message')
+      }
+      if (options.parse_mode !== undefined) {
+        throw new TelegramDeliveryPayloadError('rich message options cannot contain parse_mode')
+      }
+      if (!contentFitsRichLimits(text)) {
+        throw new TelegramDeliveryPayloadError('rich message exceeds Telegram limit')
+      }
+      if (!Array.isArray(payload.fallback) || payload.fallback.length < 1 || payload.fallback.length > 64) {
+        throw new TelegramDeliveryPayloadError('rich message fallback is invalid')
+      }
+      const fallback: Array<{ text: string; options: TelegramMessageOptions }> = []
+      for (const raw of payload.fallback) {
+        if (!isRecord(raw) || typeof raw.text !== 'string') {
+          throw new TelegramDeliveryPayloadError('rich fallback chunk is invalid')
+        }
+        let fallbackText = redactSecrets(raw.text, this.extraSecrets)
+        let fallbackOptions = parseMessageOptions(raw.options, this.extraSecrets)
+        if (fallbackOptions.parse_mode === 'HTML') {
+          const validated = validateTelegramHtml(fallbackText)
+          if (validated.downgraded) {
+            fallbackText = validated.text
+            fallbackOptions = withoutParseMode(fallbackOptions)
+          }
+        }
+        if (fallbackText.trim().length === 0 || fallbackText.length > this.maxTextLength) {
+          throw new TelegramDeliveryPayloadError('rich fallback chunk exceeds Telegram limit')
+        }
+        fallback.push({ text: fallbackText, options: fallbackOptions })
+      }
+      return {
+        kind: 'send_rich',
+        jobId: job.id,
+        chatId: payload.chatId,
+        markdown: text,
+        options,
+        fallback,
+      }
+    }
     if (options.parse_mode === 'HTML') {
       const validated = validateTelegramHtml(text)
       if (validated.downgraded) {
@@ -1058,6 +1179,49 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         prepared.text.length === 0 ? {} : { text: prepared.text },
       )
       return { remoteId: `telegram:callback:${prepared.callbackQueryId}` }
+    }
+    if (prepared.kind === 'send_rich') {
+      if (!this.richMessagesDisabled && this.api.sendRichMessage !== undefined) {
+        try {
+          const sent = await this.api.sendRichMessage(
+            prepared.chatId,
+            prepared.markdown,
+            prepared.options,
+          )
+          if (!Number.isSafeInteger(sent.message_id) || sent.message_id <= 0) {
+            throw new TelegramDeliveryPayloadError('Telegram returned an invalid rich message_id')
+          }
+          return { remoteId: `telegram:${sent.message_id}` }
+        } catch (error) {
+          const classification = richErrorClass(error)
+          if (classification === 'transient') throw error
+          if (classification === 'capability') this.richMessagesDisabled = true
+        }
+      }
+
+      const messageIds: number[] = []
+      for (const chunk of prepared.fallback) {
+        let sent: { message_id: number }
+        try {
+          sent = await this.api.sendMessage(prepared.chatId, chunk.text, chunk.options)
+        } catch (error) {
+          if (chunk.options.parse_mode !== 'HTML' || !isTelegramHtmlParseError(error)) throw error
+          sent = await this.api.sendMessage(
+            prepared.chatId,
+            chunk.text,
+            withoutParseMode(chunk.options),
+          )
+        }
+        if (!Number.isSafeInteger(sent.message_id) || sent.message_id <= 0) {
+          throw new TelegramDeliveryPayloadError('Telegram returned an invalid fallback message_id')
+        }
+        messageIds.push(sent.message_id)
+      }
+      return {
+        remoteId: messageIds.length === 1
+          ? `telegram:${messageIds[0]}`
+          : `telegram-batch:${messageIds.join(',')}`,
+      }
     }
     if (prepared.kind === 'send_media') {
       if (this.api.sendMedia === undefined) {
@@ -1149,12 +1313,32 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
 
   recordDelivery(job: DeliveryJob, proof: { remoteId: string }, deliveredAtMs: number): void {
     const match = proof.remoteId.match(/^telegram:([1-9]\d*)$/)
-    if (match?.[1] === undefined) return
-    this.messageRoutes?.markDelivered(
-      job.sourceKey,
-      Number.parseInt(match[1], 10),
-      deliveredAtMs,
-    )
+    if (match?.[1] !== undefined) {
+      this.messageRoutes?.markDelivered(
+        job.sourceKey,
+        Number.parseInt(match[1], 10),
+        deliveredAtMs,
+      )
+      return
+    }
+    const batch = proof.remoteId.match(/^telegram-batch:([1-9]\d*(?:,[1-9]\d*)+)$/)
+    if (batch?.[1] === undefined || this.messageRoutes === undefined) return
+    const route = this.messageRoutes.getBySourceKey(job.sourceKey)
+    if (route === null) return
+    for (const [index, rawMessageId] of batch[1].split(',').entries()) {
+      const sourceKey = index === 0 ? job.sourceKey : `${job.sourceKey}:fallback:${index + 1}`
+      if (index > 0) {
+        this.messageRoutes.register({
+          sourceKey,
+          botId: route.botId,
+          chatId: route.chatId,
+          projectId: route.projectId,
+          threadId: route.threadId,
+          createdAtMs: route.createdAtMs + index,
+        })
+      }
+      this.messageRoutes.markDelivered(sourceKey, Number.parseInt(rawMessageId, 10), deliveredAtMs)
+    }
   }
 
   private authorizedMessage(update: InboxUpdate): { chatId: string; text: string; messageId?: number } | null {

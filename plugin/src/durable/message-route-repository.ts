@@ -62,6 +62,16 @@ export class SqliteTelegramMessageRouteRepository {
     if (changed > 1) throw new Error('message route update touched multiple rows')
   }
 
+  getBySourceKey(sourceKey: string): TelegramMessageRoute | null {
+    const row = this.database
+      .query<RouteRow, [string]>(
+        `SELECT * FROM telegram_message_routes
+         WHERE source_key = ?`,
+      )
+      .get(sourceKey)
+    return row === null ? null : fromRow(row)
+  }
+
   findByTelegramMessage(
     botId: string,
     chatId: string,

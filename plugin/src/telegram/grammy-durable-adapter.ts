@@ -11,6 +11,7 @@ import type {
   TelegramAlbumUploadItem,
   TelegramMediaOptions,
   TelegramMessageOptions,
+  TelegramRichMessageOptions,
   TelegramTextApi,
 } from './durable-text-gateway.js'
 import type { PreparedLocalMedia, TelegramMediaKind } from './durable-outbound-media.js'
@@ -110,6 +111,16 @@ export class GrammyDurableAdapter implements TelegramTextApi, TelegramUpdateSour
     options: TelegramMessageOptions,
   ): Promise<{ message_id: number }> {
     return this.runSend(chatId, 'sendMessage', () => this.api.sendMessage(chatId, text, options))
+  }
+
+  sendRichMessage(
+    chatId: string,
+    markdown: string,
+    options: TelegramRichMessageOptions,
+  ): Promise<{ message_id: number }> {
+    return this.runSend(chatId, 'sendRichMessage', () =>
+      this.api.sendRichMessage(chatId, { markdown }, options)
+    )
   }
 
   deleteMessage(chatId: string, messageId: number): Promise<true> {

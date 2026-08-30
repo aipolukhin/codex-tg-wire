@@ -56,6 +56,9 @@ describe('M6.5 durable control repositories', () => {
       projectId: 'workspace', threadId: 'thread-1', createdAtMs: NOW,
     })
     routes.markDelivered('turn:1:final', 901, NOW + 1)
+    expect(routes.getBySourceKey('turn:1:final')).toMatchObject({
+      botId: 'primary', telegramMessageId: 901,
+    })
     expect(routes.findByTelegramMessage('primary', '7001', 901)).toMatchObject({
       projectId: 'workspace', threadId: 'thread-1', telegramMessageId: 901,
     })

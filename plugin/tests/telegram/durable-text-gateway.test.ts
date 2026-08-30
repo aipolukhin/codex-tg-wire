@@ -15,6 +15,7 @@ import {
   DurableTelegramTextGateway,
   TelegramDeliveryPayloadError,
   type TelegramMessageOptions,
+  type TelegramRichMessageOptions,
 } from '../../src/telegram/durable-text-gateway.js'
 
 const NOW = 1_800_000_000_000
@@ -22,11 +23,14 @@ const NOW = 1_800_000_000_000
 class FakeTelegramApi {
   readonly sends: Array<{ chatId: string; text: string }> = []
   readonly sendOptions: TelegramMessageOptions[] = []
+  readonly richSends: Array<{ chatId: string; markdown: string; options: TelegramRichMessageOptions }> = []
   readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly callbacks: Array<{ id: string; text?: string }> = []
   readonly deletes: Array<{ chatId: string; messageId: number }> = []
   messageId = 77
+  nextMessageIds: number[] = []
   nextSendError: Error | undefined
+  nextRichError: Error | undefined
 
   async sendMessage(
     chatId: string,
@@ -40,7 +44,21 @@ class FakeTelegramApi {
     }
     this.sends.push({ chatId, text })
     this.sendOptions.push(options)
-    return { message_id: this.messageId }
+    return { message_id: this.nextMessageIds.shift() ?? this.messageId }
+  }
+
+  async sendRichMessage(
+    chatId: string,
+    markdown: string,
+    options: TelegramRichMessageOptions,
+  ): Promise<{ message_id: number }> {
+    if (this.nextRichError !== undefined) {
+      const error = this.nextRichError
+      this.nextRichError = undefined
+      throw error
+    }
+    this.richSends.push({ chatId, markdown, options })
+    return { message_id: this.nextMessageIds.shift() ?? this.messageId }
   }
 
   async editMessageText(chatId: string, messageId: number, text: string): Promise<true> {
@@ -176,6 +194,42 @@ describe('DurableTelegramTextGateway inbound', () => {
         photo: [{ file_id: 'foreign', width: 1, height: 1 }],
       },
     }))).toBeNull()
+  })
+
+  test('normalizes a Premium rich post and preserves its inline media', () => {
+    const update = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        rich_message: {
+          blocks: [
+            { type: 'heading', size: 2, text: 'План' },
+            {
+              type: 'paragraph',
+              text: ['Сначала ', { type: 'bold', text: 'проверить' }, ' таблицу.'],
+            },
+            {
+              type: 'photo',
+              photo: [
+                { file_id: 'rich-small', file_unique_id: 'rich-u1', width: 10, height: 10 },
+                { file_id: 'rich-large', file_unique_id: 'rich-u2', width: 100, height: 80 },
+              ],
+              caption: { text: 'Схема' },
+            },
+          ],
+        },
+      },
+    })
+
+    expect(gateway.extractText(update)).toEqual({
+      chatId: '7001',
+      projectId: 'workspace',
+      text: '## План\n\nСначала **проверить** таблицу.\n\n[Inline photo attachment #1]\nСхема',
+      attachments: [{
+        kind: 'image', fileId: 'rich-large', uniqueId: 'rich-u2', fileName: 'photo.jpg',
+        mimeType: 'image/jpeg', declaredSize: null,
+      }],
+    })
   })
 
   test('projects a durable album leader as one message with ordered attachments', () => {
@@ -655,7 +709,7 @@ describe('DurableTelegramTextGateway outbound', () => {
 
   test('renders Markdown and emits long final replies as an ordered durable chain', () => {
     const update = acceptedUpdate({ update_id: 900 })
-    const longBody = 'важный текст '.repeat(800)
+    const longBody = 'важный текст '.repeat(3_000)
     const deliveries = gateway.buildFinalTextDeliveries({
       update,
       message: { chatId: '7001', projectId: 'workspace', text: 'question' },
@@ -695,6 +749,7 @@ describe('DurableTelegramTextGateway outbound', () => {
         threadId: 'thread-1',
         turnId: 'turn-1',
         finalText: `[label](https://example.com/${'a'.repeat(4_500)})`,
+        presentation: 'guided_plan',
       },
       sourceKey: 'telegram:primary:901:turn:final',
       nowMs: NOW,
@@ -712,6 +767,107 @@ describe('DurableTelegramTextGateway outbound', () => {
         index === 0 ? null : deliveries[index - 1]?.sourceKey ?? null,
       )
     }
+  })
+
+  test('sends eligible answers as one durable rich message with buttons', async () => {
+    const update = acceptedUpdate({ update_id: 902 })
+    const [delivery] = gateway.buildFinalTextDeliveries({
+      update,
+      message: { chatId: '7001', projectId: 'workspace', text: 'question' },
+      result: {
+        threadId: 'thread-rich',
+        turnId: 'turn-rich',
+        finalText: '# Итог\n\n| A | B |\n|---|---|\n| 1 | 2 |',
+        buttons: [[{ text: 'Open', url: 'https://example.com' }]],
+      },
+      sourceKey: 'telegram:primary:902:turn:final',
+      nowMs: NOW,
+    })
+    expect(delivery).toMatchObject({
+      kind: 'send_text',
+      payload: {
+        format: 'rich',
+        text: '# Итог\n\n| A | B |\n|---|---|\n| 1 | 2 |',
+      },
+    })
+    expect((delivery?.payload as { fallback?: unknown[] }).fallback).toHaveLength(1)
+    const job = outbox.enqueue(delivery!).job
+    const prepared = await gateway.prepareDelivery(job)
+    expect(prepared).toMatchObject({ kind: 'send_rich', chatId: '7001' })
+    expect(await gateway.executeDelivery(prepared)).toEqual({ remoteId: 'telegram:77' })
+    expect(api.richSends).toEqual([{
+      chatId: '7001',
+      markdown: '# Итог\n\n| A | B |\n|---|---|\n| 1 | 2 |',
+      options: {
+        reply_markup: { inline_keyboard: [[{ text: 'Open', url: 'https://example.com' }]] },
+      },
+    }])
+    expect(api.sends).toHaveLength(0)
+  })
+
+  test('falls back atomically to stored HTML chunks and records every reply route', async () => {
+    const routes = new SqliteTelegramMessageRouteRepository(database)
+    const richGateway = new DurableTelegramTextGateway(api, {
+      allowedUserIds: [7001],
+      allowedChatIds: ['7001'],
+      defaultProjectId: 'workspace',
+      messageRoutes: routes,
+    })
+    const update = acceptedUpdate({ update_id: 903 })
+    const [delivery] = richGateway.buildFinalTextDeliveries({
+      update,
+      message: { chatId: '7001', projectId: 'workspace', text: 'question' },
+      result: {
+        threadId: 'thread-fallback',
+        turnId: 'turn-fallback',
+        finalText: `**Result**\n\n${'plain fallback text '.repeat(900)}`,
+      },
+      sourceKey: 'telegram:primary:903:turn:final',
+      nowMs: NOW,
+    })
+    const fallback = (delivery?.payload as { fallback?: unknown[] }).fallback
+    if (fallback === undefined) throw new Error('expected durable rich fallback')
+    expect(fallback?.length).toBeGreaterThan(1)
+    const job = outbox.enqueue(delivery!).job
+    const prepared = await richGateway.prepareDelivery(job)
+    const parserError = new Error("Bad Request: can't parse rich message") as Error & {
+      error_code: number
+    }
+    parserError.error_code = 400
+    api.nextRichError = parserError
+    api.nextMessageIds = fallback.map((_, index) => 81 + index)
+
+    const proof = await richGateway.executeDelivery(prepared)
+    expect(proof.remoteId).toMatch(/^telegram-batch:81,82/)
+    expect(api.richSends).toHaveLength(0)
+    expect(api.sends.length).toBe(fallback.length)
+    richGateway.recordDelivery(job, proof, NOW + 1)
+    expect(routes.findByTelegramMessage('primary', '7001', 81)).toMatchObject({
+      sourceKey: 'telegram:primary:903:turn:final', threadId: 'thread-fallback',
+    })
+    expect(routes.findByTelegramMessage('primary', '7001', 82)).toMatchObject({
+      sourceKey: 'telegram:primary:903:turn:final:fallback:2', threadId: 'thread-fallback',
+    })
+  })
+
+  test('does not fall back after an ambiguous transient rich-send failure', async () => {
+    outbox.enqueue({
+      sourceKey: 'test:rich-transient',
+      kind: 'send_text',
+      payload: {
+        chatId: '7001', text: '**hello**', format: 'rich',
+        fallback: [{ text: '<b>hello</b>', options: { parse_mode: 'HTML' } }],
+      },
+      createdAtMs: NOW,
+    })
+    const job = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const prepared = await gateway.prepareDelivery(job)
+    const transient = new Error('upstream timeout') as Error & { error_code: number }
+    transient.error_code = 500
+    api.nextRichError = transient
+
+    await expect(gateway.executeDelivery(prepared)).rejects.toBe(transient)
+    expect(api.sends).toHaveLength(0)
   })
 
   test('redacts secrets before the Telegram mutation and returns remote proof', async () => {

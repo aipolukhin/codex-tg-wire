@@ -156,7 +156,7 @@ export type IncomingInteractionResponse =
     }
   | {
       kind: 'feature_action'
-      feature: 'settings' | 'busy' | 'plan' | 'onboarding' | 'git'
+      feature: 'settings' | 'busy' | 'plan' | 'onboarding' | 'git' | 'turn'
       chatId: string
       token: string
       action: string
@@ -402,6 +402,10 @@ export type AgentTurnProgress =
       turnId: string
       completed: number
       total: number
+      steps: readonly {
+        step: string
+        status: 'pending' | 'in_progress' | 'completed'
+      }[]
       atMs: number
     }
   | {

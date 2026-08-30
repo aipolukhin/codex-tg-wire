@@ -21,6 +21,7 @@ import type { SqliteAgentSettingsRepository } from '../durable/settings-reposito
 import type { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import { planCard } from './m65-session-coordinator.js'
 import type { GitWorkspaceController } from './git-workspace-control.js'
+import type { DurableTurnPlanCards } from './durable-turn-plan-cards.js'
 
 type FeatureAction = Extract<IncomingInteractionResponse, { kind: 'feature_action' }>
 
@@ -70,6 +71,7 @@ export class M65InteractionHandler implements InteractionHandler {
     private readonly defaultProjectId: string,
     private readonly gitWorkspace: GitWorkspaceController | undefined,
     private readonly now: () => number = Date.now,
+    private readonly turnPlanCards?: DurableTurnPlanCards,
   ) {}
 
   handleInteraction(operation: InteractionOperation): Promise<InteractionResult> {
@@ -82,7 +84,25 @@ export class M65InteractionHandler implements InteractionHandler {
     if (response.feature === 'settings') return this.settingsAction(operation, response)
     if (response.feature === 'busy') return this.busyAction(operation, response)
     if (response.feature === 'git') return this.gitAction(operation, response)
+    if (response.feature === 'turn') return this.turnAction(operation, response)
     return this.planAction(operation, response)
+  }
+
+  private async turnAction(
+    operation: InteractionOperation,
+    response: FeatureAction,
+  ): Promise<InteractionResult> {
+    if (this.turnPlanCards === undefined) {
+      return this.closedCallback(operation, response, 'Task controls unavailable')
+    }
+    const result = await this.turnPlanCards.handleAction({
+      operationKey: operation.operationKey,
+      token: response.token,
+      chatId: response.chatId,
+      action: response.action,
+    })
+    const ack = this.enqueueAck(operation, response, result.toast)
+    return { deliveryJobId: result.deliveryJobId ?? ack }
   }
 
   private async gitAction(

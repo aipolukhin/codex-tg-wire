@@ -596,6 +596,37 @@ const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 20,
+    name: 'telegram_turn_plan_cards',
+    statements: [
+      `CREATE TABLE telegram_turn_plan_cards (
+        operation_key TEXT PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        root_source_key TEXT NOT NULL UNIQUE,
+        tail_source_key TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        phase TEXT NOT NULL DEFAULT 'ACTIVE'
+          CHECK (phase IN ('ACTIVE', 'COMPLETED', 'FAILED', 'INTERRUPTED', 'UNKNOWN')),
+        cancel_state TEXT NOT NULL DEFAULT 'AVAILABLE'
+          CHECK (cancel_state IN ('AVAILABLE', 'CONFIRMING', 'REQUESTED', 'CLOSED')),
+        cancel_operation_key TEXT,
+        interrupt_sent_at_ms INTEGER,
+        steps_json TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      )`,
+      `CREATE INDEX telegram_turn_plan_cards_active_idx
+        ON telegram_turn_plan_cards (phase, cancel_state, updated_at_ms)`,
+      `CREATE INDEX telegram_turn_plan_cards_chat_idx
+        ON telegram_turn_plan_cards (bot_id, chat_id, project_id, updated_at_ms)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

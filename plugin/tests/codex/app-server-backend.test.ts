@@ -312,7 +312,7 @@ describe('CodexAppServerBackend text turns', () => {
     }])
   })
 
-  test('projects progress and usage without forwarding command, plan or reasoning content', async () => {
+  test('projects bounded plan steps without forwarding command, explanation or reasoning content', async () => {
     const client = new FakeBackendClient()
     const backend = new CodexAppServerBackend(client)
     const progress: AgentTurnProgress[] = []
@@ -367,6 +367,10 @@ describe('CodexAppServerBackend text turns', () => {
       {
         kind: 'plan', threadId: 'thread-1', turnId: 'turn-1',
         completed: 1, total: 2, atMs: expect.any(Number),
+        steps: [
+          { step: 'private-step-a', status: 'completed' },
+          { step: 'private-step-b', status: 'in_progress' },
+        ],
       },
       {
         kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
@@ -375,7 +379,8 @@ describe('CodexAppServerBackend text turns', () => {
         contextWindow: 10_000, atMs: expect.any(Number),
       },
     ])
-    expect(JSON.stringify(progress)).not.toContain('private-')
+    expect(JSON.stringify(progress)).not.toContain('private-command')
+    expect(JSON.stringify(progress)).not.toContain('private-plan')
     backend.close()
   })
 

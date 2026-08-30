@@ -420,7 +420,7 @@ function itemActivity(item: unknown): AgentActivity | null {
   }
 }
 
-/** Projects raw App Server notifications into payload-free UX facts. */
+/** Projects raw App Server notifications into the bounded UX facts Telegram needs. */
 function parseTurnProgress(notification: ServerNotification): AgentTurnProgress | null {
   const correlation = eventCorrelation(notification.params)
   if (correlation === null || !isRecord(notification.params)) return null
@@ -436,12 +436,26 @@ function parseTurnProgress(notification: ServerNotification): AgentTurnProgress 
   }
   if (notification.method === 'turn/plan/updated') {
     if (!Array.isArray(params.plan)) return null
-    const steps = params.plan.filter(isRecord)
+    const steps = params.plan.flatMap((value) => {
+      if (!isRecord(value) || typeof value.step !== 'string') return []
+      const step = value.step.trim().replace(/\s+/g, ' ').slice(0, 512)
+      if (step.length === 0) return []
+      const status = value.status === 'completed'
+        ? 'completed' as const
+        : value.status === 'inProgress' || value.status === 'in_progress'
+          ? 'in_progress' as const
+          : value.status === 'pending'
+            ? 'pending' as const
+            : null
+      return status === null ? [] : [{ step, status }]
+    }).slice(0, 32)
+    if (steps.length === 0) return null
     return {
       kind: 'plan',
       ...correlation,
       completed: steps.filter((step) => step.status === 'completed').length,
       total: steps.length,
+      steps,
       atMs: Date.now(),
     }
   }

@@ -60,7 +60,13 @@ describe('DurableTurnUxProjector', () => {
     ux.onTurnStarted(operation, 'thread-private-but-opaque', 'turn-1')
     ux.onProgress(operation, {
       kind: 'plan', threadId: 'thread-private-but-opaque', turnId: 'turn-1',
-      completed: 1, total: 3, atMs: nowMs,
+      completed: 1, total: 3,
+      steps: [
+        { step: 'first', status: 'completed' },
+        { step: 'second', status: 'in_progress' },
+        { step: 'third', status: 'pending' },
+      ],
+      atMs: nowMs,
     })
     ux.onProgress(operation, {
       kind: 'usage', threadId: 'thread-private-but-opaque', turnId: 'turn-1',

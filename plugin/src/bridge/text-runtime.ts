@@ -51,6 +51,7 @@ import {
   type ProjectDefinition,
 } from './durable-session-coordinator.js'
 import { DurableTurnUxProjector, type DurableTurnUxOptions } from './durable-turn-ux.js'
+import { DurableTurnPlanCards } from './durable-turn-plan-cards.js'
 import {
   TelegramNativeTurnUx,
   type TelegramNativeTurnUxOptions,
@@ -337,6 +338,12 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     interactionTimeoutMs === undefined ? {} : { interactionTimeoutMs },
   )
   const ux = new DurableTurnUxProjector(options.database, outbox, sessions, options.ux)
+  const planCards = new DurableTurnPlanCards(
+    options.database,
+    outbox,
+    sessions,
+    backend,
+  )
   const nativeUx = new TelegramNativeTurnUx(
     options.database,
     options.telegramApi,
@@ -361,26 +368,32 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const uxObserver: AgentTurnUxObserver = {
     onPreparing(operation, turnSettings) {
       ux.onPreparing(operation, turnSettings)
+      planCards.onPreparing(operation, turnSettings)
       nativeUx.onPreparing(operation, turnSettings)
     },
     onThreadReady(operation, threadId) {
       ux.onThreadReady(operation, threadId)
+      planCards.onThreadReady(operation, threadId)
       nativeUx.onThreadReady(operation, threadId)
     },
     onTurnStarted(operation, threadId, turnId) {
       ux.onTurnStarted(operation, threadId, turnId)
+      planCards.onTurnStarted(operation, threadId, turnId)
       nativeUx.onTurnStarted(operation, threadId, turnId)
     },
     onProgress(operation, progress) {
       ux.onProgress(operation, progress)
+      planCards.onProgress(operation, progress)
       nativeUx.onProgress(operation, progress)
     },
     onCompleted(operation, result) {
       ux.onCompleted(operation, result)
+      planCards.onCompleted(operation, result)
       nativeUx.onCompleted(operation, result)
     },
     onTerminal(operation, state, errorName) {
       ux.onTerminal(operation, state, errorName)
+      planCards.onTerminal(operation, state, errorName)
       nativeUx.onTerminal(operation, state, errorName)
     },
   }
@@ -445,6 +458,8 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     telegram,
     options.telegram.defaultProjectId,
     gitWorkspace,
+    Date.now,
+    planCards,
   )
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
@@ -558,7 +573,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     async recoverStartup() {
       const interactionSweep = interactions.recoverStartup()
       const turnSweep = await startupRecovery.run()
-      const uxRecovered = ux.recoverStartup()
+      const uxRecovered = ux.recoverStartup() + await planCards.recoverStartup()
       return { turns: turnSweep, interactions: interactionSweep, uxRecovered }
     },
     close(): void {

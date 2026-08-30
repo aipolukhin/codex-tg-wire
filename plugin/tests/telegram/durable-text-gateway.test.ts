@@ -24,6 +24,12 @@ class FakeTelegramApi {
   readonly sends: Array<{ chatId: string; text: string }> = []
   readonly sendOptions: TelegramMessageOptions[] = []
   readonly richSends: Array<{ chatId: string; markdown: string; options: TelegramRichMessageOptions }> = []
+  readonly richEdits: Array<{
+    chatId: string
+    messageId: number
+    markdown: string
+    options: TelegramRichMessageOptions
+  }> = []
   readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly callbacks: Array<{ id: string; text?: string }> = []
   readonly deletes: Array<{ chatId: string; messageId: number }> = []
@@ -31,6 +37,7 @@ class FakeTelegramApi {
   nextMessageIds: number[] = []
   nextSendError: Error | undefined
   nextRichError: Error | undefined
+  nextRichEditError: Error | undefined
 
   async sendMessage(
     chatId: string,
@@ -63,6 +70,21 @@ class FakeTelegramApi {
 
   async editMessageText(chatId: string, messageId: number, text: string): Promise<true> {
     this.edits.push({ chatId, messageId, text })
+    return true
+  }
+
+  async editRichMessage(
+    chatId: string,
+    messageId: number,
+    markdown: string,
+    options: TelegramRichMessageOptions,
+  ): Promise<true> {
+    if (this.nextRichEditError !== undefined) {
+      const error = this.nextRichEditError
+      this.nextRichEditError = undefined
+      throw error
+    }
+    this.richEdits.push({ chatId, messageId, markdown, options })
     return true
   }
 
@@ -583,6 +605,15 @@ describe('DurableTelegramTextGateway inbound', () => {
       kind: 'feature_action', feature: 'git', token: '012345abcdef',
       action: '0:commit-push',
     })
+    const turn = acceptedUpdate({
+      callback_query: {
+        id: 'cb-turn', data: 'dx:t:012345abcdef:confirm', from: { id: 7001 },
+        message: { message_id: 64, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(turn)).toMatchObject({
+      kind: 'feature_action', feature: 'turn', token: '012345abcdef', action: 'confirm',
+    })
     const revision = acceptedUpdate({
       message: {
         chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
@@ -1062,6 +1093,55 @@ describe('DurableTelegramTextGateway outbound', () => {
     expect(api.edits).toEqual([{ chatId: '7001', messageId: 88, text: '✅ Resolved' }])
 
     outbox.failLease(edit.id, 'sender', 'test release', NOW)
+    outbox.enqueue({
+      sourceKey: 'test:rich-edit',
+      kind: 'edit',
+      payload: {
+        chatId: '7001',
+        messageId: 89,
+        text: '## Progress\n\n- [x] First\n- [ ] Second',
+        format: 'rich',
+        options: { reply_markup: { inline_keyboard: [] } },
+        fallback: [{
+          text: '<b>Progress</b>\n\n☑️ First\n☐ Second',
+          options: { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
+        }],
+      },
+      createdAtMs: NOW,
+    })
+    const richEdit = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const preparedRichEdit = await gateway.prepareDelivery(richEdit)
+    expect(await gateway.executeDelivery(preparedRichEdit)).toEqual({ remoteId: 'telegram:89' })
+    expect(api.richEdits).toEqual([{
+      chatId: '7001', messageId: 89,
+      markdown: '## Progress\n\n- [x] First\n- [ ] Second',
+      options: { reply_markup: { inline_keyboard: [] } },
+    }])
+
+    outbox.failLease(richEdit.id, 'sender', 'test release', NOW)
+    api.nextRichEditError = Object.assign(new Error('rich edit unsupported'), { error_code: 400 })
+    outbox.enqueue({
+      sourceKey: 'test:rich-edit-fallback',
+      kind: 'edit',
+      payload: {
+        chatId: '7001', messageId: 90, text: '## Updated', format: 'rich',
+        options: { reply_markup: { inline_keyboard: [] } },
+        fallback: [{
+          text: '<b>Updated</b>',
+          options: { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
+        }],
+      },
+      createdAtMs: NOW,
+    })
+    const richFallback = outbox.claimNext({
+      workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000,
+    })!
+    expect(await gateway.executeDelivery(await gateway.prepareDelivery(richFallback))).toEqual({
+      remoteId: 'telegram:90',
+    })
+    expect(api.edits.at(-1)).toEqual({ chatId: '7001', messageId: 90, text: '<b>Updated</b>' })
+
+    outbox.failLease(richFallback.id, 'sender', 'test release', NOW)
     outbox.enqueue({
       sourceKey: 'test:callback',
       kind: 'reaction',

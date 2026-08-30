@@ -157,6 +157,17 @@ export class GrammyDurableAdapter implements TelegramTextApi, TelegramUpdateSour
     return this.run('editMessageText', () => this.api.editMessageText(chatId, messageId, text, options))
   }
 
+  async editRichMessage(
+    chatId: string,
+    messageId: number,
+    markdown: string,
+    options: TelegramRichMessageOptions,
+  ): Promise<unknown> {
+    return this.run('editRichMessage', () =>
+      this.api.editMessageText(chatId, messageId, { markdown }, options)
+    )
+  }
+
   answerCallbackQuery(callbackQueryId: string, options: { text?: string }): Promise<true> {
     return this.run('answerCallbackQuery', () => this.api.answerCallbackQuery(callbackQueryId, options))
   }

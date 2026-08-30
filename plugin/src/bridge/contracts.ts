@@ -145,7 +145,7 @@ export type IncomingInteractionResponse =
     }
   | {
       kind: 'feature_action'
-      feature: 'settings' | 'busy' | 'plan' | 'onboarding'
+      feature: 'settings' | 'busy' | 'plan' | 'onboarding' | 'git'
       chatId: string
       token: string
       action: string
@@ -505,6 +505,12 @@ export interface FinalTextDelivery {
 export interface FinalArtifactDelivery extends FinalTextDelivery {
   /** Optional delivery that must be proven before the first artifact is sent. */
   dependsOnSourceKey?: string
+}
+
+export interface TurnCompletionReporter {
+  buildTurnCompletionDeliveries(
+    input: FinalArtifactDelivery,
+  ): Promise<readonly DeliveryJobInput[]>
 }
 
 export interface CommandDelivery {

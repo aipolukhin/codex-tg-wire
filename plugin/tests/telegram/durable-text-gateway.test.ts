@@ -519,6 +519,16 @@ describe('DurableTelegramTextGateway inbound', () => {
     expect(gateway.extractInteractionResponse(onboarding)).toMatchObject({
       kind: 'feature_action', feature: 'onboarding', action: 'begin', token: 'onboarding',
     })
+    const git = acceptedUpdate({
+      callback_query: {
+        id: 'cb-git', data: 'dx:g:012345abcdef:0:commit-push', from: { id: 7001 },
+        message: { message_id: 63, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(git)).toMatchObject({
+      kind: 'feature_action', feature: 'git', token: '012345abcdef',
+      action: '0:commit-push',
+    })
     const revision = acceptedUpdate({
       message: {
         chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },

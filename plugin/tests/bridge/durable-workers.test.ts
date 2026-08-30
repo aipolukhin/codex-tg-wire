@@ -9,6 +9,7 @@ import type {
   CommandDelivery,
   CommandOperation,
   CommandResult,
+  FinalArtifactDelivery,
   FinalTextDelivery,
   IncomingCommand,
   IncomingTextMessage,
@@ -355,6 +356,42 @@ describe('durable text vertical slice', () => {
     expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
   })
 
+  test('chains a durable turn-completion card after the final response', async () => {
+    const accepted = inbox.ingest(textUpdate(503))
+    const reports: FinalArtifactDelivery[] = []
+    const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-completion-card',
+      now: () => nowMs,
+      turnCompletionReporter: {
+        buildTurnCompletionDeliveries: async (input) => {
+          reports.push(input)
+          return [{
+            sourceKey: input.sourceKey,
+            ...(input.dependsOnSourceKey === undefined
+              ? {}
+              : { dependsOnSourceKey: input.dependsOnSourceKey }),
+            kind: 'send_text',
+            payload: { chatId: input.message.chatId, text: 'Git status' },
+            createdAtMs: input.nowMs,
+          }]
+        },
+      },
+    })
+
+    expect(await inbound.runOnce()).toMatchObject({ outcome: 'enqueued' })
+    expect(reports).toHaveLength(1)
+    expect(reports[0]).toMatchObject({
+      sourceKey: 'telegram:primary-bot:503:turn:completion',
+      dependsOnSourceKey: 'telegram:primary-bot:503:turn:final',
+      message: { projectId: 'workspace' },
+    })
+    expect(outbox.getBySourceKey('telegram:primary-bot:503:turn:completion')).toMatchObject({
+      state: 'PENDING',
+      dependsOnSourceKey: 'telegram:primary-bot:503:turn:final',
+    })
+    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+  })
+
   test('replay after crash reuses the logical turn and deduplicates the final delivery', async () => {
     const accepted = inbox.ingest(textUpdate(502))
     const faultingOutbox = throwOnceAfterEnqueue(outbox)
@@ -362,6 +399,17 @@ describe('durable text vertical slice', () => {
       workerId: 'inbox-a',
       now: () => nowMs,
       retryPolicy: exponentialRetryPolicy({ baseDelayMs: 10, maxDelayMs: 10 }),
+      turnCompletionReporter: {
+        buildTurnCompletionDeliveries: async (input) => [{
+          sourceKey: input.sourceKey,
+          ...(input.dependsOnSourceKey === undefined
+            ? {}
+            : { dependsOnSourceKey: input.dependsOnSourceKey }),
+          kind: 'send_text',
+          payload: { chatId: input.message.chatId, text: 'Git status' },
+          createdAtMs: input.nowMs,
+        }],
+      },
     })
 
     expect(await worker.runOnce()).toEqual({
@@ -379,7 +427,10 @@ describe('durable text vertical slice', () => {
     expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
     expect(
       database.query<{ count: number }, []>('SELECT count(*) AS count FROM delivery_jobs').get()?.count,
-    ).toBe(1)
+    ).toBe(2)
+    expect(outbox.getBySourceKey('telegram:primary-bot:502:turn:completion')).toMatchObject({
+      dependsOnSourceKey: 'telegram:primary-bot:502:turn:final',
+    })
   })
 
   test('marks unsupported updates processed without starting a turn', async () => {

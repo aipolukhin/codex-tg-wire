@@ -68,6 +68,7 @@ import {
 import { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import { M65SessionCoordinator } from './m65-session-coordinator.js'
 import { M65InteractionHandler } from './m65-interaction-handler.js'
+import { GitWorkspaceControl } from './git-workspace-control.js'
 import type {
   AgentApprovalPolicy,
   AgentSandboxMode,
@@ -431,6 +432,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
     ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
   })
+  const gitWorkspace = new GitWorkspaceControl(options.projects)
   const featureInteractions = new M65InteractionHandler(
     interactions,
     controls,
@@ -442,12 +444,14 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     outbox,
     telegram,
     options.telegram.defaultProjectId,
+    gitWorkspace,
   )
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',
     commandHandler: commands,
     interactionHandler: featureInteractions,
+    turnCompletionReporter: gitWorkspace,
   })
   const outbound = new OutboxDeliveryWorker(outbox, telegram, {
     ...options.outboxWorker,

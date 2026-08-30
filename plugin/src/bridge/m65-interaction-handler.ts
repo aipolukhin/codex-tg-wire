@@ -10,7 +10,7 @@ import type {
   TextTurnOperation,
   TextTurnResult,
 } from './contracts.js'
-import type { InboxUpdate, OutboxRepository } from '../durable/contracts.js'
+import type { DeliveryJobInput, InboxUpdate, OutboxRepository } from '../durable/contracts.js'
 import {
   type BusyAction,
   type GuidedPlanRecord,
@@ -20,6 +20,7 @@ import type { SqliteSessionRepository } from '../durable/session-repository.js'
 import type { SqliteAgentSettingsRepository } from '../durable/settings-repository.js'
 import type { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import { planCard } from './m65-session-coordinator.js'
+import type { GitWorkspaceController } from './git-workspace-control.js'
 
 type FeatureAction = Extract<IncomingInteractionResponse, { kind: 'feature_action' }>
 
@@ -67,6 +68,7 @@ export class M65InteractionHandler implements InteractionHandler {
     private readonly outbox: OutboxRepository,
     private readonly telegram: TelegramGateway,
     private readonly defaultProjectId: string,
+    private readonly gitWorkspace: GitWorkspaceController | undefined,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -79,7 +81,31 @@ export class M65InteractionHandler implements InteractionHandler {
     if (response.feature === 'onboarding') return this.onboardingAction(operation, response)
     if (response.feature === 'settings') return this.settingsAction(operation, response)
     if (response.feature === 'busy') return this.busyAction(operation, response)
+    if (response.feature === 'git') return this.gitAction(operation, response)
     return this.planAction(operation, response)
+  }
+
+  private async gitAction(
+    operation: InteractionOperation,
+    response: FeatureAction,
+  ): Promise<InteractionResult> {
+    if (this.gitWorkspace === undefined) {
+      return this.closedCallback(operation, response, 'Git-контроль недоступен')
+    }
+    const result = await this.gitWorkspace.handleAction(response.token, response.action)
+    const edit = this.outbox.enqueue({
+      sourceKey: `${operation.operationKey}:git-edit`,
+      kind: 'edit',
+      payload: {
+        chatId: response.chatId,
+        messageId: response.callbackMessageId,
+        text: result.text,
+        options: keyboard(result),
+      },
+      createdAtMs: this.now(),
+    })
+    this.enqueueAck(operation, response, 'Git-статус обновлён')
+    return { deliveryJobId: edit.job.id }
   }
 
   private async settingsAction(
@@ -184,7 +210,9 @@ export class M65InteractionHandler implements InteractionHandler {
     }
     const result = await this.coordinator.runTextTurn(forwarded)
     this.controls.completeBusy(prompt.id, 'COMPLETED', result, this.now())
-    const first = this.enqueueFinal(operation, forwarded, result, `${operation.operationKey}:final`)
+    const first = await this.enqueueFinal(
+      operation, forwarded, result, `${operation.operationKey}:final`,
+    )
     this.outbox.enqueue({
       sourceKey: `${operation.operationKey}:busy-card`,
       kind: 'edit',
@@ -248,7 +276,9 @@ export class M65InteractionHandler implements InteractionHandler {
     }
     const result = await this.coordinator.runTextTurn(execution)
     this.controls.completePlan(plan.id, result, this.now())
-    const first = this.enqueueFinal(operation, execution, result, `${operation.operationKey}:final`)
+    const first = await this.enqueueFinal(
+      operation, execution, result, `${operation.operationKey}:final`,
+    )
     this.outbox.enqueue({
       sourceKey: `${operation.operationKey}:plan-card`,
       kind: 'edit',
@@ -304,7 +334,9 @@ export class M65InteractionHandler implements InteractionHandler {
       buttons: planCard(updated.token),
       presentation: 'guided_plan',
     }
-    const first = this.enqueueFinal(operation, revision, card, `${operation.operationKey}:plan-revision`)
+    const first = await this.enqueueFinal(
+      operation, revision, card, `${operation.operationKey}:plan-revision`,
+    )
     return { deliveryJobId: first }
   }
 
@@ -318,19 +350,53 @@ export class M65InteractionHandler implements InteractionHandler {
     }
   }
 
-  private enqueueFinal(
+  private async enqueueFinal(
     operation: InteractionOperation,
     input: TextTurnOperation,
     result: TextTurnResult,
     sourceKey: string,
-  ): string {
-    const deliveries = this.telegram.buildFinalTextDeliveries({
-      update: fakeUpdate(operation, input.chatId),
-      message: { chatId: input.chatId, projectId: input.projectId, text: input.text },
+  ): Promise<string> {
+    const nowMs = this.now()
+    const update = fakeUpdate(operation, input.chatId)
+    const message = { chatId: input.chatId, projectId: input.projectId, text: input.text }
+    const textDeliveries = this.telegram.buildFinalTextDeliveries({
+      update,
+      message,
       result,
       sourceKey,
-      nowMs: this.now(),
+      nowMs,
     })
+    let artifactDeliveries: readonly DeliveryJobInput[] = []
+    if ((result.artifacts?.length ?? 0) > 0) {
+      const buildArtifacts = this.telegram.buildFinalArtifactDeliveries
+      if (buildArtifacts === undefined) throw new Error('Telegram gateway cannot deliver agent artifacts')
+      const dependsOnSourceKey = textDeliveries.at(-1)?.sourceKey
+      artifactDeliveries = await buildArtifacts.call(this.telegram, {
+        update,
+        message,
+        result,
+        sourceKey: `${sourceKey}:artifact`,
+        ...(dependsOnSourceKey === undefined ? {} : { dependsOnSourceKey }),
+        nowMs,
+      })
+      if (artifactDeliveries.length === 0) {
+        throw new Error('Telegram gateway dropped all agent artifacts')
+      }
+    }
+    const finalDeliveries = [...textDeliveries, ...artifactDeliveries]
+    let completionDeliveries: readonly DeliveryJobInput[] = []
+    if (this.gitWorkspace !== undefined) {
+      const dependsOnSourceKey = finalDeliveries.at(-1)?.sourceKey
+      completionDeliveries = await this.gitWorkspace.buildTurnCompletionDeliveries({
+        update,
+        message,
+        result,
+        sourceKey: `${sourceKey}:completion`,
+        ...(dependsOnSourceKey === undefined ? {} : { dependsOnSourceKey }),
+        nowMs,
+      })
+    }
+    const deliveries = [...finalDeliveries, ...completionDeliveries]
     let first: string | null = null
     for (const delivery of deliveries) {
       const enqueued = this.outbox.enqueue(delivery)

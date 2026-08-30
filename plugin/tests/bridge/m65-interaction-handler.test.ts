@@ -14,6 +14,7 @@ import type {
   TextTurnResult,
 } from '../../src/bridge/contracts.js'
 import { M65InteractionHandler } from '../../src/bridge/m65-interaction-handler.js'
+import type { GitWorkspaceController } from '../../src/bridge/git-workspace-control.js'
 import { PersonalAlphaCommands } from '../../src/bridge/personal-alpha-commands.js'
 import { SqliteControlInteractionRepository } from '../../src/durable/control-interaction-repository.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
@@ -67,6 +68,7 @@ let outbox: SqliteOutboxRepository
 let backend: FakeBackend
 let coordinator: FakeCoordinator
 let handler: M65InteractionHandler
+let gitActions: Array<{ snapshot: string; action: string }>
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'codex-m65-handler-'))
@@ -77,6 +79,7 @@ beforeEach(() => {
   outbox = new SqliteOutboxRepository(database)
   backend = new FakeBackend()
   coordinator = new FakeCoordinator()
+  gitActions = []
   const commands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
     projects: [{ id: 'workspace', cwd: '/srv/workspace' }],
     defaultProjectId: 'workspace',
@@ -85,9 +88,19 @@ beforeEach(() => {
   const legacy: InteractionHandler = {
     handleInteraction: async () => ({ deliveryJobId: null }),
   }
+  const gitWorkspace: GitWorkspaceController = {
+    buildTurnCompletionDeliveries: async () => [],
+    handleAction: async (snapshot, action) => {
+      gitActions.push({ snapshot, action })
+      return {
+        text: '✅ Git updated',
+        buttons: [[{ text: '🚀 Push', callbackData: 'dx:g:fedcba654321:0:push' }]],
+      }
+    },
+  }
   handler = new M65InteractionHandler(
     legacy, controls, sessions, settings, backend, coordinator, commands,
-    outbox, telegram, 'workspace', () => NOW,
+    outbox, telegram, 'workspace', gitWorkspace, () => NOW,
   )
 })
 
@@ -97,6 +110,32 @@ afterEach(() => {
 })
 
 describe('M6.5 feature callbacks', () => {
+  test('runs Git buttons through one durable edit and callback acknowledgement', async () => {
+    const result = await handler.handleInteraction({
+      operationKey: 'telegram:primary:0:turn:interaction', botId: 'primary',
+      inboxUpdateId: 1, updateId: 0,
+      response: {
+        kind: 'feature_action', feature: 'git', chatId: '7001', token: '012345abcdef',
+        action: '0:commit-push', callbackQueryId: 'cb-git', callbackMessageId: 88,
+      },
+    })
+
+    expect(result.deliveryJobId).not.toBeNull()
+    expect(gitActions).toEqual([{ snapshot: '012345abcdef', action: '0:commit-push' }])
+    expect(outbox.getBySourceKey('telegram:primary:0:turn:interaction:git-edit')).toMatchObject({
+      kind: 'edit',
+      payload: {
+        chatId: '7001', messageId: 88, text: '✅ Git updated',
+        options: { reply_markup: { inline_keyboard: [[{
+          text: '🚀 Push', callback_data: 'dx:g:fedcba654321:0:push',
+        }]] } },
+      },
+    })
+    expect(outbox.getBySourceKey(
+      'telegram:primary:0:turn:interaction:callback-ack',
+    )).toMatchObject({ kind: 'reaction' })
+  })
+
   test('turns an onboarding CTA into one durable card edit and callback acknowledgement', async () => {
     const result = await handler.handleInteraction({
       operationKey: 'telegram:primary:1:turn:interaction', botId: 'primary',

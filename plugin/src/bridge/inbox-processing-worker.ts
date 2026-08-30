@@ -10,6 +10,7 @@ import type {
   PreparedIncomingMessage,
   SessionCoordinator,
   TelegramGateway,
+  TurnCompletionReporter,
 } from './contracts.js'
 import {
   exponentialRetryPolicy,
@@ -36,6 +37,7 @@ export interface InboxProcessingWorkerOptions {
   errorSummary?: (error: unknown) => string
   commandHandler?: CommandHandler
   interactionHandler?: InteractionHandler
+  turnCompletionReporter?: TurnCompletionReporter
   queuePollMs?: number
 }
 
@@ -54,6 +56,7 @@ export class InboxProcessingWorker {
   private readonly errorSummary: (error: unknown) => string
   private readonly commandHandler: CommandHandler | undefined
   private readonly interactionHandler: InteractionHandler | undefined
+  private readonly turnCompletionReporter: TurnCompletionReporter | undefined
   private readonly queuePollMs: number
 
   constructor(
@@ -71,6 +74,7 @@ export class InboxProcessingWorker {
     this.errorSummary = options.errorSummary ?? safeErrorSummary
     this.commandHandler = options.commandHandler
     this.interactionHandler = options.interactionHandler
+    this.turnCompletionReporter = options.turnCompletionReporter
     this.queuePollMs = options.queuePollMs ?? 500
     if (
       !Number.isSafeInteger(this.leaseHeartbeatMs) ||
@@ -274,7 +278,20 @@ export class InboxProcessingWorker {
         throw new Error('Telegram gateway dropped all agent artifacts')
       }
     }
-    const deliveries = [...textDeliveries, ...artifactDeliveries]
+    const finalDeliveries = [...textDeliveries, ...artifactDeliveries]
+    let completionDeliveries: readonly DeliveryJobInput[] = []
+    if (this.turnCompletionReporter !== undefined) {
+      const dependsOnSourceKey = finalDeliveries.at(-1)?.sourceKey
+      completionDeliveries = await this.turnCompletionReporter.buildTurnCompletionDeliveries({
+        update,
+        message,
+        result,
+        sourceKey: `${turnKey}:completion`,
+        ...(dependsOnSourceKey === undefined ? {} : { dependsOnSourceKey }),
+        nowMs: completedAtMs,
+      })
+    }
+    const deliveries = [...finalDeliveries, ...completionDeliveries]
     let firstDeliveryJobId: string | null = null
     for (const delivery of deliveries) {
       const enqueue = this.outbox.enqueue({

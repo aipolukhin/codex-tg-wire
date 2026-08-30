@@ -633,17 +633,23 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         }
       }
       const feature = callback.data.match(
-        /^dx:(s|b|p|o):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
+        /^dx:(s|b|p|o|g):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
       )
       if (feature !== null && feature[1] !== undefined && feature[3] !== undefined) {
         const featureName = feature[1] === 's'
           ? 'settings'
           : feature[1] === 'b'
             ? 'busy'
-            : feature[1] === 'p'
+          : feature[1] === 'p'
               ? 'plan'
-              : 'onboarding'
-        if (featureName !== 'settings' && featureName !== 'onboarding' && feature[2] === undefined) return null
+              : feature[1] === 'o'
+                ? 'onboarding'
+                : 'git'
+        if (
+          featureName !== 'settings' &&
+          featureName !== 'onboarding' &&
+          feature[2] === undefined
+        ) return null
         return {
           kind: 'feature_action',
           feature: featureName,

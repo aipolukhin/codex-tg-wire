@@ -463,7 +463,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
     ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
   })
-  const gitWorkspace = new GitWorkspaceControl(projectCatalog)
+  const gitWorkspace = new GitWorkspaceControl(projectCatalog, { turnDiffProvider: backend })
   const featureInteractions = new M65InteractionHandler(
     interactions,
     controls,

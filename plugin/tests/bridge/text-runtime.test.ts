@@ -638,6 +638,87 @@ describe('durable text runtime composition', () => {
     ).get()?.state).toBe('COMPLETED')
   })
 
+  test('materializes a busy photo and steers it into the active turn', async () => {
+    runtime.ingest({
+      update_id: 840,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'начни долгую проверку',
+      },
+    }, NOW)
+    const first = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-image-steer' } } })
+    const activeTurn = await waitForRequest(transport, 'turn/start')
+    transport.emit({ id: activeTurn.id, result: { turn: { id: 'turn-image-steer' } } })
+
+    telegram.downloads.set('steer-photo', {
+      bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00]),
+      fileSize: 5,
+      uniqueId: 'steer-photo-u1',
+    })
+    runtime.ingest({
+      update_id: 841,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        caption: 'и вот эту картинку учти',
+        photo: [{
+          file_id: 'steer-photo', file_unique_id: 'steer-photo-u1',
+          width: 800, height: 600, file_size: 5,
+        }],
+      },
+    }, NOW + 1)
+    clockNow = NOW + 2
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    const busy = database.query<{ token: string; state: string }, []>(
+      'SELECT token, state FROM telegram_busy_prompts',
+    ).get()
+    expect(busy).toMatchObject({ state: 'PENDING' })
+    if (busy === null) throw new Error('image busy prompt was not persisted')
+
+    runtime.ingest({
+      update_id: 842,
+      callback_query: {
+        id: 'steer-image', data: `dx:b:${busy.token}:steer`, from: { id: 7001, is_bot: false },
+        message: { message_id: 999, chat: { id: 7001, type: 'private' } },
+      },
+    }, NOW + 3)
+    clockNow = NOW + 4
+    const steering = runtime.processInboundOnce()
+    const steer = await waitForRequest(transport, 'turn/steer')
+    expect(steer).toMatchObject({
+      params: {
+        threadId: 'thread-image-steer',
+        expectedTurnId: 'turn-image-steer',
+        input: [
+          { type: 'text', text: 'и вот эту картинку учти', text_elements: [] },
+          { type: 'localImage', path: expect.stringContaining('/attachments/') },
+        ],
+      },
+    })
+    transport.emit({ id: steer.id, result: { turnId: 'turn-image-steer' } })
+    expect((await steering).outcome).toBe('enqueued')
+    expect(database.query<{ state: string }, []>(
+      'SELECT state FROM telegram_busy_prompts',
+    ).get()?.state).toBe('STEERED')
+
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-image-steer', turnId: 'turn-image-steer',
+        item: { type: 'agentMessage', id: 'steered-answer', text: 'Учёл.', phase: 'final_answer' },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-image-steer',
+        turn: { id: 'turn-image-steer', status: 'completed', items: [] },
+      },
+    })
+    expect((await first).outcome).toBe('enqueued')
+  })
+
   test('downloads a photo durably, sends localImage and journals unknown events', async () => {
     telegram.downloads.set('photo-large', {
       bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00]),

@@ -34,7 +34,15 @@ beforeEach(() => {
   git(workspace, ['commit', '-m', 'initial'])
   git(workspace, ['remote', 'add', 'origin', remote])
   git(workspace, ['push', '--set-upstream', 'origin', 'main'])
-  control = new GitWorkspaceControl([{ id: 'workspace', cwd: workspace }])
+  control = new GitWorkspaceControl([{ id: 'workspace', cwd: workspace }], {
+    turnDiffProvider: {
+      getLatestDiff: (threadId) => ({
+        threadId,
+        turnId: 'turn-1',
+        diff: 'diff --git a/README.md b/README.md',
+      }),
+    },
+  })
 })
 
 afterEach(() => {
@@ -102,7 +110,7 @@ describe('GitWorkspaceControl', () => {
     })
   })
 
-  test('builds an ordered durable card with exact workspace counts and all actions', async () => {
+  test('builds an ordered durable card only for changes from the completed turn', async () => {
     writeFileSync(join(workspace, 'README.md'), 'changed\n')
     writeFileSync(join(workspace, 'new.txt'), 'new\n')
 
@@ -117,16 +125,34 @@ describe('GitWorkspaceControl', () => {
     expect((deliveries[0]?.payload as { text: string }).text).toContain(
       'От HEAD: 2 незакоммиченных файлов',
     )
-    const callbacks = ['commit', 'push', 'commit-push'].map((action) =>
+    const callbacks = ['commit', 'commit-push'].map((action) =>
       callback(deliveries[0]!, action))
     expect(callbacks.every((value) => value.length < 64)).toBeTrue()
     expect((deliveries[0]?.payload as {
       options: { reply_markup: { inline_keyboard: Array<Array<{ text: string }>> } }
     }).options.reply_markup.inline_keyboard.flat().map((button) => button.text)).toEqual([
-      'Commit changes',
-      'Push',
+      'Commit',
       'Commit & push',
     ])
+  })
+
+  test('does not show a card for an answer-only turn in a dirty repository', async () => {
+    writeFileSync(join(workspace, 'README.md'), 'older unrelated change\n')
+    const answerOnly = new GitWorkspaceControl([{ id: 'workspace', cwd: workspace }], {
+      turnDiffProvider: {
+        getLatestDiff: (threadId) => ({
+          threadId,
+          turnId: 'previous-turn',
+          diff: 'diff --git a/README.md b/README.md',
+        }),
+      },
+    })
+
+    expect(await answerOnly.buildTurnCompletionDeliveries(completionInput())).toEqual([])
+  })
+
+  test('does not show a card when matching turn evidence leaves the repository clean', async () => {
+    expect(await control.buildTurnCompletionDeliveries(completionInput())).toEqual([])
   })
 
   test('commits and pushes through snapshot-guarded idempotent actions', async () => {
@@ -143,8 +169,8 @@ describe('GitWorkspaceControl', () => {
     expect(git(workspace, ['rev-list', '--count', '@{upstream}..HEAD']).trim()).toBe('1')
 
     const pushButton = stale.buttons.flat().find((button) =>
-      'callbackData' in button && button.callbackData.endsWith(':push'))
-    if (pushButton === undefined || !('callbackData' in pushButton)) throw new Error('missing push')
+      'callbackData' in button && button.callbackData.endsWith(':commit-push'))
+    if (pushButton === undefined || !('callbackData' in pushButton)) throw new Error('missing commit-push')
     const push = callbackParts(pushButton.callbackData)
     const pushed = await control.handleAction(push.token, push.action)
     expect(pushed.text).toContain('Коммиты запушены')
@@ -164,7 +190,11 @@ describe('GitWorkspaceControl', () => {
   test('ignores non-git projects instead of blocking the final response', async () => {
     const plain = join(root, 'plain')
     mkdirSync(plain)
-    const plainControl = new GitWorkspaceControl([{ id: 'workspace', cwd: plain }])
+    const plainControl = new GitWorkspaceControl([{ id: 'workspace', cwd: plain }], {
+      turnDiffProvider: {
+        getLatestDiff: (threadId) => ({ threadId, turnId: 'turn-1', diff: 'diff --git a/a b/a' }),
+      },
+    })
     expect(await plainControl.buildTurnCompletionDeliveries(completionInput())).toEqual([])
   })
 })

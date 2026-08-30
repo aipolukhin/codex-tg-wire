@@ -882,12 +882,23 @@ describe('CodexAppServerBackend text turns', () => {
       threadId: 'thread-1',
       turnId: 'turn-1',
       text: 'сначала запусти unit tests',
+      attachments: [{
+        kind: 'image',
+        path: '/srv/workspace/mockup.jpg',
+        fileName: 'mockup.jpg',
+        mimeType: 'image/jpeg',
+        size: 42,
+        sha256: 'a'.repeat(64),
+      }],
     })
     expect(client.steers).toEqual([{
       threadId: 'thread-1',
       expectedTurnId: 'turn-1',
       clientUserMessageId: 'telegram:primary:502:turn:command:steer',
-      input: [{ type: 'text', text: 'сначала запусти unit tests', text_elements: [] }],
+      input: [
+        { type: 'text', text: 'сначала запусти unit tests', text_elements: [] },
+        { type: 'localImage', path: '/srv/workspace/mockup.jpg' },
+      ],
     }])
     await expect(backend.steerTurn({
       operationKey: 'bad',

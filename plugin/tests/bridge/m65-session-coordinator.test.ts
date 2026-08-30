@@ -122,7 +122,17 @@ describe('M6.5 session control plane', () => {
       delegate, sessions, settings, controls, undefined, () => NOW + 1,
     )
 
-    const incoming = operation(201)
+    const incoming = {
+      ...operation(201),
+      attachments: [{
+        kind: 'image' as const,
+        path: '/srv/workspace/mockup.jpg',
+        fileName: 'mockup.jpg',
+        mimeType: 'image/jpeg',
+        size: 42,
+        sha256: 'a'.repeat(64),
+      }],
+    }
     const result = await coordinator.runTextTurn(incoming)
     expect(delegate.calls).toHaveLength(0)
     expect(result).toMatchObject({
@@ -131,10 +141,12 @@ describe('M6.5 session control plane', () => {
       presentation: 'busy_choice',
     })
     expect(result.buttons?.flat().map((button) => button.text)).toContain('🕒 В очередь')
+    expect(result.buttons?.flat().map((button) => button.text)).toContain('↪️ Steer сейчас')
     expect(controls.getBusyBySource(incoming.operationKey)).toMatchObject({
       state: 'PENDING',
       blockingThreadId: 'thread-busy',
       blockingTurnId: 'turn-busy',
+      input: { attachments: [{ kind: 'image', path: '/srv/workspace/mockup.jpg' }] },
     })
 
     const replay = new M65SessionCoordinator(

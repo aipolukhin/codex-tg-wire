@@ -23,9 +23,9 @@ function planCard(token: string): NonNullable<TextTurnResult['buttons']> {
   ]
 }
 
-function busyCard(token: string, canSteer: boolean): NonNullable<TextTurnResult['buttons']> {
+function busyCard(token: string): NonNullable<TextTurnResult['buttons']> {
   return [
-    ...(canSteer ? [[{ text: '↪️ Steer сейчас', callbackData: `dx:b:${token}:steer` }]] : []),
+    [{ text: '↪️ Steer сейчас', callbackData: `dx:b:${token}:steer` }],
     [
       { text: '🕒 В очередь', callbackData: `dx:b:${token}:queue` },
       { text: '⏹ Stop & replace', callbackData: `dx:b:${token}:replace` },
@@ -110,7 +110,7 @@ export class M65SessionCoordinator implements SessionCoordinator {
       threadId: prompt.blockingThreadId,
       turnId: prompt.blockingTurnId,
       finalText: 'Codex уже выполняет turn. Что сделать с новым сообщением?',
-      buttons: busyCard(prompt.token, (prompt.input.attachments?.length ?? 0) === 0),
+      buttons: busyCard(prompt.token),
       presentation: 'busy_choice',
     }
   }

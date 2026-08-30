@@ -216,6 +216,8 @@ export class M65InteractionHandler implements InteractionHandler {
         threadId: prompt.blockingThreadId,
         turnId: prompt.blockingTurnId,
         text: prompt.input.text,
+        ...(prompt.input.attachments === undefined ? {} : { attachments: prompt.input.attachments }),
+        ...(prompt.input.quote === undefined ? {} : { quote: prompt.input.quote }),
       })
       this.controls.completeBusy(prompt.id, 'STEERED', null, this.now())
       return this.editAndAck(operation, response, '↪️ Уточнение отправлено в активный turn.', 'Steer отправлен')

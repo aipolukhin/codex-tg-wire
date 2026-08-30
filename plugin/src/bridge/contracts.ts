@@ -484,6 +484,8 @@ export interface AgentBackend {
     threadId: string
     turnId: string
     text: string
+    attachments?: readonly AgentLocalAttachment[]
+    quote?: IncomingTextQuote
   }): Promise<void>
   readAccount?(): Promise<AgentAccountSnapshot>
   startDeviceLogin?(): Promise<AgentDeviceLogin>

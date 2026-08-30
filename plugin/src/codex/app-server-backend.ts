@@ -8,6 +8,7 @@ import type {
   AgentDeviceLogin,
   AgentExecutionPolicy,
   AgentEventDiagnostics,
+  AgentLocalAttachment,
   AgentModel,
   AgentNativeThread,
   AgentRateLimit,
@@ -22,6 +23,7 @@ import type {
   AgentTurnDiff,
   AgentTurnLifecycle,
   AgentUsageSnapshot,
+  IncomingTextQuote,
   TextTurnResult,
 } from '../bridge/contracts.js'
 import { AppServerClosedError, type CodexAppServerClient } from './app-server-client.js'
@@ -202,7 +204,7 @@ function sandboxPolicy(mode: AgentSandboxMode, executionPolicy?: AgentExecutionP
   }
 }
 
-function turnInputs(input: AgentTextTurnInput): UserInput[] {
+function turnInputs(input: Pick<AgentTextTurnInput, 'text' | 'attachments' | 'quote'>): UserInput[] {
   const values: UserInput[] = []
   const text = input.quote === undefined
     ? input.text
@@ -900,6 +902,8 @@ export class CodexAppServerBackend implements AgentBackend {
     threadId: string
     turnId: string
     text: string
+    attachments?: readonly AgentLocalAttachment[]
+    quote?: IncomingTextQuote
   }): Promise<void> {
     const pending = this.pendingByThread.get(input.threadId)
     if (pending === undefined || pending.turnId !== input.turnId) {
@@ -909,7 +913,7 @@ export class CodexAppServerBackend implements AgentBackend {
       threadId: input.threadId,
       expectedTurnId: input.turnId,
       clientUserMessageId: input.operationKey,
-      input: [textInput(input.text)],
+      input: turnInputs(input),
     })
     if (result.turnId !== input.turnId) {
       throw new CodexTurnProtocolError(

@@ -47,6 +47,15 @@ export interface GitWorkspaceController extends TurnCompletionReporter {
   handleAction(snapshot: string, actionSpec: string): Promise<GitWorkspaceActionResult>
 }
 
+export interface GitTurnDiffProvider {
+  getLatestDiff(threadId: string): { turnId: string; diff: string } | null
+}
+
+export interface GitWorkspaceControlOptions {
+  runner?: GitCommandRunner
+  turnDiffProvider?: GitTurnDiffProvider
+}
+
 export function sanitizedGitEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
@@ -186,13 +195,10 @@ function renderStatus(status: GitWorkspaceStatus, notice?: string): string {
 
 function actionButtons(status: GitWorkspaceStatus): readonly (readonly CommandButton[])[] {
   const prefix = `dx:g:${status.snapshotToken}:${status.projectIndex}`
-  return [
-    [
-      { text: 'Commit changes', callbackData: `${prefix}:commit` },
-      { text: 'Push', callbackData: `${prefix}:push` },
-    ],
-    [{ text: 'Commit & push', callbackData: `${prefix}:commit-push` }],
-  ]
+  return [[
+    { text: 'Commit', callbackData: `${prefix}:commit` },
+    { text: 'Commit & push', callbackData: `${prefix}:commit-push` },
+  ]]
 }
 
 function keyboard(buttons: readonly (readonly CommandButton[])[]): unknown {
@@ -209,12 +215,16 @@ function keyboard(buttons: readonly (readonly CommandButton[])[]): unknown {
 
 export class GitWorkspaceControl implements GitWorkspaceController {
   private readonly projects: ProjectCatalog
+  private readonly runner: GitCommandRunner
+  private readonly turnDiffProvider: GitTurnDiffProvider | undefined
 
   constructor(
     projects: readonly ProjectDefinition[] | ProjectCatalog,
-    private readonly runner: GitCommandRunner = new ProcessGitCommandRunner(),
+    options: GitWorkspaceControlOptions = {},
   ) {
     this.projects = 'list' in projects ? projects : new StaticProjectCatalog(projects)
+    this.runner = options.runner ?? new ProcessGitCommandRunner()
+    this.turnDiffProvider = options.turnDiffProvider
     const initial = this.projects.list()
     if (initial.length === 0 || initial.length > 100) {
       throw new TypeError('git workspace control requires 1 to 100 projects')
@@ -232,6 +242,13 @@ export class GitWorkspaceControl implements GitWorkspaceController {
   async buildTurnCompletionDeliveries(
     input: FinalArtifactDelivery,
   ): Promise<readonly DeliveryJobInput[]> {
+    const turnDiff = this.turnDiffProvider?.getLatestDiff(input.result.threadId)
+    if (
+      turnDiff === undefined ||
+      turnDiff === null ||
+      turnDiff.turnId !== input.result.turnId ||
+      turnDiff.diff.trim().length === 0
+    ) return []
     let status: GitWorkspaceStatus | null
     try {
       status = await this.inspectProject(input.message.projectId)
@@ -249,7 +266,7 @@ export class GitWorkspaceControl implements GitWorkspaceController {
         createdAtMs: input.nowMs,
       }]
     }
-    if (status === null) return []
+    if (status === null || status.changedFiles === 0) return []
     const buttons = actionButtons(status)
     return [{
       sourceKey: input.sourceKey,

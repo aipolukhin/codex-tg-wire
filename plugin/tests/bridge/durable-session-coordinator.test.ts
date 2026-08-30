@@ -400,6 +400,36 @@ describe('DurableSessionCoordinator', () => {
 })
 
 describe('PersonalAlphaCommands', () => {
+  test('/status separates the latest call, cache and cumulative thread usage', async () => {
+    const telemetryCommands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
+      now: () => nowMs,
+      projects: [{ id: 'workspace', cwd: '/srv/workspace' }],
+      defaultProjectId: 'workspace',
+      uxStatus: {
+        getStatus: () => ({
+          phase: 'COMPLETED',
+          activity: 'working',
+          planCompleted: 0,
+          planTotal: 0,
+          totalTokens: 16_395,
+          inputTokens: 16_379,
+          cachedInputTokens: 15_104,
+          outputTokens: 16,
+          threadTotalTokens: 63_296,
+          contextWindow: 258_400,
+          updatedAtMs: nowMs,
+        }),
+      },
+    })
+
+    const status = (await telemetryCommands.handleCommand(command('status'))).text
+    expect(status).toContain('Последний model call: 16395 токенов')
+    expect(status).toContain('Вход: 16379 · cached 15104 · new 1275')
+    expect(status).toContain('Окно модели: 16379 / 258400 (6%)')
+    expect(status).toContain('Thread cumulative: 63296')
+    expect(status).not.toContain('Контекст: 63296')
+  })
+
   test('renders help/status and resets a completed thread', async () => {
     expect((await commands.handleCommand(command('start'))).text).toContain('Codex готов')
     expect((await commands.handleCommand(command('status'))).text).toContain('Thread ещё не создан')

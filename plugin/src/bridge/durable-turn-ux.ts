@@ -36,7 +36,9 @@ interface UxRow {
   plan_total: number
   total_tokens: number | null
   input_tokens: number | null
+  cached_input_tokens: number | null
   output_tokens: number | null
+  thread_total_tokens: number | null
   context_window: number | null
   last_activity_at_ms: number
   last_heartbeat_at_ms: number | null
@@ -89,13 +91,22 @@ function formatTokens(value: number): string {
   return `${(value / 1_000_000).toFixed(1)}m`
 }
 
-function contextLine(row: UxRow): string | null {
-  if (row.total_tokens === null) return null
-  if (row.context_window === null || row.context_window === 0) {
-    return `Контекст: ${formatTokens(row.total_tokens)} tokens`
+function usageLines(row: UxRow): string[] {
+  const lines: string[] = []
+  if (row.total_tokens !== null) lines.push(`Последний вызов: ${formatTokens(row.total_tokens)} tokens`)
+  if (row.input_tokens !== null) {
+    const cached = Math.min(row.input_tokens, row.cached_input_tokens ?? 0)
+    const uncached = row.input_tokens - cached
+    lines.push(`Вход: ${formatTokens(row.input_tokens)} · cached ${formatTokens(cached)} · new ${formatTokens(uncached)}`)
+    if (row.context_window !== null && row.context_window > 0) {
+      const percent = Math.min(999, Math.round((row.input_tokens / row.context_window) * 100))
+      lines.push(`Окно модели: ${formatTokens(row.input_tokens)} / ${formatTokens(row.context_window)} · ${percent}%`)
+    }
   }
-  const percent = Math.min(999, Math.round((row.total_tokens / row.context_window) * 100))
-  return `Контекст: ${formatTokens(row.total_tokens)} / ${formatTokens(row.context_window)} · ${percent}%`
+  if (row.thread_total_tokens !== null) {
+    lines.push(`Thread cumulative: ${formatTokens(row.thread_total_tokens)}`)
+  }
+  return lines
 }
 
 function render(row: UxRow, nowMs: number): string {
@@ -106,8 +117,7 @@ function render(row: UxRow, nowMs: number): string {
     `Активность: ${ACTIVITY_LABELS[row.activity]}`,
   ]
   if (row.plan_total > 0) lines.push(`План: ${row.plan_completed}/${row.plan_total}`)
-  const usage = contextLine(row)
-  if (usage !== null) lines.push(usage)
+  lines.push(...usageLines(row))
   const model = row.model ?? 'default'
   const effort = row.effort ?? 'default'
   lines.push(`Model: <code>${escapeHtml(model)}</code> · effort: <code>${escapeHtml(effort)}</code>`)
@@ -130,6 +140,10 @@ function snapshot(row: UxRow): AgentUxStatusSnapshot {
     planCompleted: row.plan_completed,
     planTotal: row.plan_total,
     totalTokens: row.total_tokens,
+    inputTokens: row.input_tokens,
+    cachedInputTokens: row.cached_input_tokens,
+    outputTokens: row.output_tokens,
+    threadTotalTokens: row.thread_total_tokens,
     contextWindow: row.context_window,
     updatedAtMs: row.updated_at_ms,
   }
@@ -263,12 +277,14 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
         row.activity = 'planning'
         return changed
       }
-      const previousBucket = this.usageBucket(row.total_tokens, row.context_window)
+      const previousBucket = this.usageBucket(row.input_tokens, row.context_window)
       row.total_tokens = progress.totalTokens
       row.input_tokens = progress.inputTokens
+      row.cached_input_tokens = progress.cachedInputTokens
       row.output_tokens = progress.outputTokens
+      row.thread_total_tokens = progress.threadTotalTokens
       row.context_window = progress.contextWindow
-      const nextBucket = this.usageBucket(row.total_tokens, row.context_window)
+      const nextBucket = this.usageBucket(row.input_tokens, row.context_window)
       return previousBucket === null || previousBucket !== nextBucket
     })
   }
@@ -392,7 +408,8 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
       `UPDATE codex_turn_ux SET
          thread_id = ?, turn_id = ?, tail_source_key = ?, revision = ?, phase = ?,
          activity = ?, plan_completed = ?, plan_total = ?, total_tokens = ?,
-         input_tokens = ?, output_tokens = ?, context_window = ?,
+         input_tokens = ?, cached_input_tokens = ?, output_tokens = ?,
+         thread_total_tokens = ?, context_window = ?,
          last_activity_at_ms = ?, last_heartbeat_at_ms = ?, updated_at_ms = ?
        WHERE operation_key = ?`,
       [
@@ -406,7 +423,9 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
         row.plan_total,
         row.total_tokens,
         row.input_tokens,
+        row.cached_input_tokens,
         row.output_tokens,
+        row.thread_total_tokens,
         row.context_window,
         row.last_activity_at_ms,
         row.last_heartbeat_at_ms,

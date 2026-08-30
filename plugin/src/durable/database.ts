@@ -566,6 +566,19 @@ const MIGRATIONS: readonly Migration[] = [
         ON guided_plans (state, updated_at_ms)`,
     ],
   },
+  {
+    version: 18,
+    name: 'accurate_codex_token_usage',
+    statements: [
+      'ALTER TABLE codex_turn_ux ADD COLUMN cached_input_tokens INTEGER CHECK (cached_input_tokens IS NULL OR cached_input_tokens >= 0)',
+      'ALTER TABLE codex_turn_ux ADD COLUMN thread_total_tokens INTEGER CHECK (thread_total_tokens IS NULL OR thread_total_tokens >= 0)',
+      `UPDATE codex_turn_ux SET
+        thread_total_tokens = total_tokens,
+        total_tokens = NULL,
+        input_tokens = NULL,
+        output_tokens = NULL`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

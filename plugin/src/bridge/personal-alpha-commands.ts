@@ -369,7 +369,20 @@ export class PersonalAlphaCommands implements CommandHandler {
           ...(ux.planTotal > 0 ? [`План: ${ux.planCompleted}/${ux.planTotal}`] : []),
           ...(ux.totalTokens === null
             ? []
-            : [`Контекст: ${ux.totalTokens}${ux.contextWindow === null ? '' : ` / ${ux.contextWindow}`}`]),
+            : [`Последний model call: ${ux.totalTokens} токенов`]),
+          ...(ux.inputTokens === null
+            ? []
+            : [
+                `Вход: ${ux.inputTokens} · cached ${ux.cachedInputTokens ?? 0}` +
+                  ` · new ${Math.max(0, ux.inputTokens - (ux.cachedInputTokens ?? 0))}`,
+                ...(ux.contextWindow === null || ux.contextWindow === 0
+                  ? []
+                  : [`Окно модели: ${ux.inputTokens} / ${ux.contextWindow}` +
+                    ` (${Math.min(999, Math.round((ux.inputTokens / ux.contextWindow) * 100))}%)`]),
+              ]),
+          ...(ux.threadTotalTokens === null
+            ? []
+            : [`Thread cumulative: ${ux.threadTotalTokens}`]),
         ]
     if (overview.session === null) {
       return [

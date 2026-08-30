@@ -64,7 +64,8 @@ describe('DurableTurnUxProjector', () => {
     })
     ux.onProgress(operation, {
       kind: 'usage', threadId: 'thread-private-but-opaque', turnId: 'turn-1',
-      totalTokens: 4_000, inputTokens: 3_000, outputTokens: 1_000,
+      totalTokens: 4_000, inputTokens: 3_000, cachedInputTokens: 2_500,
+      outputTokens: 1_000, threadTotalTokens: 12_000,
       contextWindow: 20_000, atMs: nowMs,
     })
     nowMs += 61_000
@@ -78,6 +79,9 @@ describe('DurableTurnUxProjector', () => {
       planCompleted: 1,
       planTotal: 3,
       totalTokens: 4_000,
+      inputTokens: 3_000,
+      cachedInputTokens: 2_500,
+      threadTotalTokens: 12_000,
       contextWindow: 20_000,
     })
     const persisted = database.query<Record<string, unknown>, []>(
@@ -138,7 +142,8 @@ describe('DurableTurnUxProjector', () => {
     ux.onTurnStarted(operation, 'thread-1', 'turn-1')
     ux.onProgress(operation, {
       kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
-      totalTokens: 4_000, inputTokens: 3_000, outputTokens: 1_000,
+      totalTokens: 4_000, inputTokens: 3_000, cachedInputTokens: 2_500,
+      outputTokens: 1_000, threadTotalTokens: 12_000,
       contextWindow: 20_000, atMs: nowMs,
     })
     ux.onCompleted(operation, { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' })
@@ -146,6 +151,9 @@ describe('DurableTurnUxProjector', () => {
     expect(ux.getStatus('primary', '7001', 'workspace')).toMatchObject({
       phase: 'COMPLETED',
       totalTokens: 4_000,
+      inputTokens: 3_000,
+      cachedInputTokens: 2_500,
+      threadTotalTokens: 12_000,
       contextWindow: 20_000,
     })
     expect(database.query<{ count: number }, []>(

@@ -301,7 +301,9 @@ describe('CodexAppServerBackend text turns', () => {
         turnId: 'turn-1',
         tokenUsage: {
           total: { totalTokens: 1200, inputTokens: 900, outputTokens: 300 },
-          last: { totalTokens: 200, inputTokens: 150, outputTokens: 50 },
+          last: {
+            totalTokens: 200, inputTokens: 150, cachedInputTokens: 120, outputTokens: 50,
+          },
           modelContextWindow: 10_000,
         },
       },
@@ -320,7 +322,8 @@ describe('CodexAppServerBackend text turns', () => {
       },
       {
         kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
-        totalTokens: 1200, inputTokens: 900, outputTokens: 300,
+        totalTokens: 200, inputTokens: 150, cachedInputTokens: 120, outputTokens: 50,
+        threadTotalTokens: 1200,
         contextWindow: 10_000, atMs: expect.any(Number),
       },
     ])

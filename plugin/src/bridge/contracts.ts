@@ -379,9 +379,13 @@ export type AgentTurnProgress =
       kind: 'usage'
       threadId: string
       turnId: string
+      /** Tokens used by the latest model call, not the cumulative thread counter. */
       totalTokens: number
       inputTokens: number
+      cachedInputTokens: number
       outputTokens: number
+      /** Monotonic usage counter for the whole native Codex thread. */
+      threadTotalTokens: number
       contextWindow: number | null
       atMs: number
     }
@@ -405,6 +409,10 @@ export interface AgentUxStatusSnapshot {
   planCompleted: number
   planTotal: number
   totalTokens: number | null
+  inputTokens: number | null
+  cachedInputTokens: number | null
+  outputTokens: number | null
+  threadTotalTokens: number | null
   contextWindow: number | null
   updatedAtMs: number
 }

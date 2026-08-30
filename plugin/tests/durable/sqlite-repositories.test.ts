@@ -78,7 +78,55 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(17)
+    expect(migrations?.count).toBe(18)
+  })
+
+  test('migrates cumulative HUD totals without relabelling them as current context', () => {
+    const legacyFilename = join(root, 'legacy-v17-token-usage.sqlite3')
+    const legacy = new Database(legacyFilename, { create: true })
+    legacy.run(`CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at_ms INTEGER NOT NULL
+    )`)
+    for (let version = 1; version <= 17; version += 1) {
+      legacy.run(
+        'INSERT INTO schema_migrations (version, name, applied_at_ms) VALUES (?, ?, ?)',
+        [version, `legacy-${version}`, NOW],
+      )
+    }
+    legacy.run(`CREATE TABLE codex_turn_ux (
+      operation_key TEXT PRIMARY KEY,
+      total_tokens INTEGER,
+      input_tokens INTEGER,
+      output_tokens INTEGER
+    )`)
+    legacy.run(
+      `INSERT INTO codex_turn_ux
+        (operation_key, total_tokens, input_tokens, output_tokens)
+       VALUES ('turn-1', 63296, 63138, 158)`,
+    )
+    legacy.close()
+
+    const upgraded = openDurableDatabase(legacyFilename)
+    expect(upgraded.query<{
+      total_tokens: number | null
+      input_tokens: number | null
+      output_tokens: number | null
+      cached_input_tokens: number | null
+      thread_total_tokens: number | null
+    }, []>(
+      `SELECT total_tokens, input_tokens, output_tokens,
+         cached_input_tokens, thread_total_tokens
+       FROM codex_turn_ux WHERE operation_key = 'turn-1'`,
+    ).get()).toEqual({
+      total_tokens: null,
+      input_tokens: null,
+      output_tokens: null,
+      cached_input_tokens: null,
+      thread_total_tokens: 63_296,
+    })
+    upgraded.close()
   })
 
   test('backfills an existing v6 binding into the thread registry', () => {

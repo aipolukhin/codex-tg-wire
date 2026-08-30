@@ -384,17 +384,25 @@ function parseTurnProgress(notification: ServerNotification): AgentTurnProgress 
     return null
   }
   const total = params.tokenUsage.total
-  if (!isRecord(total)) return null
-  const totalTokens = nonNegativeInteger(total.totalTokens)
-  const inputTokens = nonNegativeInteger(total.inputTokens)
-  const outputTokens = nonNegativeInteger(total.outputTokens)
-  if (totalTokens === null || inputTokens === null || outputTokens === null) return null
+  const last = params.tokenUsage.last
+  if (!isRecord(total) || !isRecord(last)) return null
+  const threadTotalTokens = nonNegativeInteger(total.totalTokens)
+  const totalTokens = nonNegativeInteger(last.totalTokens)
+  const inputTokens = nonNegativeInteger(last.inputTokens)
+  const cachedInputTokens = nonNegativeInteger(last.cachedInputTokens) ?? 0
+  const outputTokens = nonNegativeInteger(last.outputTokens)
+  if (
+    threadTotalTokens === null || totalTokens === null || inputTokens === null ||
+    outputTokens === null || cachedInputTokens > inputTokens
+  ) return null
   return {
     kind: 'usage',
     ...correlation,
     totalTokens,
     inputTokens,
+    cachedInputTokens,
     outputTokens,
+    threadTotalTokens,
     contextWindow: nonNegativeInteger(params.tokenUsage.modelContextWindow),
     atMs: Date.now(),
   }

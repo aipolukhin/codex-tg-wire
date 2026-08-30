@@ -24,11 +24,16 @@ import { SqliteAgentSettingsRepository } from '../durable/settings-repository.js
 import type { SqliteSessionRepository } from '../durable/session-repository.js'
 import type { DurableOutboundMediaStore } from '../telegram/durable-outbound-media.js'
 import type { VoiceCredentialControl } from './voice-credentials.js'
+import {
+  StaticProjectCatalog,
+  type ProjectCatalog,
+} from './durable-project-catalog.js'
 
 export interface PersonalAlphaCommandsOptions {
   backendName?: string
   now?: () => number
   projects: readonly { id: string; cwd: string }[]
+  projectCatalog?: ProjectCatalog
   defaultProjectId: string
   defaultApprovalPolicy?: AgentApprovalPolicy
   defaultSandbox?: AgentSandboxMode
@@ -94,7 +99,7 @@ function diffForPath(diff: string, requested: string): string {
 export class PersonalAlphaCommands implements CommandHandler {
   private readonly backendName: string
   private readonly now: () => number
-  private readonly projects: ReadonlyMap<string, { id: string; cwd: string }>
+  private readonly projects: ProjectCatalog
   private readonly defaultProjectId: string
   private readonly defaultApprovalPolicy: AgentApprovalPolicy
   private readonly defaultSandbox: AgentSandboxMode
@@ -114,7 +119,7 @@ export class PersonalAlphaCommands implements CommandHandler {
   ) {
     this.backendName = options.backendName ?? 'codex'
     this.now = options.now ?? Date.now
-    this.projects = new Map(options.projects.map((project) => [project.id, project]))
+    this.projects = options.projectCatalog ?? new StaticProjectCatalog(options.projects)
     this.defaultProjectId = options.defaultProjectId
     this.defaultApprovalPolicy = options.defaultApprovalPolicy ?? 'on-request'
     this.defaultSandbox = options.defaultSandbox ?? 'workspace-write'
@@ -126,7 +131,7 @@ export class PersonalAlphaCommands implements CommandHandler {
     this.codexVersion = options.codexVersion ?? 'unknown'
     this.outboundMediaStore = options.outboundMediaStore
     this.voiceCredentials = options.voiceCredentials
-    if (!this.projects.has(this.defaultProjectId)) {
+    if (this.projects.resolve(this.defaultProjectId) === null) {
       throw new TypeError(`default project is not configured: ${this.defaultProjectId}`)
     }
     if (!this.allowedSandboxModes.has(this.defaultSandbox)) {
@@ -171,7 +176,7 @@ export class PersonalAlphaCommands implements CommandHandler {
       case 'approval':
         return { text: this.approval(operation) }
       case 'cwd':
-        return { text: this.cwd(operation) }
+        return { text: await this.cwd(operation) }
       case 'settings':
         return this.settingsPanel(operation)
       case 'auth':
@@ -821,7 +826,7 @@ export class PersonalAlphaCommands implements CommandHandler {
     return `Approval policy для проекта ${operation.command.projectId}: ${requested}.`
   }
 
-  private cwd(operation: CommandOperation): string {
+  private async cwd(operation: CommandOperation): Promise<string> {
     const requested = operation.command.args.trim()
     const selected = this.settings.getSelectedProject(
       operation.botId,
@@ -830,15 +835,16 @@ export class PersonalAlphaCommands implements CommandHandler {
     if (requested.length === 0) {
       return [
         `Текущий проект: ${selected}`,
-        ...[...this.projects.values()].map(
+        ...this.projects.list().map(
           (project) => `${project.id === selected ? '●' : '○'} ${project.id}`,
         ),
-        '/cwd <project-id>',
+        this.projects.dynamicRegistrationEnabled
+          ? '/cwd <project-id или абсолютный путь>'
+          : '/cwd <project-id>',
       ].join('\n')
     }
-    const project = this.projects.get(requested)
-    if (project === undefined) return `Проект ${requested} не разрешён. Используй /cwd.`
-    if (project.id === selected) return `Проект ${project.id} уже выбран.`
+    const known = this.projects.resolve(requested)
+    if (known?.id === selected) return `Проект ${known.id} уже выбран.`
     const overview = this.sessions.getOverview(
       operation.botId,
       operation.command.chatId,
@@ -848,13 +854,39 @@ export class PersonalAlphaCommands implements CommandHandler {
     if (overview.activeTurn !== null) {
       return `Нельзя сменить проект: turn ${overview.activeTurn.backendTurnId ?? overview.activeTurn.id} имеет состояние ${overview.activeTurn.state}.`
     }
+    const registration = known === null
+      ? await this.projects.resolveOrRegister(requested)
+      : { outcome: 'existing' as const, project: known }
+    if (registration.outcome === 'disabled') {
+      return `Проект ${requested} не разрешён. Используй /cwd.`
+    }
+    if (registration.outcome === 'not_found') {
+      return `Проект ${requested} не найден. Укажи имя каталога рядом с настроенными проектами или абсолютный путь.`
+    }
+    if (registration.outcome === 'ambiguous') {
+      return `Найдено несколько каталогов. Укажи абсолютный путь:\n${registration.details ?? ''}`
+    }
+    if (registration.outcome === 'conflict') {
+      return `Имя проекта уже занято другим каталогом: ${registration.details ?? requested}. Укажи другой зарегистрированный project-id.`
+    }
+    if (registration.outcome === 'invalid') {
+      return 'Не удалось получить безопасный project-id. Имя каталога может содержать буквы, цифры, точку, дефис и подчёркивание.'
+    }
+    if (registration.outcome === 'full') return 'Достигнут лимит в 100 проектов.'
+    if (registration.outcome !== 'existing' && registration.outcome !== 'registered') {
+      return 'Не удалось зарегистрировать проект.'
+    }
+    const project = registration.project
+    if (project.id === selected) return `Проект ${project.id} уже выбран.`
     this.settings.selectProject(
       operation.botId,
       operation.command.chatId,
       project.id,
       this.now(),
     )
-    return `Текущий проект: ${project.id}. Следующее сообщение использует разрешённый cwd этого проекта.`
+    return registration.outcome === 'registered'
+      ? `Проект ${project.id} зарегистрирован: ${project.cwd}\nТекущий проект: ${project.id}.`
+      : `Текущий проект: ${project.id}. Следующее сообщение использует cwd этого проекта.`
   }
 
   private settingsPanel(operation: CommandOperation): CommandResult {
@@ -963,8 +995,8 @@ export class PersonalAlphaCommands implements CommandHandler {
       }
       if (category === 'cwd') {
         return {
-          text: 'Выбери разрешённый проект:',
-          buttons: [...this.projects.values()].map((project, index) => [{
+          text: 'Выбери проект:',
+          buttons: this.projects.list().map((project, index) => [{
             text: project.id,
             callbackData: `dx:s:set:cwd:${index}`,
           }]),
@@ -1032,7 +1064,7 @@ export class PersonalAlphaCommands implements CommandHandler {
         { approvalPolicy: rawIndex as AgentApprovalPolicy }, this.now(),
       )
     } else if (category === 'cwd') {
-      const project = [...this.projects.values()][Number.parseInt(rawIndex, 10)]
+      const project = this.projects.list()[Number.parseInt(rawIndex, 10)]
       if (project === undefined) return { text: 'Project list изменилась. Открой /settings снова.' }
       const overview = this.sessions.getOverview(
         input.botId, input.chatId, input.projectId, this.backendName,
@@ -1159,8 +1191,8 @@ export class PersonalAlphaCommands implements CommandHandler {
     const tokens = operation.command.args.trim().split(/\s+/).filter(Boolean)
     const archived = tokens[0]?.toLowerCase() === 'archived'
     if (archived) tokens.shift()
-    const project = this.projects.get(operation.command.projectId)
-    if (project === undefined) return 'Текущий проект не разрешён.'
+    const project = this.projects.resolve(operation.command.projectId)
+    if (project === null) return 'Текущий проект не разрешён.'
     const threads = await this.backend.listNativeThreads({
       cwd: [project.cwd],
       archived,
@@ -1181,8 +1213,8 @@ export class PersonalAlphaCommands implements CommandHandler {
 
   private async findNativeThread(operation: CommandOperation, threadId: string) {
     if (this.backend.listNativeThreads === undefined) return null
-    const project = this.projects.get(operation.command.projectId)
-    if (project === undefined) return null
+    const project = this.projects.resolve(operation.command.projectId)
+    if (project === null) return null
     for (const archived of [false, true]) {
       const threads = await this.backend.listNativeThreads({
         cwd: [project.cwd], archived,
@@ -1223,8 +1255,8 @@ export class PersonalAlphaCommands implements CommandHandler {
       this.backendName,
     )
     if (overview.binding === null) return 'Сначала создай или подключи thread.'
-    const project = this.projects.get(operation.command.projectId)
-    if (project === undefined) return 'Текущий проект не разрешён.'
+    const project = this.projects.resolve(operation.command.projectId)
+    if (project === null) return 'Текущий проект не разрешён.'
     return `Продолжить локально:\ncd -- ${shellQuote(project.cwd)} && codex resume ${shellQuote(overview.binding.threadId)}`
   }
 
@@ -1266,8 +1298,8 @@ export class PersonalAlphaCommands implements CommandHandler {
     if (threadId.length === 0 || /\s/.test(threadId)) return 'Использование: /fork <thread-id>'
     const thread = await this.findNativeThread(operation, threadId)
     if (thread === null || thread.archived) return `Активный thread ${threadId} не найден в разрешённом cwd.`
-    const project = this.projects.get(operation.command.projectId)
-    if (project === undefined) return 'Текущий проект не разрешён.'
+    const project = this.projects.resolve(operation.command.projectId)
+    if (project === null) return 'Текущий проект не разрешён.'
     const forked = await this.backend.forkNativeThread(threadId, project.cwd)
     const attached = this.sessions.attachExternalThread(
       operation.botId,
@@ -1318,8 +1350,8 @@ export class PersonalAlphaCommands implements CommandHandler {
   }
 
   private async resolveProjectFile(operation: CommandOperation, path: string): Promise<string> {
-    const project = this.projects.get(operation.command.projectId)
-    if (project === undefined) throw new SafeProjectFileError('Текущий проект не разрешён.')
+    const project = this.projects.resolve(operation.command.projectId)
+    if (project === null) throw new SafeProjectFileError('Текущий проект не разрешён.')
     const root = await realpath(project.cwd)
     const unresolved = resolve(root, path)
     if (!inside(root, unresolved)) {

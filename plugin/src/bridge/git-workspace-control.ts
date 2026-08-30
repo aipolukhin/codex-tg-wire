@@ -9,6 +9,7 @@ import type {
   TurnCompletionReporter,
 } from './contracts.js'
 import type { ProjectDefinition } from './durable-session-coordinator.js'
+import { StaticProjectCatalog, type ProjectCatalog } from './durable-project-catalog.js'
 
 const GIT_TIMEOUT_MS = 120_000
 const GIT_OUTPUT_LIMIT = 4 * 1_024 * 1_024
@@ -207,24 +208,25 @@ function keyboard(buttons: readonly (readonly CommandButton[])[]): unknown {
 }
 
 export class GitWorkspaceControl implements GitWorkspaceController {
-  private readonly projects: readonly ProjectDefinition[]
-  private readonly byId: ReadonlyMap<string, ProjectDefinition>
+  private readonly projects: ProjectCatalog
 
   constructor(
-    projects: readonly ProjectDefinition[],
+    projects: readonly ProjectDefinition[] | ProjectCatalog,
     private readonly runner: GitCommandRunner = new ProcessGitCommandRunner(),
   ) {
-    if (projects.length === 0 || projects.length > 100) {
+    this.projects = 'list' in projects ? projects : new StaticProjectCatalog(projects)
+    const initial = this.projects.list()
+    if (initial.length === 0 || initial.length > 100) {
       throw new TypeError('git workspace control requires 1 to 100 projects')
     }
-    for (const project of projects) {
+    for (const project of initial) {
       if (project.id.trim().length === 0 || !isAbsolute(project.cwd)) {
         throw new TypeError('git workspace projects require an id and absolute cwd')
       }
     }
-    this.projects = [...projects]
-    this.byId = new Map(projects.map((project) => [project.id, project]))
-    if (this.byId.size !== projects.length) throw new TypeError('git workspace project ids must be unique')
+    if (new Set(initial.map((project) => project.id)).size !== initial.length) {
+      throw new TypeError('git workspace project ids must be unique')
+    }
   }
 
   async buildTurnCompletionDeliveries(
@@ -274,7 +276,7 @@ export class GitWorkspaceControl implements GitWorkspaceController {
     }
     const projectIndex = Number.parseInt(parsed[1], 10)
     const action = parsed[2] as GitWorkspaceAction
-    const project = this.projects[projectIndex]
+    const project = this.projects.list()[projectIndex]
     if (project === undefined || !PROJECT_INDEX.test(parsed[1])) {
       return { text: '⚠️ Проект для Git-действия не найден.', buttons: [] }
     }
@@ -355,9 +357,11 @@ export class GitWorkspaceControl implements GitWorkspaceController {
   }
 
   private async inspectProject(projectId: string): Promise<GitWorkspaceStatus | null> {
-    const project = this.byId.get(projectId)
-    if (project === undefined) return null
-    return this.inspect(project, this.projects.indexOf(project))
+    const project = this.projects.resolve(projectId)
+    if (project === null) return null
+    const projectIndex = this.projects.list().findIndex((candidate) => candidate.id === project.id)
+    if (projectIndex < 0 || projectIndex > 99) return null
+    return this.inspect(project, projectIndex)
   }
 
   private async inspect(

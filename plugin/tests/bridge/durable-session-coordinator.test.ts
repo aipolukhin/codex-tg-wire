@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,6 +24,7 @@ import {
   UnknownProjectError,
 } from '../../src/bridge/durable-session-coordinator.js'
 import { PersonalAlphaCommands } from '../../src/bridge/personal-alpha-commands.js'
+import { DurableProjectCatalog } from '../../src/bridge/durable-project-catalog.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
 import { SqliteAgentSettingsRepository } from '../../src/durable/settings-repository.js'
 import {
@@ -686,6 +687,59 @@ describe('PersonalAlphaCommands', () => {
     )
     expect(settings.getSelectedProject('primary', '7001')).toBe('other')
     expect(settings.getTurnSettings('primary', '7001', 'workspace')).toEqual({})
+  })
+
+  test('/cwd registers a discovered YOLO project durably and coordinator uses its cwd', async () => {
+    const main = join(root, 'main')
+    const vpnInfra = join(root, 'vpn-infra')
+    mkdirSync(main)
+    mkdirSync(vpnInfra)
+    const projects = new DurableProjectCatalog(database, {
+      staticProjects: [{ id: 'main', cwd: main, sandboxMode: 'danger-full-access' }],
+      dynamicRegistrationEnabled: true,
+      discoveryRoots: [root],
+      dynamicDefaults: { sandboxMode: 'danger-full-access', writableRoots: [] },
+      now: () => nowMs,
+    })
+    const dynamicCommands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
+      now: () => nowMs,
+      projects: [{ id: 'main', cwd: main }],
+      projectCatalog: projects,
+      defaultProjectId: 'main',
+      defaultApprovalPolicy: 'never',
+      defaultSandbox: 'danger-full-access',
+      allowedSandboxModes: ['danger-full-access'],
+    })
+    const selected = await dynamicCommands.handleCommand({
+      ...command('cwd', 'vpn-infra'),
+      command: { chatId: '7001', projectId: 'main', name: 'cwd', args: 'vpn-infra' },
+    })
+    expect(selected.text).toContain(`Проект vpn-infra зарегистрирован: ${vpnInfra}`)
+    expect(settings.getSelectedProject('primary', '7001')).toBe('vpn-infra')
+
+    const restored = new DurableProjectCatalog(database, {
+      staticProjects: [{ id: 'main', cwd: main }],
+      dynamicRegistrationEnabled: true,
+      discoveryRoots: [root],
+    })
+    const dynamicCoordinator = new DurableSessionCoordinator(sessions, backend, restored, {
+      now: () => nowMs,
+      settingsProvider: settings,
+    })
+    const accepted = inbox.ingest({
+      botId: 'primary', updateId: 633, chatId: '7001', payload: {}, receivedAtMs: nowMs,
+    })
+    await dynamicCoordinator.runTextTurn({
+      operationKey: 'telegram:primary:633:turn',
+      inboxUpdateId: accepted.update.id,
+      botId: 'primary',
+      updateId: 633,
+      chatId: '7001',
+      projectId: 'vpn-infra',
+      text: 'проверь инфраструктуру',
+    })
+    expect(backend.calls.at(-1)?.cwd).toBe(vpnInfra)
+    expect(backend.calls.at(-1)?.settings?.sandbox).toBe('danger-full-access')
   })
 
   test('/failed lists safe metadata and retries a failed job idempotently', async () => {

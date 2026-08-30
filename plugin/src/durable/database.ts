@@ -627,6 +627,26 @@ const MIGRATIONS: readonly Migration[] = [
         ON telegram_turn_plan_cards (bot_id, chat_id, project_id, updated_at_ms)`,
     ],
   },
+  {
+    version: 21,
+    name: 'registered_projects',
+    statements: [
+      `CREATE TABLE registered_projects (
+        project_id TEXT PRIMARY KEY,
+        cwd TEXT NOT NULL UNIQUE,
+        sandbox_mode TEXT
+          CHECK (sandbox_mode IS NULL OR sandbox_mode IN
+            ('read-only', 'workspace-write', 'danger-full-access')),
+        writable_roots_json TEXT NOT NULL DEFAULT '[]',
+        network_access INTEGER
+          CHECK (network_access IS NULL OR network_access IN (0, 1)),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      )`,
+      `CREATE INDEX registered_projects_created_idx
+        ON registered_projects (created_at_ms, project_id)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

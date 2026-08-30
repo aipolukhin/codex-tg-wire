@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite'
+import { dirname } from 'node:path'
 
 import type { CodexAppServerClient } from '../codex/app-server-client.js'
 import {
@@ -47,9 +48,9 @@ import {
 import type { VoiceTranscriber } from '../telegram/durable-voice-transcriber.js'
 import {
   DurableSessionCoordinator,
-  StaticProjectResolver,
   type ProjectDefinition,
 } from './durable-session-coordinator.js'
+import { DurableProjectCatalog } from './durable-project-catalog.js'
 import { DurableTurnUxProjector, type DurableTurnUxOptions } from './durable-turn-ux.js'
 import { DurableTurnPlanCards } from './durable-turn-plan-cards.js'
 import {
@@ -291,6 +292,23 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const outbox = new SqliteOutboxRepository(options.database)
   const sessions = new SqliteSessionRepository(options.database)
   const settings = new SqliteAgentSettingsRepository(options.database)
+  const approvalDefault = options.codex?.turnDefaults?.approvalPolicy
+  const sandboxDefault = options.codex?.threadStartDefaults?.sandbox
+  const configuredDefault = options.projects.find(
+    (project) => project.id === options.telegram.defaultProjectId,
+  )
+  if (configuredDefault === undefined) throw new TypeError('default project disappeared')
+  const projectCatalog = new DurableProjectCatalog(options.database, {
+    staticProjects: options.projects,
+    dynamicRegistrationEnabled:
+      approvalDefault === 'never' && sandboxDefault === 'danger-full-access',
+    discoveryRoots: [...new Set(options.projects.map((project) => dirname(project.cwd)))],
+    dynamicDefaults: {
+      sandboxMode: configuredDefault.sandboxMode ?? sandboxDefault ?? 'workspace-write',
+      writableRoots: configuredDefault.writableRoots ?? [],
+      networkAccess: configuredDefault.networkAccess ?? false,
+    },
+  })
   const controls = new SqliteControlInteractionRepository(options.database)
   const messageRoutes = new SqliteTelegramMessageRouteRepository(options.database)
   const attachmentStore = options.telegram.attachmentDirectory === undefined
@@ -315,6 +333,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     : new DurableOutboundMediaStore({
         ...options.outboundMedia,
         allowedRoots: options.outboundMedia.allowedRoots ?? options.projects.map((project) => project.cwd),
+        allowedRootsProvider: () => projectCatalog.list().map((project) => project.cwd),
       })
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
   const backendOptions: CodexAppServerBackendOptions = {
@@ -352,7 +371,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     options.botId,
     {
       ...options.ux,
-      projectCwd: (projectId) => options.projects.find((project) => project.id === projectId)?.cwd,
+      projectCwd: (projectId) => projectCatalog.resolve(projectId)?.cwd,
       settingsForChat: (chatId, projectId) => {
         const current = settings.getProjectSettings(options.botId, chatId, projectId)
         return current === null
@@ -399,7 +418,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   }
   const projectIdForChat = (chatId: string): string => {
     const selected = settings.getSelectedProject(options.botId, chatId)
-    return selected !== null && projectIds.has(selected)
+    return selected !== null && projectCatalog.resolve(selected) !== null
       ? selected
       : options.telegram.defaultProjectId
   }
@@ -417,7 +436,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const baseCoordinator = new DurableSessionCoordinator(
     sessions,
     backend,
-    new StaticProjectResolver(options.projects),
+    projectCatalog,
     { settingsProvider: settings, uxObserver },
   )
   const coordinator = new M65SessionCoordinator(
@@ -427,10 +446,9 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     controls,
     backend,
   )
-  const approvalDefault = options.codex?.turnDefaults?.approvalPolicy
-  const sandboxDefault = options.codex?.threadStartDefaults?.sandbox
   const commands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
     projects: options.projects,
+    projectCatalog,
     defaultProjectId: options.telegram.defaultProjectId,
     defaultApprovalPolicy: typeof approvalDefault === 'string'
       ? approvalDefault as AgentApprovalPolicy
@@ -445,7 +463,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
     ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
   })
-  const gitWorkspace = new GitWorkspaceControl(options.projects)
+  const gitWorkspace = new GitWorkspaceControl(projectCatalog)
   const featureInteractions = new M65InteractionHandler(
     interactions,
     controls,

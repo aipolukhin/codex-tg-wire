@@ -79,4 +79,26 @@ describe('DurableOutboundMediaStore', () => {
 
     await expect(store.prepare(reference, 'document')).rejects.toThrow('digest changed')
   })
+
+  test('accepts a root added by the durable project catalog after construction', async () => {
+    const dynamic = join(root, 'vpn-infra')
+    mkdirSync(dynamic)
+    const roots: string[] = []
+    const dynamicStore = new DurableOutboundMediaStore({
+      directory: spool,
+      allowedRoots: [workspace],
+      allowedRootsProvider: () => roots,
+      maxBytes: 1_024,
+    })
+    const source = join(dynamic, 'diagram.png')
+    writeFileSync(source, 'png bytes')
+    await expect(dynamicStore.register({
+      path: source, mimeType: 'image/png', kind: 'photo',
+    })).rejects.toThrow('outside allowed roots')
+
+    roots.push(dynamic)
+    expect((await dynamicStore.register({
+      path: source, mimeType: 'image/png', kind: 'photo',
+    })).fileName).toBe('diagram.png')
+  })
 })

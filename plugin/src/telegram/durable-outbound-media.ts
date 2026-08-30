@@ -21,6 +21,7 @@ export interface PreparedLocalMedia extends DurableMediaReference {
 export interface DurableOutboundMediaOptions {
   directory: string
   allowedRoots: readonly string[]
+  allowedRootsProvider?: () => readonly string[]
   maxBytes?: number
   allowedMimeTypes?: readonly string[]
 }
@@ -85,12 +86,14 @@ async function digestFile(path: string): Promise<string> {
 export class DurableOutboundMediaStore {
   private readonly directory: string
   private readonly allowedRoots: string[]
+  private readonly allowedRootsProvider: (() => readonly string[]) | undefined
   private readonly maxBytes: number
   private readonly allowedMimeTypes: Set<string>
 
   constructor(options: DurableOutboundMediaOptions) {
     this.directory = resolve(options.directory)
     this.allowedRoots = options.allowedRoots.map((root) => resolve(root))
+    this.allowedRootsProvider = options.allowedRootsProvider
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
     this.allowedMimeTypes = new Set(options.allowedMimeTypes ?? DEFAULT_OUTBOUND_MIME_TYPES)
     if (options.directory.trim().length === 0) throw new TypeError('outbound media directory is required')
@@ -155,7 +158,13 @@ export class DurableOutboundMediaStore {
   private async approvedSource(path: string): Promise<string> {
     if (!isAbsolute(path)) throw new Error('outbound media source path must be absolute')
     const source = await realpath(path)
-    const roots = await Promise.all(this.allowedRoots.map((root) => realpath(root)))
+    const configured = [
+      ...this.allowedRoots,
+      ...(this.allowedRootsProvider?.() ?? []).map((root) => resolve(root)),
+    ]
+    const roots = (await Promise.all(
+      [...new Set(configured)].map((root) => realpath(root).catch(() => null)),
+    )).filter((root): root is string => root !== null)
     if (!roots.some((root) => inside(root, source))) {
       throw new Error('outbound media source is outside allowed roots')
     }

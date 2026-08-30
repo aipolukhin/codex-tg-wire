@@ -1,4 +1,5 @@
 import type {
+  DeliveryJobInput,
   InboxRepository,
   InboxUpdate,
   OutboxRepository,
@@ -246,14 +247,34 @@ export class InboxProcessingWorker {
         : { preferredThreadId: preparedMessage.preferredThreadId }),
     })
     const completedAtMs = this.now()
-    const deliveries = this.telegram.buildFinalTextDeliveries({
+    const finalSourceKey = `${turnKey}:final`
+    const textDeliveries = this.telegram.buildFinalTextDeliveries({
       update,
       message,
       result,
-      sourceKey: `${turnKey}:final`,
+      sourceKey: finalSourceKey,
       nowMs: completedAtMs,
     })
-    if (deliveries.length === 0) throw new Error('Telegram gateway produced no final deliveries')
+    let artifactDeliveries: readonly DeliveryJobInput[] = []
+    if ((result.artifacts?.length ?? 0) > 0) {
+      const buildArtifacts = this.telegram.buildFinalArtifactDeliveries
+      if (buildArtifacts === undefined) {
+        throw new Error('Telegram gateway cannot deliver agent artifacts')
+      }
+      const dependsOnSourceKey = textDeliveries.at(-1)?.sourceKey
+      artifactDeliveries = await buildArtifacts.call(this.telegram, {
+        update,
+        message,
+        result,
+        sourceKey: `${turnKey}:artifact`,
+        ...(dependsOnSourceKey === undefined ? {} : { dependsOnSourceKey }),
+        nowMs: completedAtMs,
+      })
+      if (artifactDeliveries.length === 0) {
+        throw new Error('Telegram gateway dropped all agent artifacts')
+      }
+    }
+    const deliveries = [...textDeliveries, ...artifactDeliveries]
     let firstDeliveryJobId: string | null = null
     for (const delivery of deliveries) {
       const enqueue = this.outbox.enqueue({

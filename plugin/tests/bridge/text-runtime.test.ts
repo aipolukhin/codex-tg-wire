@@ -63,7 +63,12 @@ class FakeTelegramApi {
   readonly edits: Array<{ chatId: string; messageId: number; text: string }> = []
   readonly downloads = new Map<string, TelegramAttachmentDownload>()
   readonly downloadCalls: string[] = []
-  readonly media: Array<{ chatId: string; kind: TelegramMediaKind; fileName: string }> = []
+  readonly media: Array<{
+    chatId: string
+    kind: TelegramMediaKind
+    fileName: string
+    options: TelegramMediaOptions
+  }> = []
   readonly reactions: Array<{ chatId: string; messageId: number; emoji: '👀' }> = []
 
   async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
@@ -92,9 +97,9 @@ class FakeTelegramApi {
     chatId: string,
     kind: TelegramMediaKind,
     media: PreparedLocalMedia,
-    _options: TelegramMediaOptions,
+    options: TelegramMediaOptions,
   ): Promise<{ message_id: number }> {
-    this.media.push({ chatId, kind, fileName: media.fileName })
+    this.media.push({ chatId, kind, fileName: media.fileName, options })
     return { message_id: 990 }
   }
 }
@@ -234,10 +239,14 @@ describe('durable text runtime composition', () => {
     expect(await runtime.deliverOutboundOnce()).toEqual({
       outcome: 'delivered', jobId: enqueued.job.id, remoteId: 'telegram:990',
     })
-    expect(telegram.media).toEqual([{ chatId: '7001', kind: 'document', fileName: 'report.pdf' }])
+    expect(telegram.media).toEqual([{
+      chatId: '7001', kind: 'document', fileName: 'report.pdf', options: {},
+    }])
   })
 
-  test('runs Telegram → SQLite → Codex App Server → SQLite → Telegram', async () => {
+  test('runs text and generated images through the durable Telegram pipeline', async () => {
+    const generatedImage = join(root, 'generated-avatar.png')
+    writeFileSync(generatedImage, 'fake-png-bytes')
     const update = {
       update_id: 801,
       message: {
@@ -270,6 +279,22 @@ describe('durable text runtime composition', () => {
       params: {
         threadId: 'thread-live',
         turnId: 'turn-live',
+        item: {
+          type: 'imageGeneration',
+          id: 'generated-avatar',
+          status: 'completed',
+          revisedPrompt: null,
+          result: 'large-inline-result',
+          failure: null,
+          savedPath: generatedImage,
+        },
+      },
+    })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-live',
+        turnId: 'turn-live',
         item: { type: 'agentMessage', id: 'answer', text: 'Готово.', phase: 'final_answer' },
       },
     })
@@ -282,8 +307,21 @@ describe('durable text runtime composition', () => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       if ((await runtime.deliverOutboundOnce()).outcome === 'idle') break
     }
-    expect(telegram.sent).toEqual([{ chatId: '7001', text: 'Готово.' }])
+    expect(telegram.sent).toEqual([])
+    expect(telegram.media).toEqual([{
+      chatId: '7001', kind: 'photo', fileName: 'generated-avatar.png',
+      options: { caption: 'Готово.', parse_mode: 'HTML' },
+    }])
     expect(telegram.edits).toEqual([])
+
+    expect(
+      database.query<{ kind: string; depends_on_source_key: string | null }, []>(
+        `SELECT kind, depends_on_source_key FROM delivery_jobs WHERE kind = 'send_media'`,
+      ).get(),
+    ).toMatchObject({
+      kind: 'send_media',
+      depends_on_source_key: null,
+    })
 
     expect(
       database.query<{ state: string }, []>('SELECT state FROM telegram_updates').get()?.state,
@@ -833,6 +871,8 @@ describe('durable text runtime composition', () => {
   })
 
   test('runs startup reconciliation before replaying a completed accepted update', async () => {
+    const recoveredImage = join(root, 'recovered-image.png')
+    writeFileSync(recoveredImage, 'recovered-png-bytes')
     const update = {
       update_id: 808,
       message: {
@@ -875,12 +915,23 @@ describe('durable text runtime composition', () => {
             id: 'turn-recovered',
             status: 'completed',
             error: null,
-            items: [{
-              type: 'agentMessage',
-              id: 'answer-recovered',
-              text: 'Recovered through runtime.',
-              phase: 'final_answer',
-            }],
+            items: [
+              {
+                type: 'agentMessage',
+                id: 'answer-recovered',
+                text: 'Recovered through runtime.',
+                phase: 'final_answer',
+              },
+              {
+                type: 'imageGeneration',
+                id: 'image-recovered',
+                status: 'completed',
+                revisedPrompt: null,
+                result: 'inline-result',
+                failure: null,
+                savedPath: recoveredImage,
+              },
+            ],
           }],
         },
       },
@@ -888,9 +939,11 @@ describe('durable text runtime composition', () => {
     expect((await recovering).turns).toMatchObject({ candidates: 1, completed: 1 })
     expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
     expect((await runtime.deliverOutboundOnce()).outcome).toBe('delivered')
-    expect(telegram.sent.at(-1)).toEqual({
-      chatId: '7001',
-      text: 'Recovered through runtime.',
+    expect((await runtime.deliverOutboundOnce()).outcome).toBe('idle')
+    expect(telegram.sent).toEqual([])
+    expect(telegram.media.at(-1)).toEqual({
+      chatId: '7001', kind: 'photo', fileName: 'recovered-image.png',
+      options: { caption: 'Recovered through runtime.', parse_mode: 'HTML' },
     })
     expect(
       transport.sent.some((message) => 'method' in message && message.method === 'turn/start'),

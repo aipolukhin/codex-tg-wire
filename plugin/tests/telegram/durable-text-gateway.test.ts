@@ -579,6 +579,46 @@ describe('DurableTelegramTextGateway outbound', () => {
     return outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
   }
 
+  test('uses a short generated-image response as its Telegram caption', () => {
+    const update = acceptedUpdate({ update_id: 899 })
+    const common = {
+      update,
+      message: { chatId: '7001', projectId: 'workspace', text: 'draw it' },
+      sourceKey: 'telegram:primary:899:turn:final',
+      nowMs: NOW,
+    }
+    expect(gateway.buildFinalTextDeliveries({
+      ...common,
+      result: {
+        threadId: 'thread-caption',
+        turnId: 'turn-caption',
+        finalText: '**Готово**, брат.',
+        artifacts: [{ kind: 'generated_image' as const, path: '/tmp/avatar.png' }],
+      },
+    })).toEqual([])
+
+    expect(gateway.buildFinalTextDeliveries({
+      ...common,
+      result: {
+        threadId: 'thread-long-caption',
+        turnId: 'turn-long-caption',
+        finalText: 'длинная подпись '.repeat(100),
+        artifacts: [{ kind: 'generated_image' as const, path: '/tmp/avatar.png' }],
+      },
+    })).toHaveLength(1)
+
+    expect(gateway.buildFinalTextDeliveries({
+      ...common,
+      result: {
+        threadId: 'thread-buttons',
+        turnId: 'turn-buttons',
+        finalText: 'Choose one',
+        artifacts: [{ kind: 'generated_image' as const, path: '/tmp/avatar.png' }],
+        buttons: [[{ text: 'Open', url: 'https://example.com' }]],
+      },
+    })).toHaveLength(1)
+  })
+
   test('renders Markdown and emits long final replies as an ordered durable chain', () => {
     const update = acceptedUpdate({ update_id: 900 })
     const longBody = 'важный текст '.repeat(800)

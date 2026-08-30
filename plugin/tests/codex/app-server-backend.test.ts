@@ -558,6 +558,52 @@ describe('CodexAppServerBackend text turns', () => {
     backend.close()
   })
 
+  test('returns completed image-generation paths and deduplicates terminal replay', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    const image = {
+      type: 'imageGeneration',
+      id: 'generated-avatar',
+      status: 'completed',
+      revisedPrompt: null,
+      result: 'large-inline-result-must-not-enter-the-turn-result',
+      failure: null,
+      savedPath: '/tmp/codex/generated_images/thread-1/avatar.png',
+    }
+
+    const running = backend.runTextTurn(turnInput())
+    await waitForTurnStart(client)
+    client.emit({
+      method: 'item/completed',
+      params: { threadId: 'thread-1', turnId: 'turn-1', item: image },
+    })
+    client.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1', turnId: 'turn-1',
+        item: { type: 'agentMessage', id: 'answer', text: 'Аватар готов.', phase: 'final_answer' },
+      },
+    })
+    client.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'completed', items: [image] },
+      },
+    })
+
+    expect(await running).toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      finalText: 'Аватар готов.',
+      artifacts: [{
+        kind: 'generated_image',
+        path: '/tmp/codex/generated_images/thread-1/avatar.png',
+      }],
+    })
+    backend.close()
+  })
+
   test('resumes an existing thread and supports legacy phase-null messages', async () => {
     const client = new FakeBackendClient()
     client.turnIds.set('thread-existing', 'turn-2')
@@ -594,6 +640,15 @@ describe('CodexAppServerBackend text turns', () => {
               text: 'Восстановленный ответ',
               phase: 'final_answer',
             },
+            {
+              type: 'imageGeneration',
+              id: 'image-stored',
+              status: 'completed',
+              revisedPrompt: null,
+              result: 'inline-result',
+              failure: null,
+              savedPath: '/tmp/codex/generated_images/thread-stored/recovered.png',
+            },
           ],
           error: null,
         }],
@@ -611,6 +666,10 @@ describe('CodexAppServerBackend text turns', () => {
         threadId: 'thread-stored',
         turnId: 'turn-stored',
         finalText: 'Восстановленный ответ',
+        artifacts: [{
+          kind: 'generated_image',
+          path: '/tmp/codex/generated_images/thread-stored/recovered.png',
+        }],
       },
     })
     expect(client.threadReads).toEqual([{

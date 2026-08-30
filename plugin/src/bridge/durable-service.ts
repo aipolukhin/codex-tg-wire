@@ -1,4 +1,6 @@
 import type { Database } from 'bun:sqlite'
+import { mkdir } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
 
 import { Bot } from 'grammy'
 
@@ -172,7 +174,7 @@ export async function bootstrapDurableBridgeService(
       ...(config.codex.args === undefined ? {} : { args: config.codex.args }),
       requestTimeoutMs: config.codex.requestTimeoutMs,
     })
-    await codexClient.initialize({
+    const initialized = await codexClient.initialize({
       clientInfo: {
         name: 'dashi_codex_bridge',
         title: 'codex-tg-wire',
@@ -180,6 +182,13 @@ export async function bootstrapDurableBridgeService(
       },
       capabilities: null,
     })
+    if (!isAbsolute(initialized.codexHome)) {
+      throw new TypeError('Codex App Server returned a non-absolute codexHome')
+    }
+    const generatedImagesRoot = join(initialized.codexHome, 'generated_images')
+    if (config.outboundMedia.enabled) {
+      await mkdir(generatedImagesRoot, { recursive: true, mode: 0o700 })
+    }
 
     const telegramLimiter = new DurableTelegramRateLimiter({
       ...config.telegram.rateLimit,
@@ -273,7 +282,10 @@ export async function bootstrapDurableBridgeService(
         ? {
             outboundMedia: {
               directory: config.outboundMedia.directory,
-              allowedRoots: config.projects.map((project) => project.cwd),
+              allowedRoots: [
+                ...config.projects.map((project) => project.cwd),
+                generatedImagesRoot,
+              ],
               maxBytes: config.outboundMedia.maxBytes,
               allowedMimeTypes: config.outboundMedia.allowedMimeTypes,
             },

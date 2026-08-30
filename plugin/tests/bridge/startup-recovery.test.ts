@@ -119,6 +119,10 @@ describe('startup turn recovery', () => {
         threadId: 'thread-complete',
         turnId: 'turn-complete',
         finalText: 'Recovered final',
+        artifacts: [{
+          kind: 'generated_image',
+          path: '/tmp/codex/generated_images/thread-complete/recovered.png',
+        }],
       },
     })
 
@@ -129,7 +133,13 @@ describe('startup turn recovery', () => {
     expect(sweep).toEqual({ candidates: 1, completed: 1, failed: 0, interrupted: 0, unknown: 0 })
     expect(sessions.getTurn(active.turn.id)).toMatchObject({
       state: 'COMPLETED',
-      finalResponse: { finalText: 'Recovered final' },
+      finalResponse: {
+        finalText: 'Recovered final',
+        artifacts: [{
+          kind: 'generated_image',
+          path: '/tmp/codex/generated_images/thread-complete/recovered.png',
+        }],
+      },
     })
     expect(inbox.get(active.update.id)).toMatchObject({
       state: 'RETRY_WAIT',

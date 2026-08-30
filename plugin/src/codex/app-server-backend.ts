@@ -1,3 +1,5 @@
+import { isAbsolute } from 'node:path'
+
 import type {
   AgentBackend,
   AgentActivity,
@@ -13,6 +15,7 @@ import type {
   AgentReviewTarget,
   AgentSandboxMode,
   AgentTextTurnInput,
+  AgentTurnArtifact,
   AgentTurnProgress,
   AgentTurnInspection,
   AgentTurnInspectionInput,
@@ -86,17 +89,24 @@ interface AgentMessage {
   phase: 'commentary' | 'final_answer' | null
 }
 
+interface GeneratedImage {
+  id: string
+  path: string
+}
+
 interface TerminalTurn {
   id: string
   status: 'completed' | 'interrupted' | 'failed' | 'inProgress'
   errorMessage: string | null
   messages: AgentMessage[]
+  generatedImages: GeneratedImage[]
 }
 
 interface PendingTurn {
   threadId: string
   turnId: string | null
   messages: Map<string, AgentMessage>
+  generatedImages: Map<string, GeneratedImage>
   lifecycle: AgentTurnLifecycle
   resolve: (turn: TerminalTurn) => void
   reject: (error: Error) => void
@@ -224,6 +234,18 @@ function parseAgentMessage(value: unknown): AgentMessage | null {
   return { id: value.id, text: value.text, phase: phase ?? null }
 }
 
+function parseGeneratedImage(value: unknown): GeneratedImage | null {
+  if (!isRecord(value) || value.type !== 'imageGeneration') return null
+  if (
+    typeof value.id !== 'string' ||
+    value.status !== 'completed' ||
+    typeof value.savedPath !== 'string' ||
+    !isAbsolute(value.savedPath) ||
+    (value.failure !== null && value.failure !== undefined)
+  ) return null
+  return { id: value.id, path: value.savedPath }
+}
+
 function parseThreadTurn(params: unknown): { threadId: string; turnId: string } | null {
   if (!isRecord(params) || typeof params.threadId !== 'string' || !isRecord(params.turn)) {
     return null
@@ -249,12 +271,15 @@ function parseTerminalTurn(params: unknown): { threadId: string; turn: TerminalT
   const messages = Array.isArray(raw.items)
     ? raw.items.map(parseAgentMessage).filter((item): item is AgentMessage => item !== null)
     : []
+  const generatedImages = Array.isArray(raw.items)
+    ? raw.items.map(parseGeneratedImage).filter((item): item is GeneratedImage => item !== null)
+    : []
   const errorMessage = isRecord(raw.error) && typeof raw.error.message === 'string'
     ? raw.error.message
     : null
   return {
     threadId: params.threadId,
-    turn: { id: raw.id, status: raw.status, errorMessage, messages },
+    turn: { id: raw.id, status: raw.status, errorMessage, messages, generatedImages },
   }
 }
 
@@ -271,6 +296,9 @@ function parseStoredTurn(value: unknown): TerminalTurn | null {
   const messages = Array.isArray(value.items)
     ? value.items.map(parseAgentMessage).filter((item): item is AgentMessage => item !== null)
     : []
+  const generatedImages = Array.isArray(value.items)
+    ? value.items.map(parseGeneratedImage).filter((item): item is GeneratedImage => item !== null)
+    : []
   const errorMessage = isRecord(value.error) && typeof value.error.message === 'string'
     ? value.error.message
     : null
@@ -279,6 +307,7 @@ function parseStoredTurn(value: unknown): TerminalTurn | null {
     status: value.status,
     errorMessage,
     messages,
+    generatedImages,
   }
 }
 
@@ -305,6 +334,18 @@ function finalText(turn: TerminalTurn, streamed: Map<string, AgentMessage>): str
     (message) => message.phase === null && message.text.trim().length > 0,
   )
   return legacy.at(-1)?.text ?? ''
+}
+
+function finalArtifacts(
+  turn: TerminalTurn,
+  streamed: Map<string, GeneratedImage>,
+): AgentTurnArtifact[] {
+  const images = new Map(streamed)
+  for (const image of turn.generatedImages) images.set(image.id, image)
+  return [...images.values()].map((image) => ({
+    kind: 'generated_image',
+    path: image.path,
+  }))
 }
 
 function eventCorrelation(params: unknown): { threadId: string; turnId: string } | null {
@@ -707,7 +748,13 @@ export class CodexAppServerBackend implements AgentBackend {
       if (text.trim().length === 0) {
         throw new CodexTurnProtocolError(`Codex turn ${terminal.id} completed without a final message`)
       }
-      return { threadId, turnId: terminal.id, finalText: text }
+      const artifacts = finalArtifacts(terminal, pending.generatedImages)
+      return {
+        threadId,
+        turnId: terminal.id,
+        finalText: text,
+        ...(artifacts.length === 0 ? {} : { artifacts }),
+      }
     } finally {
       this.clearPending(threadId, pending)
     }
@@ -760,10 +807,12 @@ export class CodexAppServerBackend implements AgentBackend {
       if (text.trim().length === 0) {
         throw new CodexTurnProtocolError(`Codex review ${terminal.id} completed without a final message`)
       }
+      const artifacts = finalArtifacts(terminal, pending.generatedImages)
       return {
         threadId: input.threadId,
         turnId: terminal.id,
         finalText: text,
+        ...(artifacts.length === 0 ? {} : { artifacts }),
       }
     } finally {
       this.clearPending(input.threadId, pending)
@@ -793,9 +842,15 @@ export class CodexAppServerBackend implements AgentBackend {
     if (text.trim().length === 0) {
       return { state: 'UNKNOWN', turnId: turn.id, reason: 'missing_final_message' }
     }
+    const artifacts = finalArtifacts(turn, new Map())
     return {
       state: 'COMPLETED',
-      result: { threadId: input.threadId, turnId: turn.id, finalText: text },
+      result: {
+        threadId: input.threadId,
+        turnId: turn.id,
+        finalText: text,
+        ...(artifacts.length === 0 ? {} : { artifacts }),
+      },
     }
   }
 
@@ -877,6 +932,7 @@ export class CodexAppServerBackend implements AgentBackend {
       threadId,
       turnId: null,
       messages: new Map(),
+      generatedImages: new Map(),
       lifecycle,
       resolve,
       reject,
@@ -936,6 +992,10 @@ export class CodexAppServerBackend implements AgentBackend {
       if (pending.turnId !== null && pending.turnId !== params.turnId) return
       const message = parseAgentMessage(params.item)
       if (message !== null) pending.messages.set(message.id, message)
+      const generatedImage = parseGeneratedImage(params.item)
+      if (generatedImage !== null) {
+        pending.generatedImages.set(generatedImage.id, generatedImage)
+      }
       return
     }
 

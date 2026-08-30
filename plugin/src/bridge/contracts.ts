@@ -212,10 +212,19 @@ export interface TextTurnOperation {
   trustedSettingsOverride?: AgentTurnSettings
 }
 
+export interface AgentGeneratedImageArtifact {
+  kind: 'generated_image'
+  /** Absolute path reported by the trusted Codex App Server. */
+  path: string
+}
+
+export type AgentTurnArtifact = AgentGeneratedImageArtifact
+
 export interface TextTurnResult {
   threadId: string
   turnId: string
   finalText: string
+  artifacts?: readonly AgentTurnArtifact[]
   buttons?: readonly (readonly CommandButton[])[]
   presentation?: 'answer' | 'busy_choice' | 'guided_plan'
 }
@@ -493,6 +502,11 @@ export interface FinalTextDelivery {
   nowMs: number
 }
 
+export interface FinalArtifactDelivery extends FinalTextDelivery {
+  /** Optional delivery that must be proven before the first artifact is sent. */
+  dependsOnSourceKey?: string
+}
+
 export interface CommandDelivery {
   update: InboxUpdate
   command: IncomingCommand
@@ -523,6 +537,9 @@ export interface TelegramGateway<PreparedDelivery = unknown> {
   extractCommand?(update: InboxUpdate): IncomingCommand | null
   extractInteractionResponse?(update: InboxUpdate): IncomingInteractionResponse | null
   buildFinalTextDeliveries(input: FinalTextDelivery): readonly DeliveryJobInput[]
+  buildFinalArtifactDeliveries?(
+    input: FinalArtifactDelivery,
+  ): Promise<readonly DeliveryJobInput[]>
   buildInboundRejectionDelivery?(input: InboundRejectionDelivery): DeliveryJobInput
   buildCommandDelivery?(input: CommandDelivery): DeliveryJobInput
   buildCommandCleanupDelivery?(input: CommandDelivery): DeliveryJobInput

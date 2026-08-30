@@ -1,5 +1,8 @@
+import { basename, extname } from 'node:path'
+
 import type {
   AgentLocalAttachment,
+  FinalArtifactDelivery,
   FinalTextDelivery,
   CommandDelivery,
   InboundRejectionDelivery,
@@ -364,6 +367,19 @@ export class TelegramDeliveryPayloadError extends Error {
   }
 }
 
+const MAX_GENERATED_IMAGES_PER_TURN = 10
+
+function generatedImageMime(path: string): string {
+  switch (extname(path).toLowerCase()) {
+    case '.png': return 'image/png'
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg'
+    case '.webp': return 'image/webp'
+    case '.gif': return 'image/gif'
+    default: throw new TelegramDeliveryPayloadError('generated image has an unsupported extension')
+  }
+}
+
 export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextDelivery> {
   private readonly allowedUsers: Set<string>
   private readonly allowedChats: Set<string>
@@ -690,6 +706,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   buildFinalTextDeliveries(input: FinalTextDelivery): readonly DeliveryJobInput[] {
+    if (this.useGeneratedImageCaption(input)) return []
     const rendered = markdownToTelegramHtml(input.result.finalText)
     const validated = validateTelegramHtml(rendered)
     const chunkLimit = Math.min(4_000, this.maxTextLength)
@@ -744,6 +761,86 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       createdAtMs: input.nowMs + index,
       }
     })
+  }
+
+  async buildFinalArtifactDeliveries(
+    input: FinalArtifactDelivery,
+  ): Promise<readonly DeliveryJobInput[]> {
+    if (this.outboundMediaStore === undefined) {
+      throw new TelegramDeliveryPayloadError('outbound media is not configured')
+    }
+    const artifacts = input.result.artifacts
+    if (
+      !Array.isArray(artifacts) ||
+      artifacts.length < 1 ||
+      artifacts.length > MAX_GENERATED_IMAGES_PER_TURN
+    ) {
+      throw new TelegramDeliveryPayloadError('generated image count is invalid')
+    }
+
+    const deliveries: DeliveryJobInput[] = []
+    let dependency = input.dependsOnSourceKey
+    const caption = this.useGeneratedImageCaption(input)
+      ? input.result.finalText
+      : undefined
+    for (const [index, artifact] of artifacts.entries()) {
+      if (
+        !isRecord(artifact) ||
+        artifact.kind !== 'generated_image' ||
+        typeof artifact.path !== 'string'
+      ) {
+        throw new TelegramDeliveryPayloadError('generated image artifact is invalid')
+      }
+      const sourceKey = `${input.sourceKey}:${index + 1}`
+      const reference = await this.outboundMediaStore.register({
+        path: artifact.path,
+        fileName: basename(artifact.path),
+        mimeType: generatedImageMime(artifact.path),
+        kind: 'photo',
+      })
+      this.messageRoutes?.register({
+        sourceKey,
+        botId: input.update.botId,
+        chatId: input.message.chatId,
+        projectId: input.message.projectId,
+        threadId: input.result.threadId,
+        createdAtMs: input.nowMs,
+      })
+      deliveries.push({
+        sourceKey,
+        ...(dependency === undefined ? {} : { dependsOnSourceKey: dependency }),
+        kind: 'send_media',
+        payload: {
+          chatId: input.message.chatId,
+          mediaKind: 'photo',
+          reference,
+          ...(index === 0 && caption !== undefined ? { caption } : {}),
+        },
+        createdAtMs: input.nowMs,
+      })
+      dependency = sourceKey
+    }
+    return deliveries
+  }
+
+  private useGeneratedImageCaption(input: FinalTextDelivery): boolean {
+    if (
+      (input.result.artifacts?.length ?? 0) === 0 ||
+      input.result.buttons !== undefined
+    ) {
+      return false
+    }
+    try {
+      return prepareMediaCaption(input.result.finalText, this.extraSecrets).caption !== undefined
+    } catch (error) {
+      if (
+        error instanceof TelegramDeliveryPayloadError &&
+        error.message === 'media caption exceeds Telegram limit'
+      ) {
+        return false
+      }
+      throw error
+    }
   }
 
   buildCommandDelivery(input: CommandDelivery): DeliveryJobInput {

@@ -17,9 +17,9 @@ different version, it installs the version pinned by `plugin/package.json` into
 `~/.bun` through Bun's official installer, without `sudo`. It then installs
 frozen Bun dependencies and the pinned Codex CLI locally, reuses the current
 user's `CODEX_HOME` (normally `~/.codex`), and stores the bot token separately
-with mode `0600`. It starts a bootstrap service and prints a nonce-protected
-deep link. The matching private `/start` update supplies the owner user/chat
-IDs; the running bot then creates/selects the project and asks for YOLO or Safe.
+with mode `0600`. It starts a bootstrap service and prints a short
+**Activate bot** link. START binds that private Telegram user/chat as the sole
+owner; the running bot then creates/selects the project and asks for YOLO or Safe.
 It atomically writes the production allowlist/config and restarts itself into
 the full bridge. The service lives at
 `~/.config/systemd/user/codex-tg-wire.service`; SQLite and media state default to
@@ -171,7 +171,7 @@ From the repository root, run the guided wrapper:
 The wrapper creates or mounts `~/codex-workspace` by default; pass
 `--project /absolute/path` to mount another directory. It asks only for the bot
 token, builds the pinned images, starts a resumable bootstrap container and
-prints a nonce-protected link. Press **START** in Telegram to claim the owner,
+prints a protected **Activate bot** link. Press **START** in Telegram to bind the owner,
 confirm the mounted project and choose YOLO or Safe. The same container writes
 the production config atomically, restarts into the full bridge and offers
 these next actions:

@@ -482,8 +482,10 @@ setup() {
     if [[ $START_SERVICE -eq 0 ]]; then
       printf '  Start:  ./docker.sh up\n'
     fi
-    printf '\n  Open the one-time link and press START:\n\n  %s\n\n' "$onboarding_url"
-    printf '  Next:   finish owner, project and mode setup in Telegram\n'
+    printf '\n%sАктивируй бота и привяжи себя владельцем%s\n\n' "$BOLD" "$RESET"
+    printf '  %s\n\n' "$onboarding_url"
+    printf 'Нажми %sSTART%s. Защищённая ссылка не даст постороннему занять бота.\n' "$BOLD" "$RESET"
+    printf 'Дальше выберешь рабочую папку и режим доступа Codex.\n'
   else
     printf '  Next:   open the bot, send /start and follow the action buttons\n'
   fi

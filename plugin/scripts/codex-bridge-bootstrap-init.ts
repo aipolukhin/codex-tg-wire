@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 
-import { randomBytes } from 'node:crypto'
-
 import { Bot } from 'grammy'
 
-import { initializeBridgeBootstrap } from '../src/bridge/bootstrap-installation.js'
+import {
+  createBridgeBootstrapNonce,
+  initializeBridgeBootstrap,
+} from '../src/bridge/bootstrap-installation.js'
 
 function usage(): never {
   process.stderr.write([
@@ -73,7 +74,7 @@ try {
     deployment,
     botId: String(bot.botInfo.id),
     botUsername: bot.botInfo.username,
-    nonce: randomBytes(24).toString('base64url'),
+    nonce: createBridgeBootstrapNonce(),
     telegramToken: token,
     ...(profile === 'auto' ? {} : { presetProfile: profile }),
     ...(values.has('--groq-credential-path')

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -73,6 +73,12 @@ export interface InitializedBridgeBootstrap {
 }
 
 const TOKEN_PATTERN = /^[1-9]\d*:[A-Za-z0-9_-]+$/
+const BOOTSTRAP_NONCE_BYTES = 12
+
+/** A compact 96-bit owner-claim secret suitable for Telegram's start payload. */
+export function createBridgeBootstrapNonce(): string {
+  return randomBytes(BOOTSTRAP_NONCE_BYTES).toString('base64url')
+}
 
 function safeAbsolutePath(value: string, label: string): string {
   if (!isAbsolute(value)) throw new Error(`${label} must be an absolute path`)

@@ -52,10 +52,10 @@ cd codex-tg-wire
 ```
 
 The console asks only for the token, installs the user service and prints a
-one-time link to your own running bot. Press **START** there: the bot claims your
-private user/chat IDs, lets you create/use `~/codex-workspace` or enter another
-absolute project path, and asks for **YOLO** or **Safe**. The random link nonce
-prevents an unrelated `/start` from claiming ownership.
+short **Activate bot** link. Press **START** there: Telegram is bound as the
+sole owner, then the bot lets you create/use `~/codex-workspace` or enter another
+absolute project path and asks for **YOLO** or **Safe**. The compact 96-bit link
+secret prevents an unrelated `/start` from claiming ownership.
 
 The service then restarts directly into the full bridge. Continue with the
 button in Telegram: **Connect Codex** opens device login only when local auth is

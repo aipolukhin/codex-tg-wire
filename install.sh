@@ -149,9 +149,10 @@ Maintenance options:
 No token is accepted as a command-line value. Without --token-file, the first
 interactive install asks for it without echoing it.
 
-After the token, the running bot claims the owner through a nonce-protected
-START button, then creates/uses ~/codex-workspace or another host path and asks
-for YOLO/Safe. Numeric Telegram IDs are only needed for automation.
+After the token, the installer prints a protected bot-activation link. START
+binds that Telegram account as the sole owner, then the bot creates/uses
+~/codex-workspace or another host path and asks for YOLO/Safe. Numeric Telegram
+IDs are only needed for automation.
 
 If the pinned Bun runtime is missing, the installer adds it to ~/.bun through
 the official Bun installer. Set BUN_INSTALL to choose another absolute path.
@@ -566,7 +567,7 @@ else
   ui_note "Groq voice пропущен; Telegram voice всё равно передаётся Codex как audio."
 fi
 if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
-  ui_note "Allowlist появится только после одноразового START в Telegram."
+  ui_note "Allowlist появится после активации бота и привязки владельца в Telegram."
 else
   ui_ok "Allowlist и конфигурация готовы"
 fi
@@ -701,32 +702,33 @@ if [[ $START_SERVICE -eq 1 ]]; then
 fi
 
 if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
-  ui_step 4 4 "Продолжение в Telegram"
-  printf '  Открой одноразовую ссылку и нажми START:\n\n  %s\n\n' "$ONBOARDING_URL"
-  ui_note "Дальше бот сам закрепит owner ID, создаст/выберет project и предложит YOLO/Safe."
-fi
-
-printf '\n'
-ui_box_rule '╭' '╮' "$GREEN"
-ui_box_line 'codex-tg-wire готов' "$BOLD" "$GREEN"
-ui_box_rule '╰' '╯' "$GREEN"
-printf '\n'
-printf '  Status: systemctl --user status %s\n' "$SERVICE_NAME"
-printf '  Logs:   journalctl --user -u %s -f\n' "$SERVICE_NAME"
-if [[ $BOOTSTRAP_INSTALL -eq 1 && ! -e "$CONFIG_PATH" ]]; then
-  printf '  Setup:  %s\n' "$BOOTSTRAP_PATH"
+  ui_step 4 4 "Активация в Telegram"
+  printf '%sАктивируй бота и привяжи себя владельцем%s\n\n' "$BOLD" "$RESET"
+  printf '  %s\n\n' "$ONBOARDING_URL"
+  printf 'Нажми %sSTART%s. Защищённая ссылка не даст постороннему занять бота.\n' "$BOLD" "$RESET"
+  printf 'Дальше выберешь рабочую папку и режим доступа Codex.\n\n'
+  if [[ $START_SERVICE -eq 1 ]]; then
+    ui_ok "Сервис запущен · после START терминал больше не понадобится"
+  else
+    ui_ok "Сервис установлен"
+    ui_note "Сначала запусти: systemctl --user start $SERVICE_NAME"
+  fi
+  printf '\n'
+  ui_note "Если что-то пойдёт не так:"
+  ui_note "  systemctl --user status $SERVICE_NAME"
+  ui_note "  journalctl --user -u $SERVICE_NAME -f"
 else
-  printf '  Config: %s\n' "$CONFIG_PATH"
+  printf '\n'
+  ui_box_rule '╭' '╮' "$GREEN"
+  ui_box_line 'codex-tg-wire готов' "$BOLD" "$GREEN"
+  ui_box_rule '╰' '╯' "$GREEN"
+  printf '\n'
+  ui_ok "Конфигурация проверена"
+  if [[ $START_SERVICE -eq 1 ]]; then
+    ui_ok "Сервис запущен"
+  else
+    ui_note "Запуск: systemctl --user start $SERVICE_NAME"
+  fi
+  ui_note "Статус: systemctl --user status $SERVICE_NAME"
+  ui_note "Логи: journalctl --user -u $SERVICE_NAME -f"
 fi
-printf '  State:  %s\n' "$STATE_DIRECTORY"
-if [[ $BOOTSTRAP_INSTALL -eq 1 ]]; then
-  printf '  Next:   open the one-time link above; no more terminal input is needed\n'
-else
-  printf '  Next:   open the bot, send /start and follow the action buttons\n'
-fi
-if [[ $START_SERVICE -eq 0 ]]; then
-  printf '  Start:  systemctl --user start %s\n' "$SERVICE_NAME"
-fi
-printf '  Remove service only: ./install.sh --uninstall\n'
-printf '\nThe user service starts with your systemd user manager. On a headless host,\n'
-printf 'an administrator may enable lingering if it must survive logout.\n'

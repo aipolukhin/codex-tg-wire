@@ -147,17 +147,26 @@ export class BootstrapOnboardingController {
     if (state.status === 'awaiting_owner') {
       const message = update.message
       const expected = `/start ${state.nonce}`
-      if (
-        message?.text !== expected ||
+      if (message === undefined) return false
+      const invalidPrivateSender =
         message.chat?.type !== 'private' ||
         message.from?.is_bot === true ||
         !Number.isSafeInteger(message.from?.id) ||
         !Number.isSafeInteger(message.chat?.id) ||
         (message.from?.id ?? 0) <= 0 ||
         (message.chat?.id ?? 0) <= 0
-      ) {
+      if (invalidPrivateSender) {
         return false
       }
+      if (message.text === '/start') {
+        await this.api.sendMessage(String(message.chat?.id), [
+          '🔐 Бот ещё не активирован.',
+          '',
+          'Открой ссылку «Активация бота» из установщика — она безопасно привяжет этот Telegram-аккаунт как владельца.',
+        ].join('\n'))
+        return false
+      }
+      if (message.text !== expected) return false
       state = this.states.update((current) => ({
         ...current,
         status: 'choose_project',
@@ -368,7 +377,7 @@ export class BootstrapOnboardingController {
         : []),
     ]
     await this.api.sendMessage(state.ownerChatId as string, [
-      ...(claimed ? ['✅ Этот Telegram-аккаунт закреплён как единственный владелец.', ''] : []),
+      ...(claimed ? ['✅ Бот активирован и привязан к этому Telegram-аккаунту.', ''] : []),
       '1/3 · Рабочая папка Codex',
       '',
       state.deployment === 'docker'

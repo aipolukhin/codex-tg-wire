@@ -9,6 +9,7 @@ import {
 } from '../../src/bridge/bootstrap-onboarding.js'
 import {
   BridgeBootstrapStateRepository,
+  createBridgeBootstrapNonce,
   initializeBridgeBootstrap,
 } from '../../src/bridge/bootstrap-installation.js'
 import { finalizeBridgeBootstrap } from '../../src/bridge/installation.js'
@@ -94,6 +95,15 @@ function callback(updateId: number, id: string, data: string) {
 }
 
 describe('bot-first bootstrap onboarding', () => {
+  test('uses compact independent 96-bit owner activation secrets', () => {
+    const first = createBridgeBootstrapNonce()
+    const second = createBridgeBootstrapNonce()
+
+    expect(first).toMatch(/^[A-Za-z0-9_-]{16}$/)
+    expect(second).toMatch(/^[A-Za-z0-9_-]{16}$/)
+    expect(second).not.toBe(first)
+  })
+
   test('persists credentials privately and atomically finalizes a production config', async () => {
     const item = fixture()
     expect(item.initialized.onboardingUrl).toBe(
@@ -140,7 +150,7 @@ describe('bot-first bootstrap onboarding', () => {
       ownerUserId: '7001',
       ownerChatId: '7001',
     })
-    expect(telegram.messages.at(-1)?.text).toContain('единственный владелец')
+    expect(telegram.messages.at(-1)?.text).toContain('Бот активирован')
 
     expect(await controller.handleUpdate(callback(2, 'cb-project', 'boot:project:default'))).toBeFalse()
     expect(existsSync(item.defaultProjectPath)).toBeTrue()
@@ -162,6 +172,20 @@ describe('bot-first bootstrap onboarding', () => {
     }
     expect(telegram.answers).toEqual(['cb-project', 'cb-profile'])
     expect(telegram.messages.at(-1)?.text).toContain('Базовая настройка готова')
+  })
+
+  test('explains activation when an unbound owner sends plain start', async () => {
+    const item = fixture()
+    const states = new BridgeBootstrapStateRepository(item.bootstrapPath)
+    const telegram = new FakeTelegram()
+    const controller = new BootstrapOnboardingController(states, telegram)
+    const update = ownerStart()
+    update.message.text = '/start'
+
+    expect(await controller.handleUpdate(update)).toBeFalse()
+    expect(states.load().status).toBe('awaiting_owner')
+    expect(telegram.messages.at(-1)?.text).toContain('Бот ещё не активирован')
+    expect(telegram.messages.at(-1)?.text).toContain('Активация бота')
   })
 
   test('ignores every non-owner update after the nonce has been claimed', async () => {

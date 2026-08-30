@@ -30,6 +30,7 @@ export interface TelegramNativeTurnUxOptions {
   typingIndicator?: boolean
   pinnedStatus?: boolean
   typingRefreshMs?: number
+  elapsedRefreshMs?: number
   quotaRefreshMs?: number
   now?: () => number
   projectCwd?: (projectId: string) => string | undefined
@@ -40,6 +41,7 @@ export interface TelegramNativeTurnUxOptions {
 }
 
 const DEFAULT_TYPING_REFRESH_MS = 4_000
+const DEFAULT_ELAPSED_REFRESH_MS = 1_000
 const DEFAULT_QUOTA_REFRESH_MS = 5 * 60_000
 
 function compactField(value: string | null | undefined): string | null {
@@ -87,11 +89,19 @@ function remaining(window: AgentRateLimit['primary']): number | null {
   return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)))
 }
 
+function renderElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1_000))
+  if (seconds < 60) return `${seconds}″`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}′${String(seconds % 60).padStart(2, '0')}″`
+}
+
 function renderStatus(
   settings: Pick<AgentTurnSettings, 'model' | 'effort'> | null,
   defaults: AgentRuntimeDefaults | null,
   snapshot: AgentUxStatusSnapshot | null,
   limits: readonly AgentRateLimit[] | null,
+  elapsedMs: number | null,
 ): string {
   const model = compactModel(settings?.model) ?? compactModel(defaults?.model) ?? 'default'
   const effort = compactEffort(settings?.effort) ?? compactEffort(defaults?.effort)
@@ -105,6 +115,7 @@ function renderStatus(
     ? `${Math.min(100, Math.round((snapshot.inputTokens / snapshot.contextWindow) * 100))}%`
     : '—'
   parts.push(`ctx:${context}`)
+  if (elapsedMs !== null) parts.push(`· ${renderElapsed(elapsedMs)}`)
   return parts.join(' ')
 }
 
@@ -116,9 +127,16 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
   private readonly typingIndicator: boolean
   private readonly pinnedStatus: boolean
   private readonly typingRefreshMs: number
+  private readonly elapsedRefreshMs: number
   private readonly quotaRefreshMs: number
   private readonly now: () => number
   private readonly typingTimers = new Map<string, ReturnType<typeof setInterval>>()
+  private readonly activeElapsed = new Map<string, {
+    operationKey: string
+    projectId: string
+    startedAtMs: number
+    timer: ReturnType<typeof setInterval>
+  }>()
   private readonly refreshStates = new Map<string, {
     pending: { chatId: string; projectId: string; forceQuota: boolean; forcePin: boolean } | null
     promise: Promise<void>
@@ -143,16 +161,21 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     this.typingIndicator = enabled && (options.typingIndicator ?? false)
     this.pinnedStatus = enabled && (options.pinnedStatus ?? false)
     this.typingRefreshMs = options.typingRefreshMs ?? DEFAULT_TYPING_REFRESH_MS
+    this.elapsedRefreshMs = options.elapsedRefreshMs ?? DEFAULT_ELAPSED_REFRESH_MS
     this.quotaRefreshMs = options.quotaRefreshMs ?? DEFAULT_QUOTA_REFRESH_MS
     this.now = options.now ?? Date.now
     if (!Number.isSafeInteger(this.typingRefreshMs) || this.typingRefreshMs <= 0) {
       throw new TypeError('typingRefreshMs must be positive')
+    }
+    if (!Number.isSafeInteger(this.elapsedRefreshMs) || this.elapsedRefreshMs <= 0) {
+      throw new TypeError('elapsedRefreshMs must be positive')
     }
     if (!Number.isSafeInteger(this.quotaRefreshMs) || this.quotaRefreshMs <= 0) {
       throw new TypeError('quotaRefreshMs must be positive')
     }
   }
   onPreparing(operation: TextTurnOperation, _settings: AgentTurnSettings): void {
+    this.startElapsed(operation)
     this.startTyping(operation)
     void this.refreshChat(operation.chatId, operation.projectId)
   }
@@ -247,6 +270,8 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     this.closed = true
     for (const timer of this.typingTimers.values()) clearInterval(timer)
     this.typingTimers.clear()
+    for (const active of this.activeElapsed.values()) clearInterval(active.timer)
+    this.activeElapsed.clear()
     for (const state of this.refreshStates.values()) state.pending = null
   }
 
@@ -254,7 +279,39 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     const timer = this.typingTimers.get(operation.operationKey)
     if (timer !== undefined) clearInterval(timer)
     this.typingTimers.delete(operation.operationKey)
+    this.stopElapsed(operation)
     void this.refreshChat(operation.chatId, operation.projectId, true)
+  }
+
+  private startElapsed(operation: TextTurnOperation): void {
+    if (!this.pinnedStatus || this.closed) return
+    const key = `${this.botId}:${operation.chatId}`
+    const previous = this.activeElapsed.get(key)
+    if (previous?.operationKey === operation.operationKey) return
+    if (previous !== undefined) clearInterval(previous.timer)
+    const tick = () => {
+      if (
+        this.closed ||
+        this.activeElapsed.get(key)?.operationKey !== operation.operationKey
+      ) return
+      void this.refreshChat(operation.chatId, operation.projectId)
+    }
+    const timer = setInterval(tick, this.elapsedRefreshMs)
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+    this.activeElapsed.set(key, {
+      operationKey: operation.operationKey,
+      projectId: operation.projectId,
+      startedAtMs: this.now(),
+      timer,
+    })
+  }
+
+  private stopElapsed(operation: TextTurnOperation): void {
+    const key = `${this.botId}:${operation.chatId}`
+    const active = this.activeElapsed.get(key)
+    if (active?.operationKey !== operation.operationKey) return
+    clearInterval(active.timer)
+    this.activeElapsed.delete(key)
   }
 
   private startTyping(operation: TextTurnOperation): void {
@@ -283,7 +340,11 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     ])
     const snapshot = this.statusProvider.getStatus(this.botId, chatId, projectId)
     const settings = this.settingsForChat(chatId, projectId)
-    const text = renderStatus(settings, defaults, snapshot, limits)
+    const active = this.activeElapsed.get(`${this.botId}:${chatId}`)
+    const elapsedMs = active?.projectId === projectId
+      ? Math.max(0, this.now() - active.startedAtMs)
+      : null
+    const text = renderStatus(settings, defaults, snapshot, limits, elapsedMs)
     const row = this.database.query<StatusPinRow, [string, string]>(
       'SELECT * FROM telegram_status_pins WHERE bot_id = ? AND chat_id = ?',
     ).get(this.botId, chatId)

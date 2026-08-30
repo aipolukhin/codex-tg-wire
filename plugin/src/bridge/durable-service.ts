@@ -274,6 +274,7 @@ export async function bootstrapDurableBridgeService(
         receivedReaction: config.ux.receivedReaction,
         pinnedStatus: config.ux.pinnedStatus,
         typingRefreshMs: config.ux.typingRefreshMs,
+        elapsedRefreshMs: config.ux.elapsedRefreshMs,
         quotaRefreshMs: config.ux.quotaRefreshMs,
         heartbeatAfterMs: config.ux.heartbeatAfterMs,
         heartbeatIntervalMs: config.ux.heartbeatIntervalMs,

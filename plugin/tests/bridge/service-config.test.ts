@@ -109,6 +109,7 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.ux.receivedReaction).toBeTrue()
     expect(config.ux.pinnedStatus).toBeTrue()
     expect(config.ux.typingRefreshMs).toBe(4_000)
+    expect(config.ux.elapsedRefreshMs).toBe(1_000)
     expect(config.ux.quotaRefreshMs).toBe(5 * 60_000)
     expect(config.voice.provider).toBe('none')
     expect(config.voiceApiKey).toBeNull()

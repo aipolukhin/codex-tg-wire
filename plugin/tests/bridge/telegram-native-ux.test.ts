@@ -239,6 +239,41 @@ describe('Telegram native UX', () => {
     ux.close()
   })
 
+  test('shows compact turn elapsed time and clears it at completion', async () => {
+    const telegram = new FakeTelegram()
+    let now = NOW
+    const ux = new TelegramNativeTurnUx(
+      database,
+      telegram,
+      {},
+      { getStatus: () => null },
+      'primary',
+      {
+        pinnedStatus: true,
+        elapsedRefreshMs: 10,
+        now: () => now,
+      },
+    )
+
+    ux.onPreparing(operation, {})
+    await ux.refreshChat(operation.chatId, operation.projectId)
+    expect(telegram.sent[0]?.text).toBe('default ctx:— · 0″')
+
+    now += 92_000
+    await Bun.sleep(15)
+    await ux.refreshChat(operation.chatId, operation.projectId)
+    expect(telegram.edits.at(-1)?.text).toBe('default ctx:— · 1′32″')
+
+    ux.onCompleted(operation, { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' })
+    await ux.refreshChat(operation.chatId, operation.projectId)
+    expect(telegram.edits.at(-1)?.text).toBe('default ctx:—')
+    const stoppedAt = telegram.edits.length
+    now += 10_000
+    await Bun.sleep(15)
+    expect(telegram.edits).toHaveLength(stoppedAt)
+    ux.close()
+  })
+
   test('pulses native typing while a turn is active and stops at completion', async () => {
     const telegram = new FakeTelegram()
     const ux = new TelegramNativeTurnUx(

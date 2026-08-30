@@ -187,10 +187,10 @@ function actionButtons(status: GitWorkspaceStatus): readonly (readonly CommandBu
   const prefix = `dx:g:${status.snapshotToken}:${status.projectIndex}`
   return [
     [
-      { text: '📝 Коммит', callbackData: `${prefix}:commit` },
-      { text: '🚀 Пуш', callbackData: `${prefix}:push` },
+      { text: 'Commit changes', callbackData: `${prefix}:commit` },
+      { text: 'Push', callbackData: `${prefix}:push` },
     ],
-    [{ text: '✅ Коммит & Пуш', callbackData: `${prefix}:commit-push` }],
+    [{ text: 'Commit & push', callbackData: `${prefix}:commit-push` }],
   ]
 }
 

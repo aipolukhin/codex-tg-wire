@@ -26,6 +26,7 @@ class FakeTelegram implements TelegramTextApi {
   readonly deletes: Array<{ chatId: string; messageId: number }> = []
   readonly actions: Array<{ chatId: string; action: 'typing' }> = []
   failNextEdit = false
+  failNextPin = false
 
   async sendMessage(
     chatId: string,
@@ -46,6 +47,10 @@ class FakeTelegram implements TelegramTextApi {
   }
 
   async pinChatMessage(chatId: string, messageId: number): Promise<true> {
+    if (this.failNextPin) {
+      this.failNextPin = false
+      throw new Error('pin failed')
+    }
     this.pins.push({ chatId, messageId })
     return true
   }
@@ -126,7 +131,7 @@ describe('Telegram native UX', () => {
     expect(telegram.sent[0]?.options).toEqual({
       disable_notification: true,
     })
-    expect(telegram.sent[0]?.text).toBe('gpt-5.6-sol xhigh 5h:92% w:79% ctx:6%')
+    expect(telegram.sent[0]?.text).toBe('5.6-sol-xh 5h:92% w:79% ctx:6%')
     expect(telegram.sent[0]?.text).not.toContain(operation.text)
     expect(telegram.pins).toEqual([{ chatId: '7001', messageId: 101 }])
 
@@ -134,6 +139,16 @@ describe('Telegram native UX', () => {
     expect(telegram.sent).toHaveLength(1)
     expect(telegram.edits).toHaveLength(0)
     expect(quotaReads).toBe(1)
+
+    telegram.failNextPin = true
+    await ux.refreshChat('7001', 'workspace', true)
+    expect(database.query<{ pinned: number }, []>(
+      'SELECT pinned FROM telegram_status_pins',
+    ).get()).toEqual({ pinned: 0 })
+    await ux.refreshChat('7001', 'workspace')
+    expect(database.query<{ pinned: number }, []>(
+      'SELECT pinned FROM telegram_status_pins',
+    ).get()).toEqual({ pinned: 1 })
 
     snapshot = { ...snapshot, phase: 'ACTIVE', inputTokens: 20_000 }
     await ux.refreshChat('7001', 'workspace')
@@ -150,6 +165,65 @@ describe('Telegram native UX', () => {
     expect(database.query<{ message_id: number; pinned: number }, []>(
       'SELECT message_id, pinned FROM telegram_status_pins',
     ).get()).toEqual({ message_id: 102, pinned: 1 })
+    ux.close()
+  })
+
+  test('omits an unavailable 5h window and refreshes the pin from the runtime heartbeat', async () => {
+    const telegram = new FakeTelegram()
+    let now = NOW
+    let weeklyUsedPercent = 10
+    let quotaReads = 0
+    const ux = new TelegramNativeTurnUx(
+      database,
+      telegram,
+      {
+        readRateLimits: async () => {
+          quotaReads += 1
+          return [{
+            id: 'codex',
+            name: 'Codex',
+            primary: {
+              usedPercent: weeklyUsedPercent,
+              windowDurationMins: 10_080,
+              resetsAt: null,
+            },
+            secondary: null,
+            planType: 'plus',
+            reachedType: null,
+          }]
+        },
+        readRuntimeDefaults: async () => ({ model: 'gpt-5.6-sol', effort: 'xhigh' }),
+      },
+      {
+        getStatus: () => ({
+          phase: 'ACTIVE',
+          activity: 'working',
+          planCompleted: 0,
+          planTotal: 0,
+          totalTokens: 90,
+          inputTokens: 90,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          threadTotalTokens: 90,
+          contextWindow: 100,
+          updatedAtMs: now,
+        }),
+      },
+      'primary',
+      { pinnedStatus: true, quotaRefreshMs: 100, now: () => now },
+    )
+
+    await ux.refreshChat('7001', 'workspace')
+    expect(telegram.sent[0]?.text).toBe('5.6-sol-xh w:90% ctx:90%')
+    expect(telegram.sent[0]?.text).not.toContain('5h:')
+
+    weeklyUsedPercent = 20
+    now += 100
+    expect(ux.runHeartbeat()).toBe(1)
+    await ux.refreshChat('7001', 'workspace')
+    expect(quotaReads).toBe(2)
+    expect(telegram.edits.at(-1)?.text).toBe('5.6-sol-xh w:80% ctx:90%')
+    expect(telegram.pins).toHaveLength(2)
     ux.close()
   })
 

@@ -48,6 +48,26 @@ function compactField(value: string | null | undefined): string | null {
   return compact.length === 0 ? null : compact.slice(0, 48)
 }
 
+function compactModel(value: string | null | undefined): string | null {
+  const compact = compactField(value)
+  if (compact === null) return null
+  return compact.replace(/^gpt-/i, '').slice(0, 32)
+}
+
+function compactEffort(value: string | null | undefined): string | null {
+  const compact = compactField(value)?.toLowerCase()
+  if (compact === null || compact === undefined) return null
+  const aliases: Readonly<Record<string, string>> = {
+    minimal: 'min',
+    low: 'l',
+    medium: 'm',
+    high: 'h',
+    xhigh: 'xh',
+    ultra: 'u',
+  }
+  return aliases[compact] ?? compact.slice(0, 8)
+}
+
 function rateLimitWindow(
   limits: readonly AgentRateLimit[] | null,
   durationMins: number,
@@ -72,16 +92,16 @@ function renderStatus(
   snapshot: AgentUxStatusSnapshot | null,
   limits: readonly AgentRateLimit[] | null,
 ): string {
-  const model = compactField(settings?.model) ?? compactField(defaults?.model) ?? 'default'
-  const effort = compactField(settings?.effort) ?? compactField(defaults?.effort) ?? 'default'
-  const parts = [model, effort]
+  const model = compactModel(settings?.model) ?? compactModel(defaults?.model) ?? 'default'
+  const effort = compactEffort(settings?.effort) ?? compactEffort(defaults?.effort)
+  const parts = [effort === null ? model : `${model}-${effort}`]
   const fiveHour = remaining(rateLimitWindow(limits, 5 * 60))
   const weekly = remaining(rateLimitWindow(limits, 7 * 24 * 60))
   if (fiveHour !== null) parts.push(`5h:${fiveHour}%`)
   if (weekly !== null) parts.push(`w:${weekly}%`)
   const context = snapshot?.inputTokens !== null && snapshot?.inputTokens !== undefined &&
     snapshot.contextWindow !== null && snapshot.contextWindow > 0
-    ? `${Math.min(999, Math.round((snapshot.inputTokens / snapshot.contextWindow) * 100))}%`
+    ? `${Math.min(100, Math.round((snapshot.inputTokens / snapshot.contextWindow) * 100))}%`
     : '—'
   parts.push(`ctx:${context}`)
   return parts.join(' ')
@@ -99,9 +119,10 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
   private readonly now: () => number
   private readonly typingTimers = new Map<string, ReturnType<typeof setInterval>>()
   private readonly refreshStates = new Map<string, {
-    pending: { chatId: string; projectId: string; forceQuota: boolean } | null
+    pending: { chatId: string; projectId: string; forceQuota: boolean; forcePin: boolean } | null
     promise: Promise<void>
   }>()
+  private readonly lastPinChecks = new Map<string, number>()
   private quotaCache: { limits: readonly AgentRateLimit[] | null; expiresAtMs: number } | null = null
   private readonly runtimeDefaults = new Map<
     string,
@@ -160,7 +181,12 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
   }
 
   /** Create or refresh the one status anchor after startup. */
-  refreshChat(chatId: string, projectId: string, forceQuota = false): Promise<void> {
+  refreshChat(
+    chatId: string,
+    projectId: string,
+    forceQuota = false,
+    forcePin = forceQuota,
+  ): Promise<void> {
     if (!this.pinnedStatus || this.closed) return Promise.resolve()
     const key = `${this.botId}:${chatId}`
     const active = this.refreshStates.get(key)
@@ -169,21 +195,27 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
         chatId,
         projectId,
         forceQuota: forceQuota || active.pending?.forceQuota === true,
+        forcePin: forcePin || active.pending?.forcePin === true,
       }
       return active.promise
     }
     const state: {
-      pending: { chatId: string; projectId: string; forceQuota: boolean } | null
+      pending: { chatId: string; projectId: string; forceQuota: boolean; forcePin: boolean } | null
       promise: Promise<void>
     } = {
-      pending: { chatId, projectId, forceQuota },
+      pending: { chatId, projectId, forceQuota, forcePin },
       promise: Promise.resolve(),
     }
     state.promise = (async () => {
       while (state.pending !== null && !this.closed) {
         const request = state.pending
         state.pending = null
-        await this.refreshStatus(request.chatId, request.projectId, request.forceQuota)
+        await this.refreshStatus(
+          request.chatId,
+          request.projectId,
+          request.forceQuota,
+          request.forcePin,
+        )
           .catch(() => undefined)
       }
     })()
@@ -192,6 +224,22 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
       if (this.refreshStates.get(key) === state) this.refreshStates.delete(key)
     })
     return state.promise
+  }
+
+  /** Refresh cached quota text and periodically verify every persisted Telegram pin. */
+  runHeartbeat(): number {
+    if (!this.pinnedStatus || this.closed) return 0
+    const rows = this.database.query<Pick<StatusPinRow, 'chat_id' | 'project_id'>, [string]>(
+      'SELECT chat_id, project_id FROM telegram_status_pins WHERE bot_id = ?',
+    ).all(this.botId)
+    const nowMs = this.now()
+    for (const row of rows) {
+      const key = `${this.botId}:${row.chat_id}`
+      const lastPinCheck = this.lastPinChecks.get(key)
+      const forcePin = lastPinCheck === undefined || lastPinCheck + this.quotaRefreshMs <= nowMs
+      void this.refreshChat(row.chat_id, row.project_id, false, forcePin)
+    }
+    return rows.length
   }
 
   close(): void {
@@ -221,7 +269,12 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     this.typingTimers.set(operation.operationKey, timer)
   }
 
-  private async refreshStatus(chatId: string, projectId: string, forceQuota: boolean): Promise<void> {
+  private async refreshStatus(
+    chatId: string,
+    projectId: string,
+    forceQuota: boolean,
+    forcePin: boolean,
+  ): Promise<void> {
     if (this.closed) return
     const [limits, defaults] = await Promise.all([
       this.readQuota(forceQuota),
@@ -235,16 +288,19 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     ).get(this.botId, chatId)
 
     if (row?.message_id !== null && row?.message_id !== undefined && row.text === text) {
-      if (row.pinned !== 1) await this.pinAndPersist(chatId, row.message_id, projectId, text, row.created_at_ms)
+      if (forcePin || row.pinned !== 1) {
+        await this.pinAndPersist(chatId, row.message_id, projectId, text, row.created_at_ms)
+      }
       return
     }
 
     if (row?.message_id !== null && row?.message_id !== undefined && this.api.editMessageText !== undefined) {
       try {
         await this.api.editMessageText(chatId, row.message_id, text, {})
-        this.persist(chatId, projectId, row.message_id, text, row.pinned === 1, row.created_at_ms)
-        if (row.pinned !== 1) {
+        if (forcePin || row.pinned !== 1) {
           await this.pinAndPersist(chatId, row.message_id, projectId, text, row.created_at_ms)
+        } else {
+          this.persist(chatId, projectId, row.message_id, text, true, row.created_at_ms)
         }
         return
       } catch {
@@ -277,16 +333,22 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     createdAtMs: number,
   ): Promise<void> {
     const pinned = await this.tryPin(chatId, messageId)
-    if (pinned) this.persist(chatId, projectId, messageId, text, true, createdAtMs)
+    this.persist(chatId, projectId, messageId, text, pinned, createdAtMs)
   }
 
   private async tryPin(chatId: string, messageId: number): Promise<boolean> {
-    if (this.api.pinChatMessage === undefined) return false
+    const key = `${this.botId}:${chatId}`
+    if (this.api.pinChatMessage === undefined) {
+      this.lastPinChecks.set(key, this.now())
+      return false
+    }
     try {
       await this.api.pinChatMessage(chatId, messageId)
       return true
     } catch {
       return false
+    } finally {
+      this.lastPinChecks.set(key, this.now())
     }
   }
 

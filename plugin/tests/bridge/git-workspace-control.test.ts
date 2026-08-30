@@ -120,6 +120,13 @@ describe('GitWorkspaceControl', () => {
     const callbacks = ['commit', 'push', 'commit-push'].map((action) =>
       callback(deliveries[0]!, action))
     expect(callbacks.every((value) => value.length < 64)).toBeTrue()
+    expect((deliveries[0]?.payload as {
+      options: { reply_markup: { inline_keyboard: Array<Array<{ text: string }>> } }
+    }).options.reply_markup.inline_keyboard.flat().map((button) => button.text)).toEqual([
+      'Commit changes',
+      'Push',
+      'Commit & push',
+    ])
   })
 
   test('commits and pushes through snapshot-guarded idempotent actions', async () => {

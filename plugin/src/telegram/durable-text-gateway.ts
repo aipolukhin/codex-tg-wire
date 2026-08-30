@@ -73,6 +73,9 @@ export interface TelegramTextApi {
     options: TelegramMessageOptions,
   ): Promise<{ message_id: number }>
   deleteMessage?(chatId: string, messageId: number): Promise<true>
+  sendChatAction?(chatId: string, action: 'typing'): Promise<true>
+  setMessageReaction?(chatId: string, messageId: number, emoji: '👀'): Promise<true>
+  pinChatMessage?(chatId: string, messageId: number): Promise<true>
 }
 
 export type TelegramInlineButton =
@@ -81,6 +84,7 @@ export type TelegramInlineButton =
 
 export interface TelegramMessageOptions {
   parse_mode?: 'HTML'
+  disable_notification?: boolean
   reply_markup?: { inline_keyboard: TelegramInlineButton[][] }
 }
 

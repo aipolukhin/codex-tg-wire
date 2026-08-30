@@ -73,6 +73,10 @@ Apache-2.0.
   скрытый ввод секрета, валидация рядом с prompt, спокойный Ctrl+C и идемпотентный
   повтор setup. В `install.sh` этот UX реализован заново на Bash/ANSI без
   зависимостей от Rich/questionary.
+- native presence из `bridge/presence`: throttled
+  `sendChatAction("typing")`, best-effort 👀 receipt и один тихий закреп со
+  схемой edit-in-place → send/pin/delete fallback. TypeScript-реализация хранит
+  только заменяемый anchor и payload-free telemetry в основной SQLite.
 
 В codex-tg-wire эта модель заново реализована на TypeScript/Bun и расширена на
 turn queue, Codex thread bindings, approvals, callbacks и App Server recovery.
@@ -162,7 +166,8 @@ transport не объявлен поддерживаемым.
 - Durable Telegram poller, gateway, attachment store, outbound media/album path,
   rate limiter и voice adapter.
 - payload-free event projector, heartbeat, `/status` snapshot и
-  unknown-notification journal; Telegram HUD выключен по умолчанию.
+  unknown-notification journal; per-answer HUD выключен, а quota/context
+  показываются в одном нативном закрепе.
 - Doctor, health/readiness/watchdog, backup/restore, retention, soak/chaos gates,
   SBOM, reproducible artifacts, optional hardened Docker wrapper и atomic
   upgrade/rollback.

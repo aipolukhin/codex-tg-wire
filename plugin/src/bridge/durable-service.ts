@@ -25,7 +25,10 @@ import {
   GroqCredentialManager,
   ManagedGroqVoiceTranscriber,
 } from './voice-credentials.js'
-import { registerOwnerScopedCommands } from '../telegram/command-scope.js'
+import {
+  ownerPrivateChatIds,
+  registerOwnerScopedCommands,
+} from '../telegram/command-scope.js'
 import { PERSONAL_ALPHA_BOT_COMMANDS } from './personal-alpha-command-menu.js'
 
 export interface DurableBridgeServiceLogger {
@@ -258,6 +261,11 @@ export async function bootstrapDurableBridgeService(
       ux: {
         enabled: config.ux.enabled,
         chatStatusMessages: config.ux.chatStatusMessages,
+        typingIndicator: config.ux.typingIndicator,
+        receivedReaction: config.ux.receivedReaction,
+        pinnedStatus: config.ux.pinnedStatus,
+        typingRefreshMs: config.ux.typingRefreshMs,
+        quotaRefreshMs: config.ux.quotaRefreshMs,
         heartbeatAfterMs: config.ux.heartbeatAfterMs,
         heartbeatIntervalMs: config.ux.heartbeatIntervalMs,
       },
@@ -283,6 +291,12 @@ export async function bootstrapDurableBridgeService(
     })
     const recovery = await runtime.recoverStartup()
     options.logger?.info('durable startup recovery completed', recovery)
+    for (const chatId of ownerPrivateChatIds([
+      ...config.telegram.allowedUserIds,
+      ...config.telegram.allowedChatIds,
+    ])) {
+      await runtime.refreshNativeStatus(String(chatId))
+    }
     const poller = new DurableTelegramPoller(
       identity.botId,
       telegram,

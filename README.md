@@ -108,6 +108,11 @@ recovery fallback.
 After owner activation, the bot registers this command menu only for the owner's
 private chat, so typing `/` opens native Telegram suggestions.
 
+The chat stays quiet and native: Telegram shows **typing…** while Codex works,
+the accepted owner message gets a 👀 receipt, and one silent pinned status is
+edited in place with the active project, remaining quota and live context usage.
+No technical card is sent before every answer.
+
 Replying to a delivered Codex answer routes the next message back to the exact
 thread that produced it — even if you switched sessions in the meantime.
 
@@ -253,7 +258,9 @@ public chats, fleet orchestration or full Dashi multichat. See the
 - tokens stay outside JSON and SQLite;
 - paths are confined to configured projects and verified again before use;
 - outgoing text is redacted and Telegram HTML is validated;
-- every send/edit/delete/reaction/media mutation uses the durable outbox;
+- answers, files and user-requested edits/deletes use the durable outbox;
+- cosmetic typing, 👀 receipt and the replaceable pinned status are best-effort
+  native Telegram presence and can never block or retry a Codex turn;
 - old completed payloads, diffs and reply routes are scrubbed by retention;
 - Safe and YOLO are explicit execution profiles, not hidden behavior.
 

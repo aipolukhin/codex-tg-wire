@@ -67,6 +67,7 @@ describe('durable database migrations', () => {
       'telegram_chat_preferences',
       'telegram_message_routes',
       'telegram_poll_cursors',
+      'telegram_status_pins',
       'telegram_updates',
       'thread_bindings',
       'thread_registry',
@@ -78,7 +79,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(18)
+    expect(migrations?.count).toBe(19)
   })
 
   test('migrates cumulative HUD totals without relabelling them as current context', () => {

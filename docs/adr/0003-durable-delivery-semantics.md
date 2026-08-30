@@ -18,15 +18,21 @@ The hybrid runtime will use a SQLite inbox and outbox with leases.
 
 - Persist each inbound update under unique `(bot_id, update_id)` before
   advancing the polling offset.
-- Route every Telegram mutation through a delivery job.
+- Route every user-content delivery and interaction mutation through a
+  delivery job.
 - Record `send_started_at` immediately before the external API call.
 - An expired lease without `send_started_at` returns to retry.
 - An expired lease with `send_started_at` becomes `AMBIGUOUS`.
 - Never automatically retry `AMBIGUOUS` jobs.
 - Mark a job `DELIVERED` only with a stored remote message id or equivalent
   proof returned by Telegram.
-- Put text, media, albums, edits, deletes, and reactions under the same state
-  machine and administrative problem center.
+- Put answers, media, albums, requested edits/deletes and durable interactions
+  under the same state machine and administrative problem center.
+- Keep replaceable native presence outside delivery correctness: typing, the
+  idempotent 👀 accepted receipt and the single pinned status are best-effort,
+  rate-limited calls. Their failures are swallowed and never retry a Codex
+  turn. The status anchor id/text is persisted only to enable edit-in-place and
+  stale-anchor replacement.
 - Add structural tests that forbid Telegram API imports outside the sender
   boundary.
 

@@ -64,6 +64,7 @@ class FakeTelegramApi {
   readonly downloads = new Map<string, TelegramAttachmentDownload>()
   readonly downloadCalls: string[] = []
   readonly media: Array<{ chatId: string; kind: TelegramMediaKind; fileName: string }> = []
+  readonly reactions: Array<{ chatId: string; messageId: number; emoji: '👀' }> = []
 
   async sendMessage(chatId: string, text: string): Promise<{ message_id: number }> {
     this.sent.push({ chatId, text })
@@ -72,6 +73,11 @@ class FakeTelegramApi {
 
   async editMessageText(chatId: string, messageId: number, text: string): Promise<true> {
     this.edits.push({ chatId, messageId, text })
+    return true
+  }
+
+  async setMessageReaction(chatId: string, messageId: number, emoji: '👀'): Promise<true> {
+    this.reactions.push({ chatId, messageId, emoji })
     return true
   }
 
@@ -163,6 +169,7 @@ beforeEach(async () => {
     },
     inboxWorker: { now: () => clockNow },
     outboxWorker: { now: () => clockNow },
+    ux: { receivedReaction: true },
     albumFlushMs: 100,
     voiceTranscriber: {
       transcribe: async (attachment) => ({
@@ -185,6 +192,32 @@ afterEach(async () => {
 })
 
 describe('durable text runtime composition', () => {
+  test('acknowledges an authorized private message with a native eye reaction', async () => {
+    runtime.ingest({
+      update_id: 800,
+      message: {
+        message_id: 44,
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: 'принято?',
+      },
+    }, NOW)
+    await Bun.sleep(0)
+    expect(telegram.reactions).toEqual([{ chatId: '7001', messageId: 44, emoji: '👀' }])
+
+    runtime.ingest({
+      update_id: 801,
+      message: {
+        message_id: 45,
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/status',
+      },
+    }, NOW)
+    await Bun.sleep(0)
+    expect(telegram.reactions).toHaveLength(1)
+  })
+
   test('registers and delivers a local file only through the durable outbox', async () => {
     const path = join(root, 'generated-report.pdf')
     writeFileSync(path, '%PDF-generated')

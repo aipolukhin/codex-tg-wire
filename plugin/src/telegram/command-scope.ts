@@ -22,6 +22,23 @@ export interface CommandScopeLogger {
   warn(message: string, context?: Record<string, unknown>): void
 }
 
+export function ownerPrivateChatIds(
+  values: ReadonlyArray<number | string>,
+): Array<number | string> {
+  const result: Array<number | string> = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const numeric = typeof value === 'number'
+      ? Number.isSafeInteger(value) && value > 0
+      : /^[1-9]\d*$/.test(value)
+    const key = String(value)
+    if (!numeric || seen.has(key)) continue
+    seen.add(key)
+    result.push(value)
+  }
+  return result
+}
+
 // Structural subset of grammY's `bot.api` this routine needs. Kept narrow so
 // the module never reaches into grammY internals and unit tests can pass a fake
 // recording object. The scope object literals match the exact Telegram
@@ -72,19 +89,14 @@ export async function registerOwnerScopedCommands(
   // were DROPPED from the allowlist — a removed owner keeps a stale menu until
   // its scope is explicitly deleted. Tracked separately.
   let registered = 0
-  const seen = new Set<string>()
   for (const chatId of chatIds) {
-    const numeric = typeof chatId === 'number'
-      ? Number.isSafeInteger(chatId) && chatId > 0
-      : /^[1-9]\d*$/.test(chatId)
-    const key = String(chatId)
-    if (!numeric || seen.has(key)) {
+    if (!ownerPrivateChatIds([chatId]).length) {
       log.info('command-scope: skipping non-DM chat id (owner menu is DM-only)', {
         chat_id: chatId,
       })
-      continue
     }
-    seen.add(key)
+  }
+  for (const chatId of ownerPrivateChatIds(chatIds)) {
     try {
       await api.setMyCommands(commands, { scope: { type: 'chat', chat_id: chatId } })
       registered += 1

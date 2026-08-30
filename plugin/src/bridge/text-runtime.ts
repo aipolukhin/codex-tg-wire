@@ -52,6 +52,10 @@ import {
 } from './durable-session-coordinator.js'
 import { DurableTurnUxProjector, type DurableTurnUxOptions } from './durable-turn-ux.js'
 import {
+  TelegramNativeTurnUx,
+  type TelegramNativeTurnUxOptions,
+} from './telegram-native-ux.js'
+import {
   InboxProcessingWorker,
   type InboxProcessingWorkerOptions,
   type InboxRunResult,
@@ -64,7 +68,11 @@ import {
 import { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import { M65SessionCoordinator } from './m65-session-coordinator.js'
 import { M65InteractionHandler } from './m65-interaction-handler.js'
-import type { AgentApprovalPolicy, AgentSandboxMode } from './contracts.js'
+import type {
+  AgentApprovalPolicy,
+  AgentSandboxMode,
+  AgentTurnUxObserver,
+} from './contracts.js'
 import {
   StartupTurnRecovery,
   type TurnRecoverySweep,
@@ -86,7 +94,9 @@ export interface DurableTextRuntimeOptions {
   }
   inboxWorker?: Omit<InboxProcessingWorkerOptions, 'workerId' | 'commandHandler'> & { workerId?: string }
   outboxWorker?: Omit<OutboxDeliveryWorkerOptions, 'workerId'> & { workerId?: string }
-  ux?: DurableTurnUxOptions
+  ux?: DurableTurnUxOptions & TelegramNativeTurnUxOptions & {
+    receivedReaction?: boolean
+  }
   outboundMedia?: Omit<DurableOutboundMediaOptions, 'allowedRoots'> & {
     allowedRoots?: readonly string[]
   }
@@ -134,6 +144,7 @@ export interface DurableTextRuntime {
   deliverOutboundOnce(): Promise<DeliveryRunResult>
   recoverExpiredLeases(): LeaseRecoverySweep
   runUxHeartbeat(): number
+  refreshNativeStatus(chatId: string): Promise<void>
   enqueueOutboundMedia(input: EnqueueOutboundMediaInput): Promise<EnqueueResult>
   enqueueOutboundAlbum(input: EnqueueOutboundAlbumInput): Promise<EnqueueResult>
   recoverStartup(): Promise<{
@@ -159,13 +170,25 @@ function telegramRoute(update: unknown): {
   chatId: string | null
   routingClass: UpdateRoutingClass
   mediaGroupId: string | null
+  messageId: number | null
+  senderId: string | null
+  chatType: string | null
 } {
   if (typeof update !== 'object' || update === null || Array.isArray(update)) {
-    return { chatId: null, routingClass: 'OTHER', mediaGroupId: null }
+    return {
+      chatId: null,
+      routingClass: 'OTHER',
+      mediaGroupId: null,
+      messageId: null,
+      senderId: null,
+      chatType: null,
+    }
   }
   const value = update as {
     message?: {
-      chat?: { id?: unknown }
+      message_id?: unknown
+      chat?: { id?: unknown; type?: unknown }
+      from?: { id?: unknown }
       text?: unknown
       caption?: unknown
       photo?: unknown
@@ -179,10 +202,36 @@ function telegramRoute(update: unknown): {
   }
   const callbackChatId = value.callback_query?.message?.chat?.id
   if (callbackChatId !== undefined) {
-    return { chatId: String(callbackChatId), routingClass: 'CONTROL', mediaGroupId: null }
+    return {
+      chatId: String(callbackChatId),
+      routingClass: 'CONTROL',
+      mediaGroupId: null,
+      messageId: null,
+      senderId: null,
+      chatType: null,
+    }
   }
   const chatId = value.message?.chat?.id
-  if (chatId === undefined) return { chatId: null, routingClass: 'OTHER', mediaGroupId: null }
+  if (chatId === undefined) {
+    return {
+      chatId: null,
+      routingClass: 'OTHER',
+      mediaGroupId: null,
+      messageId: null,
+      senderId: null,
+      chatType: null,
+    }
+  }
+  const rawMessageId = value.message?.message_id
+  const messageId = Number.isSafeInteger(rawMessageId) && (rawMessageId as number) > 0
+    ? rawMessageId as number
+    : null
+  const senderId = value.message?.from?.id === undefined
+    ? null
+    : String(value.message.from.id)
+  const chatType = typeof value.message?.chat?.type === 'string'
+    ? value.message.chat.type
+    : null
   const hasAttachment = Array.isArray(value.message?.photo) ||
     (typeof value.message?.document === 'object' && value.message.document !== null) ||
     (typeof value.message?.voice === 'object' && value.message.voice !== null) ||
@@ -190,7 +239,14 @@ function telegramRoute(update: unknown): {
     (typeof value.message?.video === 'object' && value.message.video !== null)
   const messageText = value.message?.text
   if (typeof messageText !== 'string' && !hasAttachment) {
-    return { chatId: String(chatId), routingClass: 'OTHER', mediaGroupId: null }
+    return {
+      chatId: String(chatId),
+      routingClass: 'OTHER',
+      mediaGroupId: null,
+      messageId,
+      senderId,
+      chatType,
+    }
   }
   const rawMediaGroupId = value.message?.media_group_id
   const mediaGroupId = typeof rawMediaGroupId === 'string' && rawMediaGroupId.trim().length > 0
@@ -202,6 +258,9 @@ function telegramRoute(update: unknown): {
       ? 'CONTROL'
       : 'MESSAGE',
     mediaGroupId,
+    messageId,
+    senderId,
+    chatType,
   }
 }
 
@@ -277,15 +336,51 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     interactionTimeoutMs === undefined ? {} : { interactionTimeoutMs },
   )
   const ux = new DurableTurnUxProjector(options.database, outbox, sessions, options.ux)
+  const nativeUx = new TelegramNativeTurnUx(
+    options.database,
+    options.telegramApi,
+    backend,
+    ux,
+    options.botId,
+    options.ux,
+  )
+  // Persist telemetry first; the native projection then reads the new snapshot.
+  const uxObserver: AgentTurnUxObserver = {
+    onPreparing(operation, turnSettings) {
+      ux.onPreparing(operation, turnSettings)
+      nativeUx.onPreparing(operation, turnSettings)
+    },
+    onThreadReady(operation, threadId) {
+      ux.onThreadReady(operation, threadId)
+      nativeUx.onThreadReady(operation, threadId)
+    },
+    onTurnStarted(operation, threadId, turnId) {
+      ux.onTurnStarted(operation, threadId, turnId)
+      nativeUx.onTurnStarted(operation, threadId, turnId)
+    },
+    onProgress(operation, progress) {
+      ux.onProgress(operation, progress)
+      nativeUx.onProgress(operation, progress)
+    },
+    onCompleted(operation, result) {
+      ux.onCompleted(operation, result)
+      nativeUx.onCompleted(operation, result)
+    },
+    onTerminal(operation, state, errorName) {
+      ux.onTerminal(operation, state, errorName)
+      nativeUx.onTerminal(operation, state, errorName)
+    },
+  }
+  const projectIdForChat = (chatId: string): string => {
+    const selected = settings.getSelectedProject(options.botId, chatId)
+    return selected !== null && projectIds.has(selected)
+      ? selected
+      : options.telegram.defaultProjectId
+  }
   const telegram = new DurableTelegramTextGateway(options.telegramApi, {
     ...options.telegram,
     ...(attachmentStore === undefined ? {} : { attachmentStore }),
-    projectIdForChat: (chatId) => {
-      const selected = settings.getSelectedProject(options.botId, chatId)
-      return selected !== null && projectIds.has(selected)
-        ? selected
-        : options.telegram.defaultProjectId
-    },
+    projectIdForChat,
     deliveryProofForSourceKey: (sourceKey) =>
       outbox.getBySourceKey(sourceKey)?.remoteId ?? null,
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
@@ -297,7 +392,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     sessions,
     backend,
     new StaticProjectResolver(options.projects),
-    { settingsProvider: settings, uxObserver: ux },
+    { settingsProvider: settings, uxObserver },
   )
   const coordinator = new M65SessionCoordinator(
     baseCoordinator,
@@ -360,6 +455,10 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
       })
     : undefined
   const startupRecovery = new StartupTurnRecovery(sessions, inbox, outbox, backend)
+  const allowedUsers = new Set(options.telegram.allowedUserIds.map(String))
+  const allowedChats = new Set(options.telegram.allowedChatIds.map(String))
+  const receivedReaction = options.ux?.enabled !== false &&
+    (options.ux?.receivedReaction ?? false)
 
   return {
     ingest(update: unknown, receivedAtMs = Date.now()): IngestResult {
@@ -373,6 +472,22 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
         receivedAtMs,
       }
       const result = inbox.ingest(input)
+      if (
+        receivedReaction &&
+        options.telegramApi.setMessageReaction !== undefined &&
+        route.routingClass === 'MESSAGE' &&
+        route.chatType === 'private' &&
+        route.chatId !== null &&
+        route.messageId !== null &&
+        route.senderId !== null &&
+        allowedChats.has(route.chatId) &&
+        allowedUsers.has(route.senderId)
+      ) {
+        // Like Telemax receipts: acknowledgement is useful, but never part of delivery correctness.
+        void options.telegramApi
+          .setMessageReaction(route.chatId, route.messageId, '👀')
+          .catch(() => undefined)
+      }
       if (result.created && route.mediaGroupId !== null && route.routingClass === 'MESSAGE') {
         inbox.registerAlbumFragment({
           updateRowId: result.update.id,
@@ -391,6 +506,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
       return sweep
     },
     runUxHeartbeat: () => ux.runHeartbeat(),
+    refreshNativeStatus: (chatId) => nativeUx.refreshChat(chatId, projectIdForChat(chatId), true),
     async enqueueOutboundMedia(input) {
       if (outboundMediaStore === undefined) throw new Error('outbound media is not configured')
       const reference = await outboundMediaStore.register(input)
@@ -430,6 +546,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
       return { turns: turnSweep, interactions: interactionSweep, uxRecovered }
     },
     close(): void {
+      nativeUx.close()
       interactions.close()
       backend.close()
     },

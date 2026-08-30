@@ -111,6 +111,11 @@ export const BridgeConfigFileSchema = z
       .object({
         enabled: z.boolean().default(true),
         chatStatusMessages: z.boolean().default(false),
+        typingIndicator: z.boolean().default(true),
+        receivedReaction: z.boolean().default(true),
+        pinnedStatus: z.boolean().default(true),
+        typingRefreshMs: z.number().int().min(1_000).max(5_000).default(4_000),
+        quotaRefreshMs: z.number().int().min(30_000).default(5 * 60_000),
         heartbeatAfterMs: z.number().int().min(10_000).default(2 * 60_000),
         heartbeatIntervalMs: z.number().int().min(10_000).default(5 * 60_000),
         pollIntervalMs: z.number().int().min(1_000).default(30_000),

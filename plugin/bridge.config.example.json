@@ -65,6 +65,11 @@
   "ux": {
     "enabled": true,
     "chatStatusMessages": false,
+    "typingIndicator": true,
+    "receivedReaction": true,
+    "pinnedStatus": true,
+    "typingRefreshMs": 4000,
+    "quotaRefreshMs": 300000,
     "heartbeatAfterMs": 120000,
     "heartbeatIntervalMs": 300000,
     "pollIntervalMs": 30000

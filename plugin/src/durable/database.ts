@@ -579,6 +579,23 @@ const MIGRATIONS: readonly Migration[] = [
         output_tokens = NULL`,
     ],
   },
+  {
+    version: 19,
+    name: 'telegram_native_status_pin',
+    statements: [
+      `CREATE TABLE telegram_status_pins (
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        message_id INTEGER CHECK (message_id IS NULL OR message_id > 0),
+        text TEXT,
+        pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (bot_id, chat_id)
+      )`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

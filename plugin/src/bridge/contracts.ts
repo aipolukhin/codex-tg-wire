@@ -275,6 +275,8 @@ export interface AgentRateLimitWindow {
 export interface AgentRateLimit {
   id: string
   name: string | null
+  /** The account/rateLimits/read singleton selected for the current quota mode. */
+  isCurrent?: boolean
   primary: AgentRateLimitWindow | null
   secondary: AgentRateLimitWindow | null
   planType: string | null

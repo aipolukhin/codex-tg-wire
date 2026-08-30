@@ -179,18 +179,30 @@ describe('Telegram native UX', () => {
       {
         readRateLimits: async () => {
           quotaReads += 1
-          return [{
-            id: 'codex',
-            name: 'Codex',
-            primary: {
-              usedPercent: weeklyUsedPercent,
-              windowDurationMins: 10_080,
-              resetsAt: null,
+          return [
+            {
+              id: 'codex_bengalfox',
+              name: 'GPT-5.3-Codex-Spark',
+              isCurrent: false,
+              primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: null },
+              secondary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: null },
+              planType: 'plus',
+              reachedType: null,
             },
-            secondary: null,
-            planType: 'plus',
-            reachedType: null,
-          }]
+            {
+              id: 'codex',
+              name: 'Codex',
+              isCurrent: true,
+              primary: {
+                usedPercent: weeklyUsedPercent,
+                windowDurationMins: 10_080,
+                resetsAt: null,
+              },
+              secondary: null,
+              planType: 'plus',
+              reachedType: null,
+            },
+          ]
         },
         readRuntimeDefaults: async () => ({ model: 'gpt-5.6-sol', effort: 'xhigh' }),
       },

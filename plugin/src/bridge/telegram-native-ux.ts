@@ -72,11 +72,12 @@ function rateLimitWindow(
   limits: readonly AgentRateLimit[] | null,
   durationMins: number,
 ): AgentRateLimit['primary'] {
-  if (limits === null) return null
-  for (const limit of limits) {
-    for (const window of [limit.primary, limit.secondary]) {
-      if (window?.windowDurationMins === durationMins) return window
-    }
+  if (limits === null || limits.length === 0) return null
+  const current = limits.find((limit) => limit.isCurrent === true) ??
+    (limits.length === 1 ? limits[0] : null)
+  if (current === null || current === undefined) return null
+  for (const window of [current.primary, current.secondary]) {
+    if (window?.windowDurationMins === durationMins) return window
   }
   return null
 }

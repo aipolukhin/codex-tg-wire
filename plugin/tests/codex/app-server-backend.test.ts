@@ -13,6 +13,7 @@ import {
   CodexTurnTimeoutError,
 } from '../../src/codex/app-server-backend.js'
 import type {
+  AccountRateLimitsResult,
   ModelListParams,
   ModelListResult,
   ReviewStartParams,
@@ -49,6 +50,15 @@ class FakeBackendClient {
   emitDuringReviewStart: (() => void) | undefined
   modelPages: ModelListResult[] = [{ data: [], nextCursor: null }]
   threadReadResults = new Map<string, ThreadReadResult>()
+  rateLimitResult: AccountRateLimitsResult = {
+    rateLimits: {
+      limitId: 'codex', limitName: 'Codex',
+      primary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+      secondary: null, credits: null, planType: 'pro', rateLimitReachedType: null,
+    },
+    rateLimitsByLimitId: null,
+    rateLimitResetCredits: null,
+  }
 
   async listModels(_params: ModelListParams = {}): Promise<ModelListResult> {
     this.modelLists.push(_params)
@@ -69,16 +79,8 @@ class FakeBackendClient {
     }
   }
 
-  async readRateLimits() {
-    return {
-      rateLimits: {
-        limitId: 'codex', limitName: 'Codex',
-        primary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: 1_900_000_000 },
-        secondary: null, credits: null, planType: 'pro', rateLimitReachedType: null,
-      },
-      rateLimitsByLimitId: null,
-      rateLimitResetCredits: null,
-    }
+  async readRateLimits(): Promise<AccountRateLimitsResult> {
+    return this.rateLimitResult
   }
 
   async readConfig() {
@@ -222,7 +224,8 @@ describe('CodexAppServerBackend text turns', () => {
       loginId: 'login-1', verificationUrl: 'https://example.com/device', userCode: 'ABCD',
     })
     expect(await backend.readRateLimits()).toEqual([expect.objectContaining({
-      id: 'codex', name: 'Codex', primary: expect.objectContaining({ usedPercent: 12.5 }),
+      id: 'codex', name: 'Codex', isCurrent: true,
+      primary: expect.objectContaining({ usedPercent: 12.5 }),
     })])
     expect(await backend.readRuntimeDefaults('/workspace/project')).toEqual({
       model: 'gpt-5.6-sol', effort: 'xhigh',
@@ -233,6 +236,41 @@ describe('CodexAppServerBackend text turns', () => {
     })
     expect(await backend.listNativeThreads({ cwd: ['/workspace/project'] })).toEqual([
       expect.objectContaining({ id: 'native-1', cwd: '/workspace/project', name: 'Release' }),
+    ])
+  })
+
+  test('marks the active quota without confusing it with model-specific limits', async () => {
+    const client = new FakeBackendClient()
+    client.rateLimitResult = {
+      rateLimits: {
+        limitId: 'codex', limitName: null,
+        primary: { usedPercent: 13, windowDurationMins: 10_080, resetsAt: 1_788_643_291 },
+        secondary: null, credits: null, planType: 'pro', rateLimitReachedType: null,
+      },
+      rateLimitsByLimitId: {
+        codex_bengalfox: {
+          limitId: 'codex_bengalfox', limitName: 'GPT-5.3-Codex-Spark',
+          primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1_788_092_873 },
+          secondary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: 1_788_679_673 },
+          credits: null, planType: 'pro', rateLimitReachedType: null,
+        },
+        codex: {
+          limitId: 'codex', limitName: null,
+          primary: { usedPercent: 13, windowDurationMins: 10_080, resetsAt: 1_788_643_291 },
+          secondary: null, credits: null, planType: 'pro', rateLimitReachedType: null,
+        },
+      },
+      rateLimitResetCredits: null,
+    }
+
+    expect(await new CodexAppServerBackend(client).readRateLimits()).toEqual([
+      expect.objectContaining({ id: 'codex_bengalfox', isCurrent: false }),
+      expect.objectContaining({
+        id: 'codex',
+        isCurrent: true,
+        primary: expect.objectContaining({ usedPercent: 13, windowDurationMins: 10_080 }),
+        secondary: null,
+      }),
     ])
   })
 

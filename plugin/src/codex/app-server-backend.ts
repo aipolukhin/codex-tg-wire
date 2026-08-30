@@ -555,13 +555,16 @@ export class CodexAppServerBackend implements AgentBackend {
     const method = requiredMethod(this.client.readRateLimits, 'account/rateLimits/read')
       .bind(this.client)
     const result = await method()
+    const currentId = result.rateLimits.limitId ?? 'default'
     const source = result.rateLimitsByLimitId === null
-      ? [[result.rateLimits.limitId ?? 'default', result.rateLimits] as const]
+      ? [[currentId, result.rateLimits] as const]
       : Object.entries(result.rateLimitsByLimitId)
           .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] !== undefined)
+    if (!source.some(([id]) => id === currentId)) source.unshift([currentId, result.rateLimits])
     return source.map(([id, value]) => ({
       id,
       name: value.limitName,
+      isCurrent: id === currentId,
       primary: value.primary,
       secondary: value.secondary,
       planType: value.planType,

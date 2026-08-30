@@ -60,6 +60,12 @@ describe('registerOwnerScopedCommands', () => {
     for (const s of sets) expect(s.scope.type).toBe('chat')
   })
 
+  test('accepts string Telegram ids from the standalone bridge config and deduplicates them', async () => {
+    const { api, sets } = fakeApi()
+    await registerOwnerScopedCommands(api, CMDS, ['74674289', '74674289', '-100222'], log)
+    expect(sets.map((s) => s.scope.chat_id)).toEqual(['74674289'])
+  })
+
   test('FIX-11: a failure of the FIRST deleteMyCommands still runs the second', async () => {
     const deletes: Array<{ scope?: { type: string } } | undefined> = []
     const sets: Array<number | string> = []

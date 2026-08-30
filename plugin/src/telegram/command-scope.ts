@@ -12,11 +12,14 @@
 // revoked token) never blocks startup. The whole routine is a fire-and-forget
 // side effect at boot.
 
-import type { Logger } from '../log.js'
-
 export interface CommandSpec {
   command: string
   description: string
+}
+
+export interface CommandScopeLogger {
+  info(message: string, context?: Record<string, unknown>): void
+  warn(message: string, context?: Record<string, unknown>): void
 }
 
 // Structural subset of grammY's `bot.api` this routine needs. Kept narrow so
@@ -38,7 +41,7 @@ export async function registerOwnerScopedCommands(
   api: CommandScopeApi,
   commands: readonly CommandSpec[],
   chatIds: ReadonlyArray<number | string>,
-  log: Logger,
+  log: CommandScopeLogger,
 ): Promise<void> {
   // 1. Clear the broader scopes so their old entries stop showing. FIX-11
   //    (Fable L5): the two deletes live in SEPARATE try/catch so a failure of
@@ -69,13 +72,19 @@ export async function registerOwnerScopedCommands(
   // were DROPPED from the allowlist — a removed owner keeps a stale menu until
   // its scope is explicitly deleted. Tracked separately.
   let registered = 0
+  const seen = new Set<string>()
   for (const chatId of chatIds) {
-    if (typeof chatId !== 'number' || !Number.isInteger(chatId) || chatId <= 0) {
+    const numeric = typeof chatId === 'number'
+      ? Number.isSafeInteger(chatId) && chatId > 0
+      : /^[1-9]\d*$/.test(chatId)
+    const key = String(chatId)
+    if (!numeric || seen.has(key)) {
       log.info('command-scope: skipping non-DM chat id (owner menu is DM-only)', {
         chat_id: chatId,
       })
       continue
     }
+    seen.add(key)
     try {
       await api.setMyCommands(commands, { scope: { type: 'chat', chat_id: chatId } })
       registered += 1

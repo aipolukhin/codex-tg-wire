@@ -25,6 +25,8 @@ import {
   GroqCredentialManager,
   ManagedGroqVoiceTranscriber,
 } from './voice-credentials.js'
+import { registerOwnerScopedCommands } from '../telegram/command-scope.js'
+import { PERSONAL_ALPHA_BOT_COMMANDS } from './personal-alpha-command-menu.js'
 
 export interface DurableBridgeServiceLogger {
   info(message: string, context?: Record<string, unknown>): void
@@ -145,6 +147,17 @@ export async function bootstrapDurableBridgeService(
     botId: String(bot.botInfo.id),
     botUsername: bot.botInfo.username,
   }
+
+  await registerOwnerScopedCommands(
+    {
+      deleteMyCommands: (commandOptions) => bot.api.deleteMyCommands(commandOptions),
+      setMyCommands: (commands, commandOptions) =>
+        bot.api.setMyCommands([...commands], commandOptions),
+    },
+    PERSONAL_ALPHA_BOT_COMMANDS,
+    [...config.telegram.allowedUserIds, ...config.telegram.allowedChatIds],
+    options.logger ?? { info() {}, warn() {} },
+  )
 
   let database: Database | undefined
   let codexClient: CodexAppServerClient | undefined

@@ -105,6 +105,9 @@ recovery fallback.
 | Check the account | `/auth`, `/login`, `/limits`, `/usage`, `/version` |
 | Manage native sessions | `/rename`, `/archive`, `/unarchive`, `/fork`, `/compact` |
 
+After owner activation, the bot registers this command menu only for the owner's
+private chat, so typing `/` opens native Telegram suggestions.
+
 Replying to a delivered Codex answer routes the next message back to the exact
 thread that produced it — even if you switched sessions in the meantime.
 

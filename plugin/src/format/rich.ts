@@ -177,6 +177,23 @@ export function contentFitsRichLimits(text: string): boolean {
   return Buffer.byteLength(text, 'utf8') <= RICH_MESSAGE_MAX_CHARS
 }
 
+/**
+ * True when normal Telegram HTML would lose material structure from the
+ * answer. Ordinary Markdown stays on sendMessage so users can select and
+ * quote it; RichMessage is reserved for constructs that justify that UX
+ * trade-off.
+ */
+export function contentRequiresRichMessage(text: string): boolean {
+  if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/m.test(text)) return true
+  if (/^\s*\[\^[^\]\n]+\]:/m.test(text) || /\[\^[^\]\n]+\]/.test(text)) return true
+  if (/\$\$[\s\S]+?\$\$/.test(text)) return true
+  if (/(^|[^\\$])\$(?!\$)(?:[A-Za-z]|(?=[^$\n]*(?:\\[A-Za-z]+|[=^_{}]|[+\-*/<>]))[^$\n]+)\$/.test(text)) return true
+  if (/^\s*```math\s*$/mi.test(text)) return true
+  if (/^\s*!\[[^\]]*\]\((?:https?:\/\/|tg:\/\/)[^)]+\)\s*$/mi.test(text)) return true
+  return /<(?:details|summary|table|thead|tbody|tr|th|td|mark|sub|sup|aside|tg-(?:map|collage|slideshow|reference|button|button-row))\b/i
+    .test(text)
+}
+
 // Error classification for the rich send path. Drives the transparent
 // fallback in safe-telegram-api:
 //   - capability : Telegram (or this grammY build) doesn't know the method.

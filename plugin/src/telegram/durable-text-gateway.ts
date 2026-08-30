@@ -20,6 +20,7 @@ import {
 } from '../format/html.js'
 import {
   contentFitsRichLimits,
+  contentRequiresRichMessage,
   hardenSoftBreaks,
   richErrorClass,
 } from '../format/rich.js'
@@ -807,7 +808,8 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const richEligible =
       (input.result.presentation === undefined || input.result.presentation === 'answer') &&
       contentFitsRichLimits(richBody) &&
-      fallback.length <= 64
+      fallback.length <= 64 &&
+      (fallback.length > 1 || contentRequiresRichMessage(richBody))
     if (richEligible) {
       if (input.result.presentation !== 'busy_choice') {
         this.messageRoutes?.register({

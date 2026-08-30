@@ -805,6 +805,36 @@ describe('DurableTelegramTextGateway outbound', () => {
     expect(api.sends).toHaveLength(0)
   })
 
+  test('keeps an ordinary short answer quoteable through sendMessage', async () => {
+    const update = acceptedUpdate({ update_id: 903 })
+    const [delivery] = gateway.buildFinalTextDeliveries({
+      update,
+      message: { chatId: '7001', projectId: 'workspace', text: 'question' },
+      result: {
+        threadId: 'thread-quoteable',
+        turnId: 'turn-quoteable',
+        finalText: '# Итог\n\n**Готово.** Можно выделить и процитировать этот фрагмент.',
+      },
+      sourceKey: 'telegram:primary:903:turn:final',
+      nowMs: NOW,
+    })
+    expect(delivery).toMatchObject({
+      kind: 'send_text',
+      payload: {
+        chatId: '7001',
+        options: { parse_mode: 'HTML' },
+      },
+    })
+    expect((delivery?.payload as { format?: string }).format).toBeUndefined()
+
+    const job = outbox.enqueue(delivery!).job
+    const prepared = await gateway.prepareDelivery(job)
+    expect(prepared).toMatchObject({ kind: 'send_text', chatId: '7001' })
+    expect(await gateway.executeDelivery(prepared)).toEqual({ remoteId: 'telegram:77' })
+    expect(api.richSends).toHaveLength(0)
+    expect(api.sends).toHaveLength(1)
+  })
+
   test('falls back atomically to stored HTML chunks and records every reply route', async () => {
     const routes = new SqliteTelegramMessageRouteRepository(database)
     const richGateway = new DurableTelegramTextGateway(api, {

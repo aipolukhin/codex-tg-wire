@@ -8,6 +8,7 @@ import {
   RICH_MESSAGE_MAX_CHARS,
   buildRichMessagePayload,
   contentFitsRichLimits,
+  contentRequiresRichMessage,
   fenceProtectedLines,
   hardenSoftBreaks,
   richErrorClass,
@@ -214,6 +215,31 @@ describe('contentFitsRichLimits', () => {
     const exactly = 'я'.repeat(RICH_MESSAGE_MAX_CHARS / 2)
     expect(Buffer.byteLength(exactly, 'utf8')).toBe(RICH_MESSAGE_MAX_CHARS)
     expect(contentFitsRichLimits(exactly)).toBe(true)
+  })
+})
+
+describe('contentRequiresRichMessage', () => {
+  test('keeps ordinary Markdown on the selectable sendMessage path', () => {
+    const ordinary = [
+      'Короткий обычный ответ.',
+      '# Итог\n\n**Готово.**\n\n- один\n- два',
+      '> Важная цитата\n\n```ts\nconst ready = true\n```',
+      'Цена $5, бюджет $100 и код валюты $USD.',
+    ]
+    for (const text of ordinary) expect(contentRequiresRichMessage(text)).toBe(false)
+  })
+
+  test('recognizes structures that materially need the rich renderer', () => {
+    const richOnly = [
+      '| A | B |\n|---|:---:|\n| 1 | 2 |',
+      '<details><summary>Диагностика</summary>Лог</details>',
+      'Формула: $x^2 + y^2 = z^2$.',
+      '$$\\int_0^1 x^2 dx$$',
+      '```math\nx^2\n```',
+      'Сноска[^1]\n\n[^1]: Источник.',
+      '![Схема](https://example.com/diagram.png)',
+    ]
+    for (const text of richOnly) expect(contentRequiresRichMessage(text)).toBe(true)
   })
 })
 

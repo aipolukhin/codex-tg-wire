@@ -223,6 +223,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           ...(operation.attachments === undefined || operation.attachments.length === 0
             ? {}
             : { attachments: operation.attachments }),
+          ...(operation.quote === undefined ? {} : { quote: operation.quote }),
           settings,
           executionPolicy: {
             writableRoots,

@@ -230,6 +230,23 @@ describe('DurableSessionCoordinator', () => {
     })
   })
 
+  test('journals a selected quote and forwards it to the agent backend', async () => {
+    const op = operation(633)
+    op.quote = {
+      replyToMessageId: 88,
+      text: 'при старте нового turn показывать последнее известное значение',
+      position: 619,
+      isManual: true,
+    }
+
+    await coordinator.runTextTurn(op)
+
+    expect(sessions.getTurnByOperationKey(op.operationKey)?.request).toMatchObject({
+      quote: op.quote,
+    })
+    expect(backend.calls[0]?.quote).toEqual(op.quote)
+  })
+
   test('returns the cached terminal result when an inbox update is replayed', async () => {
     const op = operation(602)
     const first = await coordinator.runTextTurn(op)

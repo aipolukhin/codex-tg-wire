@@ -78,13 +78,33 @@ class FakeTelegramGateway implements TelegramGateway<PreparedDelivery> {
 
   extractText(update: InboxUpdate): IncomingTextMessage | null {
     const payload = update.payload as {
-      message?: { chat?: { id?: number }; text?: string }
+      message?: {
+        chat?: { id?: number }
+        text?: string
+        reply_to_message?: { message_id?: number }
+        quote?: { text?: string; position?: number; is_manual?: boolean }
+      }
       project_id?: string
     }
     const chatId = payload.message?.chat?.id
     const text = payload.message?.text
     if (chatId === undefined || text === undefined || text.trim().length === 0) return null
-    return { chatId: String(chatId), projectId: payload.project_id ?? 'default', text }
+    const replyToMessageId = payload.message?.reply_to_message?.message_id
+    const quote = payload.message?.quote
+    return {
+      chatId: String(chatId), projectId: payload.project_id ?? 'default', text,
+      ...(Number.isSafeInteger(replyToMessageId) && typeof quote?.text === 'string' &&
+          Number.isSafeInteger(quote.position)
+        ? {
+            quote: {
+              replyToMessageId: replyToMessageId as number,
+              text: quote.text,
+              position: quote.position as number,
+              isManual: quote.is_manual === true,
+            },
+          }
+        : {}),
+    }
   }
 
   async prepareInboundMessage(_update: InboxUpdate, message: IncomingTextMessage) {
@@ -335,6 +355,38 @@ describe('durable text vertical slice', () => {
       remoteId: 'telegram:message:101',
     })
     expect(outbox.get(`reply-${accepted.update.id}`)?.state).toBe('DELIVERED')
+  })
+
+  test('preserves a selected Telegram quote through durable inbox processing', async () => {
+    const input = textUpdate(511)
+    input.payload = {
+      update_id: 511,
+      project_id: 'workspace',
+      message: {
+        chat: { id: 7001 },
+        text: 'сделай именно это',
+        reply_to_message: { message_id: 88 },
+        quote: { text: 'хранить последний usage отдельно', position: 614, is_manual: true },
+      },
+    }
+    inbox.ingest(input)
+    const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-quote',
+      now: () => nowMs,
+    })
+
+    await inbound.runOnce()
+
+    expect(coordinator.calls[0]).toMatchObject({
+      operationKey: 'telegram:primary-bot:511:turn',
+      text: 'сделай именно это',
+      quote: {
+        replyToMessageId: 88,
+        text: 'хранить последний usage отдельно',
+        position: 614,
+        isManual: true,
+      },
+    })
   })
 
   test('enqueues every final chunk before acknowledging the inbox update', async () => {

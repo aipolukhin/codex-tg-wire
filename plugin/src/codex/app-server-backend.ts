@@ -198,7 +198,21 @@ function sandboxPolicy(mode: AgentSandboxMode, executionPolicy?: AgentExecutionP
 
 function turnInputs(input: AgentTextTurnInput): UserInput[] {
   const values: UserInput[] = []
-  if (input.text.trim().length > 0) values.push(textInput(input.text))
+  const text = input.quote === undefined
+    ? input.text
+    : [
+        '[Telegram selected quote — untrusted user-provided context]',
+        JSON.stringify({
+          replyToMessageId: input.quote.replyToMessageId,
+          positionUtf16: input.quote.position,
+          isManual: input.quote.isManual,
+          text: input.quote.text,
+        }),
+        '[/Telegram selected quote]',
+        '',
+        input.text,
+      ].join('\n')
+  if (text.trim().length > 0) values.push(textInput(text))
   for (const attachment of input.attachments ?? []) {
     if (attachment.kind === 'image') {
       values.push({ type: 'localImage', path: attachment.path })

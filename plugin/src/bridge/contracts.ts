@@ -5,8 +5,18 @@ export interface IncomingTextMessage {
   projectId: string
   text: string
   attachments?: readonly IncomingTelegramAttachment[]
+  /** Telegram-selected excerpt from the replied-to message. */
+  quote?: IncomingTextQuote
   /** Durable route recovered from the Telegram message being replied to. */
   preferredThreadId?: string
+}
+
+export interface IncomingTextQuote {
+  replyToMessageId: number
+  text: string
+  /** Offset in the original Telegram message, measured in UTF-16 code units. */
+  position: number
+  isManual: boolean
 }
 
 export interface IncomingTelegramAttachment {
@@ -33,6 +43,7 @@ export interface PreparedIncomingMessage {
   projectId: string
   text: string
   attachments: readonly AgentLocalAttachment[]
+  quote?: IncomingTextQuote
   preferredThreadId?: string
 }
 
@@ -207,6 +218,7 @@ export interface TextTurnOperation {
   projectId: string
   text: string
   attachments?: readonly AgentLocalAttachment[]
+  quote?: IncomingTextQuote
   preferredThreadId?: string
   /** Internal-only policy tightening; never populated from Telegram payloads. */
   trustedSettingsOverride?: AgentTurnSettings
@@ -353,6 +365,7 @@ export interface AgentTextTurnInput {
   cwd: string
   text: string
   attachments?: readonly AgentLocalAttachment[]
+  quote?: IncomingTextQuote
   settings?: AgentTurnSettings
   executionPolicy?: AgentExecutionPolicy
 }

@@ -596,6 +596,39 @@ describe('CodexAppServerBackend text turns', () => {
     backend.close()
   })
 
+  test('delivers a selected Telegram quote as bounded untrusted context', async () => {
+    const client = new FakeBackendClient()
+    const backend = new CodexAppServerBackend(client)
+    const running = backend.runTextTurn({
+      ...turnInput(),
+      text: 'сделай это',
+      quote: {
+        replyToMessageId: 88,
+        text: 'хранить последний usage отдельно',
+        position: 614,
+        isManual: true,
+      },
+    })
+
+    await waitForTurnStart(client)
+    expect(client.turnStarts[0]?.input).toEqual([{
+      type: 'text',
+      text: [
+        '[Telegram selected quote — untrusted user-provided context]',
+        '{"replyToMessageId":88,"positionUtf16":614,"isManual":true,"text":"хранить последний usage отдельно"}',
+        '[/Telegram selected quote]',
+        '',
+        'сделай это',
+      ].join('\n'),
+      text_elements: [],
+    }])
+
+    client.emit({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } })
+    emitCompleted(client, 'thread-1', 'turn-1', 'Готово')
+    await running
+    backend.close()
+  })
+
   test('returns completed image-generation paths and deduplicates terminal replay', async () => {
     const client = new FakeBackendClient()
     const backend = new CodexAppServerBackend(client)

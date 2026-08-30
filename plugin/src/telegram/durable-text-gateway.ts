@@ -150,6 +150,11 @@ interface TelegramMessagePayload {
     from?: { id?: string | number; is_bot?: boolean }
     text?: string
     reply_to_message?: { message_id?: number }
+    quote?: {
+      text?: string
+      position?: number
+      is_manual?: boolean
+    }
     caption?: string
     photo?: Array<{
       file_id?: string
@@ -448,6 +453,17 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     if (trimmed.startsWith('/') || (trimmed.length === 0 && attachments.length === 0)) return null
     const projectId = this.projectIdForChat(authorized.chatId)
     const replyId = authorized.message.reply_to_message?.message_id
+    const rawQuote = authorized.message.quote
+    const quote = Number.isSafeInteger(replyId) && (replyId as number) > 0 &&
+        typeof rawQuote?.text === 'string' && rawQuote.text.length > 0 &&
+        Number.isSafeInteger(rawQuote.position) && (rawQuote.position as number) >= 0
+      ? {
+          replyToMessageId: replyId as number,
+          text: rawQuote.text,
+          position: rawQuote.position as number,
+          isManual: rawQuote.is_manual === true,
+        }
+      : undefined
     const route = Number.isSafeInteger(replyId) && (replyId as number) > 0
       ? this.messageRoutes?.findByTelegramMessage(
           update.botId,
@@ -460,6 +476,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
       projectId: route?.projectId ?? projectId,
       text,
       ...(attachments.length === 0 ? {} : { attachments }),
+      ...(quote === undefined ? {} : { quote }),
       ...(route === null ? {} : { preferredThreadId: route.threadId }),
     }
   }

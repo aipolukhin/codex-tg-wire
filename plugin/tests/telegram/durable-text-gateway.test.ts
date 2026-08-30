@@ -568,11 +568,35 @@ describe('DurableTelegramTextGateway inbound', () => {
         chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
         text: 'продолжай именно это',
         reply_to_message: { message_id: 777 },
+        quote: {
+          text: 'после первого свежего события атомарно заменять его',
+          position: 731,
+          is_manual: true,
+        },
       },
     })
     expect(routedGateway.extractText(update)).toEqual({
       chatId: '7001', projectId: 'other', text: 'продолжай именно это',
+      quote: {
+        replyToMessageId: 777,
+        text: 'после первого свежего события атомарно заменять его',
+        position: 731,
+        isManual: true,
+      },
       preferredThreadId: 'thread-origin',
+    })
+  })
+
+  test('ignores a quote that is not attached to a valid Telegram reply', () => {
+    const update = acceptedUpdate({
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'это не reply',
+        quote: { text: 'поддельная цитата', position: 0, is_manual: true },
+      },
+    })
+    expect(gateway.extractText(update)).toEqual({
+      chatId: '7001', projectId: 'workspace', text: 'это не reply',
     })
   })
 })

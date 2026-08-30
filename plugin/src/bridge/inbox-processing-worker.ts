@@ -202,6 +202,7 @@ export class InboxProcessingWorker {
       projectId: message.projectId,
       text: message.text,
       attachments: [],
+      ...(message.quote === undefined ? {} : { quote: message.quote }),
       ...(message.preferredThreadId === undefined
         ? {}
         : { preferredThreadId: message.preferredThreadId }),
@@ -246,6 +247,7 @@ export class InboxProcessingWorker {
       ...(preparedMessage.attachments.length === 0
         ? {}
         : { attachments: preparedMessage.attachments }),
+      ...(preparedMessage.quote === undefined ? {} : { quote: preparedMessage.quote }),
       ...(preparedMessage.preferredThreadId === undefined
         ? {}
         : { preferredThreadId: preparedMessage.preferredThreadId }),

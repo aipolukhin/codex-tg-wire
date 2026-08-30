@@ -296,7 +296,7 @@ export class PersonalAlphaCommands implements CommandHandler {
         text: [
           '🚀 Готов к работе',
           '',
-          'Напиши задачу обычным сообщением — bridge создаст Codex thread и покажет progress.',
+          'Напиши задачу обычным сообщением — bridge создаст Codex thread и пришлёт ответ.',
           'Для безопасного плана сначала включи Guided Plan в настройках.',
         ].join('\n'),
         buttons: [

@@ -64,6 +64,7 @@
   },
   "ux": {
     "enabled": true,
+    "chatStatusMessages": false,
     "heartbeatAfterMs": 120000,
     "heartbeatIntervalMs": 300000,
     "pollIntervalMs": 30000

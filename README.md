@@ -135,7 +135,8 @@ Planning and revision are forced to `sandbox=read-only` with
    detected automatically; otherwise tap **Connect Codex** and complete the
    browser login. Groq voice is optional and can be skipped.
 2. Send a task as an ordinary Telegram message. The bridge creates or resumes a
-   native Codex thread in the configured project and edits one progress card.
+   native Codex thread and returns the final answer as an ordinary chat message.
+   Technical lifecycle details stay available on demand through `/status`.
 3. When Codex needs a decision, answer from the inline controls. If another
    message arrives during a turn, choose **Steer now**, **Queue next**, **Stop &
    replace**, or **Cancel message**.

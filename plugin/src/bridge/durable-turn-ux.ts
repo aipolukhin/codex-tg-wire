@@ -46,6 +46,8 @@ interface UxRow {
 
 export interface DurableTurnUxOptions {
   enabled?: boolean
+  /** Emit the diagnostic lifecycle card into the Telegram chat. Off by default. */
+  chatStatusMessages?: boolean
   heartbeatAfterMs?: number
   heartbeatIntervalMs?: number
   now?: () => number
@@ -142,9 +144,10 @@ function terminalPhase(state: Exclude<TurnState, 'QUEUED' | 'ACTIVE'>): UxPhase 
   }
 }
 
-/** Durable, payload-free Codex lifecycle → Telegram status projection. */
+/** Durable, payload-free Codex lifecycle store with an opt-in Telegram diagnostic projection. */
 export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatusProvider {
   private readonly enabled: boolean
+  private readonly chatStatusMessages: boolean
   private readonly heartbeatAfterMs: number
   private readonly heartbeatIntervalMs: number
   private readonly now: () => number
@@ -156,6 +159,7 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
     options: DurableTurnUxOptions = {},
   ) {
     this.enabled = options.enabled ?? true
+    this.chatStatusMessages = options.chatStatusMessages ?? false
     this.heartbeatAfterMs = options.heartbeatAfterMs ?? DEFAULT_HEARTBEAT_AFTER_MS
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS
     this.now = options.now ?? Date.now
@@ -206,17 +210,19 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
         ],
       ).changes
       if (inserted !== 1) return
-      const row = this.require(operation.operationKey)
-      this.outbox.enqueue({
-        sourceKey: rootSourceKey,
-        kind: 'send_text',
-        payload: {
-          chatId: operation.chatId,
-          text: render(row, nowMs),
-          options: { parse_mode: 'HTML' },
-        },
-        createdAtMs: nowMs,
-      })
+      if (this.chatStatusMessages) {
+        const row = this.require(operation.operationKey)
+        this.outbox.enqueue({
+          sourceKey: rootSourceKey,
+          kind: 'send_text',
+          payload: {
+            chatId: operation.chatId,
+            text: render(row, nowMs),
+            options: { parse_mode: 'HTML' },
+          },
+          createdAtMs: nowMs,
+        })
+      }
     }).immediate()
   }
 
@@ -358,7 +364,7 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
         row.last_heartbeat_at_ms = null
       }
       row.updated_at_ms = nowMs
-      if (!emit) {
+      if (!emit || !this.chatStatusMessages) {
         this.persist(row)
         return
       }

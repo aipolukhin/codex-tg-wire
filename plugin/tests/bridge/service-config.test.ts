@@ -104,6 +104,7 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.codex.sandboxMode).toBe('workspace-write')
     expect(config.codex.allowedSandboxModes).toEqual(['read-only', 'workspace-write'])
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
+    expect(config.ux.chatStatusMessages).toBeFalse()
     expect(config.voice.provider).toBe('none')
     expect(config.voiceApiKey).toBeNull()
     expect(config.health).toEqual({

@@ -249,9 +249,8 @@ describe('durable text runtime composition', () => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
       if ((await runtime.deliverOutboundOnce()).outcome === 'idle') break
     }
-    expect(telegram.sent.at(0)?.text).toContain('Codex · подготовка')
-    expect(telegram.edits.at(-1)?.text).toContain('Codex · готово')
-    expect(telegram.sent.at(-1)).toEqual({ chatId: '7001', text: 'Готово.' })
+    expect(telegram.sent).toEqual([{ chatId: '7001', text: 'Готово.' }])
+    expect(telegram.edits).toEqual([])
 
     expect(
       database.query<{ state: string }, []>('SELECT state FROM telegram_updates').get()?.state,

@@ -49,6 +49,7 @@ describe('DurableTurnUxProjector', () => {
   test('persists payload-free HUD facts and emits one ordered edit chain', () => {
     const ux = new DurableTurnUxProjector(database, outbox, sessions, {
       now: () => nowMs,
+      chatStatusMessages: true,
       heartbeatAfterMs: 60_000,
       heartbeatIntervalMs: 60_000,
     })
@@ -103,7 +104,10 @@ describe('DurableTurnUxProjector', () => {
   })
 
   test('reconciles an active status to UNKNOWN after durable turn recovery', () => {
-    const ux = new DurableTurnUxProjector(database, outbox, sessions, { now: () => nowMs })
+    const ux = new DurableTurnUxProjector(database, outbox, sessions, {
+      now: () => nowMs,
+      chatStatusMessages: true,
+    })
     const accepted = new SqliteInboxRepository(database).ingest({
       botId: 'primary', updateId: 701, chatId: '7001', routingClass: 'MESSAGE',
       payload: {}, receivedAtMs: nowMs,
@@ -122,5 +126,30 @@ describe('DurableTurnUxProjector', () => {
     expect(database.query<{ payload_json: string }, []>(
       `SELECT payload_json FROM delivery_jobs ORDER BY rowid DESC LIMIT 1`,
     ).get()?.payload_json).toContain('Codex · нужна проверка')
+  })
+
+  test('keeps telemetry for /status without posting lifecycle cards by default', () => {
+    const ux = new DurableTurnUxProjector(database, outbox, sessions, { now: () => nowMs })
+
+    ux.onPreparing(operation, {
+      model: 'gpt-test', effort: 'high', sandbox: 'workspace-write', approvalPolicy: 'on-request',
+    })
+    ux.onThreadReady(operation, 'thread-1')
+    ux.onTurnStarted(operation, 'thread-1', 'turn-1')
+    ux.onProgress(operation, {
+      kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
+      totalTokens: 4_000, inputTokens: 3_000, outputTokens: 1_000,
+      contextWindow: 20_000, atMs: nowMs,
+    })
+    ux.onCompleted(operation, { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' })
+
+    expect(ux.getStatus('primary', '7001', 'workspace')).toMatchObject({
+      phase: 'COMPLETED',
+      totalTokens: 4_000,
+      contextWindow: 20_000,
+    })
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM delivery_jobs',
+    ).get()?.count).toBe(0)
   })
 })

@@ -17,7 +17,8 @@ baseline `f3ac9cfd20a125674bbad9f507f7cf6bc7566fca`, Apache-2.0.
 - Telegram Markdown/HTML pipeline, безопасный chunking длинных сообщений и
   HTML validation.
 - Secret redaction и общий принцип deny-by-default allowlist.
-- UX-паттерны inline-кнопок, progress/status card, HUD и heartbeat.
+- UX-паттерны inline-кнопок, progress/status card и heartbeat. Технический HUD
+  сохранён только как opt-in диагностика; обычный чат показывает финальные ответы.
 - Подходы к Telegram media, voice transcription и rate limiting.
 
 Codex runtime прямо использует общие модули `format/chunk.ts`, `format/html.ts`,
@@ -160,7 +161,8 @@ transport не объявлен поддерживаемым.
   Guided Plan state machine.
 - Durable Telegram poller, gateway, attachment store, outbound media/album path,
   rate limiter и voice adapter.
-- HUD/event projector, heartbeat и unknown-notification journal.
+- payload-free event projector, heartbeat, `/status` snapshot и
+  unknown-notification journal; Telegram HUD выключен по умолчанию.
 - Doctor, health/readiness/watchdog, backup/restore, retention, soak/chaos gates,
   SBOM, reproducible artifacts, optional hardened Docker wrapper и atomic
   upgrade/rollback.

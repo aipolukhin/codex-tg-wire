@@ -244,6 +244,7 @@ export async function bootstrapDurableBridgeService(
       ...(voiceCredentials === undefined ? {} : { voiceCredentials }),
       ux: {
         enabled: config.ux.enabled,
+        chatStatusMessages: config.ux.chatStatusMessages,
         heartbeatAfterMs: config.ux.heartbeatAfterMs,
         heartbeatIntervalMs: config.ux.heartbeatIntervalMs,
       },

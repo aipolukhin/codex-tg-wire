@@ -160,4 +160,72 @@ describe('DurableTurnUxProjector', () => {
       'SELECT count(*) AS count FROM delivery_jobs',
     ).get()?.count).toBe(0)
   })
+
+  test('keeps the last known context while the next turn starts on the same thread', () => {
+    const ux = new DurableTurnUxProjector(database, outbox, sessions, { now: () => nowMs })
+    expect(sessions.attachExternalThread(
+      'primary', '7001', 'workspace', 'codex', 'thread-1', nowMs,
+    ).outcome).toBe('selected')
+
+    ux.onPreparing(operation, {})
+    ux.onThreadReady(operation, 'thread-1')
+    ux.onTurnStarted(operation, 'thread-1', 'turn-1')
+    ux.onProgress(operation, {
+      kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
+      totalTokens: 4_000, inputTokens: 3_000, cachedInputTokens: 2_500,
+      outputTokens: 1_000, threadTotalTokens: 12_000,
+      contextWindow: 20_000, atMs: nowMs,
+    })
+    ux.onCompleted(operation, { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' })
+
+    nowMs += 1_000
+    const next = {
+      ...operation,
+      operationKey: 'telegram:primary:702:turn',
+      inboxUpdateId: 702,
+      updateId: 702,
+    }
+    ux.onPreparing(next, {})
+
+    expect(ux.getStatus('primary', '7001', 'workspace')).toMatchObject({
+      phase: 'PREPARING',
+      totalTokens: 4_000,
+      inputTokens: 3_000,
+      cachedInputTokens: 2_500,
+      threadTotalTokens: 12_000,
+      contextWindow: 20_000,
+    })
+  })
+
+  test('never carries context usage across a selected thread switch', () => {
+    const ux = new DurableTurnUxProjector(database, outbox, sessions, { now: () => nowMs })
+    sessions.attachExternalThread('primary', '7001', 'workspace', 'codex', 'thread-1', nowMs)
+    ux.onPreparing(operation, {})
+    ux.onThreadReady(operation, 'thread-1')
+    ux.onTurnStarted(operation, 'thread-1', 'turn-1')
+    ux.onProgress(operation, {
+      kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',
+      totalTokens: 4_000, inputTokens: 3_000, cachedInputTokens: 2_500,
+      outputTokens: 1_000, threadTotalTokens: 12_000,
+      contextWindow: 20_000, atMs: nowMs,
+    })
+    ux.onCompleted(operation, { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' })
+
+    nowMs += 1_000
+    expect(sessions.attachExternalThread(
+      'primary', '7001', 'workspace', 'codex', 'thread-2', nowMs,
+    ).outcome).toBe('selected')
+    expect(ux.getStatus('primary', '7001', 'workspace')).toBeNull()
+
+    const next = {
+      ...operation,
+      operationKey: 'telegram:primary:703:turn',
+      inboxUpdateId: 703,
+      updateId: 703,
+    }
+    ux.onPreparing(next, {})
+    expect(ux.getStatus('primary', '7001', 'workspace')).toMatchObject({
+      phase: 'PREPARING', inputTokens: null, contextWindow: null,
+    })
+  })
 })

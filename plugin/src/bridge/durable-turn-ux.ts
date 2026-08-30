@@ -311,12 +311,49 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
   }
 
   getStatus(botId: string, chatId: string, projectId: string): AgentUxStatusSnapshot | null {
-    const row = this.database.query<UxRow, [string, string, string]>(
+    const latest = this.database.query<UxRow, [string, string, string]>(
       `SELECT * FROM codex_turn_ux
        WHERE bot_id = ? AND chat_id = ? AND project_id = ?
        ORDER BY updated_at_ms DESC, operation_key DESC LIMIT 1`,
     ).get(botId, chatId, projectId)
-    return row === null ? null : snapshot(row)
+    if (latest === null) return null
+
+    const overview = this.sessions.getOverview(
+      botId,
+      chatId,
+      projectId,
+    )
+    const selectedThreadId = overview.binding?.threadId ?? null
+    const live = latest.phase === 'PREPARING' || latest.phase === 'ACTIVE'
+    const row = live
+      ? latest
+      : selectedThreadId === null
+        ? overview.session === null ? latest : null
+        : this.latestForThread(botId, chatId, projectId, selectedThreadId)
+    if (row === null) return null
+    if (row.input_tokens !== null && row.context_window !== null && row.context_window > 0) {
+      return snapshot(row)
+    }
+
+    const threadId = row.thread_id ?? selectedThreadId
+    if (threadId === null) return snapshot(row)
+    const previousUsage = this.latestUsageForThread(
+      botId,
+      chatId,
+      projectId,
+      threadId,
+      row.operation_key,
+    )
+    if (previousUsage === null) return snapshot(row)
+    return snapshot({
+      ...row,
+      total_tokens: previousUsage.total_tokens,
+      input_tokens: previousUsage.input_tokens,
+      cached_input_tokens: previousUsage.cached_input_tokens,
+      output_tokens: previousUsage.output_tokens,
+      thread_total_tokens: previousUsage.thread_total_tokens,
+      context_window: previousUsage.context_window,
+    })
   }
 
   runHeartbeat(nowMs = this.now()): number {
@@ -439,6 +476,35 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
     return this.database.query<UxRow, [string]>(
       'SELECT * FROM codex_turn_ux WHERE operation_key = ?',
     ).get(operationKey)
+  }
+
+  private latestForThread(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    threadId: string,
+  ): UxRow | null {
+    return this.database.query<UxRow, [string, string, string, string]>(
+      `SELECT * FROM codex_turn_ux
+       WHERE bot_id = ? AND chat_id = ? AND project_id = ? AND thread_id = ?
+       ORDER BY updated_at_ms DESC, operation_key DESC LIMIT 1`,
+    ).get(botId, chatId, projectId, threadId)
+  }
+
+  private latestUsageForThread(
+    botId: string,
+    chatId: string,
+    projectId: string,
+    threadId: string,
+    excludeOperationKey: string,
+  ): UxRow | null {
+    return this.database.query<UxRow, [string, string, string, string, string]>(
+      `SELECT * FROM codex_turn_ux
+       WHERE bot_id = ? AND chat_id = ? AND project_id = ? AND thread_id = ?
+         AND operation_key != ? AND input_tokens IS NOT NULL
+         AND context_window IS NOT NULL AND context_window > 0
+       ORDER BY updated_at_ms DESC, operation_key DESC LIMIT 1`,
+    ).get(botId, chatId, projectId, threadId, excludeOperationKey)
   }
 
   private require(operationKey: string): UxRow {

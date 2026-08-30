@@ -108,6 +108,13 @@ const SAFE_TAGS = [
 ]
 
 const SAFE_TAG_RE = new RegExp(`</?(?:${SAFE_TAGS.join('|')})(?:\\s[^>]*)?>`, 'gi')
+const SAFE_HREF_RE = /^(https?:|tg:|mailto:)/i
+
+function hasSafeAnchorHref(rawTag: string): boolean {
+  const match = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(rawTag)
+  const href = match?.[1] ?? match?.[2]
+  return href !== undefined && SAFE_HREF_RE.test(href)
+}
 
 // Sentinel markers. Using a private-use unicode char keeps these out of any
 // realistic input text (Telegram clients render U+E000 as undefined).
@@ -233,6 +240,7 @@ function stashSafeTags(input: string, store: Placeholder[]): string {
   }
 
   const keep = new Set<number>()
+  const replacements = new Map<number, string>()
   const stack: number[] = []
   tokens.forEach((t, idx) => {
     if (t.name === 'br') {
@@ -253,6 +261,13 @@ function stashSafeTags(input: string, store: Placeholder[]): string {
       stack.pop()
       keep.add(top)
       keep.add(idx)
+      if (t.name === 'a' && !hasSafeAnchorHref(tokens[top]!.raw)) {
+        // Keep the label and any formatting nested inside it, but remove only
+        // the unsafe anchor. One local/file/javascript link must not force the
+        // validator to downgrade every unrelated <b>/<code> span to text.
+        replacements.set(top, '')
+        replacements.set(idx, '')
+      }
       return
     }
     // Mismatched closing tag (`</b>` with no open `<b>` on top) — escape.
@@ -267,7 +282,7 @@ function stashSafeTags(input: string, store: Placeholder[]): string {
     if (!keep.has(idx)) return
     out += input.slice(cursor, t.start)
     const key = sentinel('TG', store.length)
-    store.push({ key, html: t.raw })
+    store.push({ key, html: replacements.get(idx) ?? t.raw })
     out += key
     cursor = t.end
   })
@@ -281,8 +296,12 @@ function stashMdLinks(input: string, store: Placeholder[]): string {
   // (it would emit &amp;amp; in URLs with &); we improve on that.
   const re = /\[([^\]\n]+)\]\(([^)\s]+)\)/g
   return input.replace(re, (_full, label: string, url: string) => {
-    // Escape label as HTML body, URL as attribute.
-    const html = `<a href="${escapeHtmlAttr(url)}">${escapeHtml(label)}</a>`
+    // Telegram cannot open local workspace paths, and its HTML validator
+    // rejects unsupported href schemes. Render those labels as code instead
+    // of poisoning the entire message with an invalid <a> element.
+    const html = SAFE_HREF_RE.test(url)
+      ? `<a href="${escapeHtmlAttr(url)}">${escapeHtml(label)}</a>`
+      : `<code>${escapeHtml(label)}</code>`
     const key = sentinel('LN', store.length)
     store.push({ key, html })
     return key

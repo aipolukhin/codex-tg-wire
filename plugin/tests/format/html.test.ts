@@ -101,6 +101,32 @@ describe('markdownToTelegramHtml', () => {
     expect(html).toContain('>click</a>')
   })
 
+  test('renders local Markdown links as code without downgrading surrounding formatting', () => {
+    const md = [
+      '**Исправлено:** используй `imagegen`.',
+      '[app-server-backend.ts](/home/vpnops/codex-tg-wire/plugin/src/codex/app-server-backend.ts)',
+    ].join('\n')
+    const html = markdownToTelegramHtml(md)
+
+    expect(html).toContain('<b>Исправлено:</b>')
+    expect(html).toContain('<code>imagegen</code>')
+    expect(html).toContain('<code>app-server-backend.ts</code>')
+    expect(html).not.toContain('<a href="/home/')
+    expect(validateTelegramHtml(html).downgraded).toBe(false)
+  })
+
+  test('removes only an unsafe raw anchor and preserves the rest of the HTML', () => {
+    const html = markdownToTelegramHtml(
+      '<b>Заголовок</b> <a href="file:///tmp/report">report.txt</a> и `код`',
+    )
+
+    expect(html).toContain('<b>Заголовок</b>')
+    expect(html).toContain('report.txt')
+    expect(html).not.toContain('<a')
+    expect(html).toContain('<code>код</code>')
+    expect(validateTelegramHtml(html).downgraded).toBe(false)
+  })
+
   test('converts ** to <b>', () => {
     expect(markdownToTelegramHtml('this is **bold** here')).toContain('<b>bold</b>')
   })

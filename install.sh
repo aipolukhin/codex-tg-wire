@@ -639,7 +639,7 @@ chmod 0600 "$TEMPORARY_PATH"
     printf 'Environment=%s\n' "$(systemd_quote "GROQ_API_KEY_FILE=$GROQ_PATH")"
   fi
   printf '%s\n' \
-    "ExecStart=$(systemd_quote "$BUN_BINARY") run start:codex" \
+    "ExecStart=$(systemd_quote "$BUN_BINARY") $(systemd_quote "$PLUGIN_DIRECTORY/src/codex-telegram-service.ts")" \
     'Restart=on-failure' \
     'RestartSec=5s' \
     'TimeoutStopSec=120s' \

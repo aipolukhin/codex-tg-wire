@@ -15,7 +15,8 @@ LoadCredential=telegram-token:/etc/dashi-codex-bridge/telegram-token
 Environment=HOME=/var/lib/dashi-codex-bridge
 Environment=CODEX_HOME=/var/lib/dashi-codex-bridge/codex-home
 Environment=DASHI_CODEX_BRIDGE_CONFIG=/etc/dashi-codex-bridge/bridge.config.json
-ExecStart=/usr/bin/env bun run start:codex
+# Run the service entry point directly so WATCHDOG_PID matches the notifying process.
+ExecStart=/usr/bin/env bun /opt/dashi-codex-bridge/current/plugin/src/codex-telegram-service.ts
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=120s

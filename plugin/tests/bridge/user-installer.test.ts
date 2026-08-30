@@ -139,7 +139,10 @@ exit 0
     expect(unit).toContain(`WorkingDirectory=${join(REPOSITORY_ROOT, 'plugin')}`)
     expect(unit).not.toContain('WorkingDirectory="')
     expect(unit).toContain(`Environment="CODEX_BINARY_PATH=${codex}"`)
-    expect(unit).toContain(`ExecStart="${join(bunInstall, 'bin/bun')}" run start:codex`)
+    expect(unit).toContain(
+      `ExecStart="${join(bunInstall, 'bin/bun')}" "${join(REPOSITORY_ROOT, 'plugin/src/codex-telegram-service.ts')}"`,
+    )
+    expect(unit).not.toContain('run start:codex')
     expect(unit).toContain(`Environment="DASHI_CODEX_BRIDGE_CONFIG=${configPath}"`)
     expect(unit).toContain(`Environment="GROQ_API_KEY_FILE=${groqCredentialPath}"`)
     expect(unit).toContain('WantedBy=default.target')

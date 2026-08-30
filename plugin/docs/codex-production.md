@@ -60,7 +60,7 @@ NotifyAccess=all
 WorkingDirectory=/opt/dashi/plugin
 LoadCredential=telegram-token:/etc/dashi-codex-bridge/telegram-token
 Environment=DASHI_CODEX_BRIDGE_CONFIG=/etc/dashi-codex-bridge/bridge.config.json
-ExecStart=/usr/bin/env bun run start:codex
+ExecStart=/usr/bin/env bun /opt/dashi-codex-bridge/current/plugin/src/codex-telegram-service.ts
 Restart=on-failure
 RestartSec=5s
 WatchdogSec=180s

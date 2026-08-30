@@ -1,10 +1,10 @@
 import type { Database } from 'bun:sqlite'
 
 import type { TelegramTextApi } from '../telegram/durable-text-gateway.js'
-import { escapeHtml } from '../format/html.js'
 import type {
   AgentBackend,
   AgentRateLimit,
+  AgentRuntimeDefaults,
   AgentTurnProgress,
   AgentTurnSettings,
   AgentTurnUxObserver,
@@ -32,88 +32,59 @@ export interface TelegramNativeTurnUxOptions {
   typingRefreshMs?: number
   quotaRefreshMs?: number
   now?: () => number
+  projectCwd?: (projectId: string) => string | undefined
+  settingsForChat?: (
+    chatId: string,
+    projectId: string,
+  ) => Pick<AgentTurnSettings, 'model' | 'effort'> | null
 }
 
 const DEFAULT_TYPING_REFRESH_MS = 4_000
 const DEFAULT_QUOTA_REFRESH_MS = 5 * 60_000
 
-function formatTokens(value: number): string {
-  if (value < 1_000) return String(value)
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`
-  return `${(value / 1_000_000).toFixed(1)}m`
+function compactField(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  const compact = value.trim().replace(/\s+/g, '')
+  return compact.length === 0 ? null : compact.slice(0, 48)
 }
 
-function durationLabel(minutes: number | null, fallback: string): string {
-  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return fallback
-  if (minutes % 10_080 === 0) return `${minutes / 10_080} нед`
-  if (minutes % 1_440 === 0) return `${minutes / 1_440} д`
-  if (minutes % 60 === 0) return `${minutes / 60} ч`
-  return `${minutes} мин`
-}
-
-function resetLabel(epochSeconds: number | null): string {
-  if (epochSeconds === null || !Number.isFinite(epochSeconds) || epochSeconds <= 0) return ''
-  return ` · до ${new Date(epochSeconds * 1_000).toISOString().slice(0, 16).replace('T', ' ')} UTC`
-}
-
-function quotaLines(limits: readonly AgentRateLimit[] | null): string[] {
-  if (limits === null) return ['Квота: недоступна']
-  const lines: string[] = []
+function rateLimitWindow(
+  limits: readonly AgentRateLimit[] | null,
+  durationMins: number,
+): AgentRateLimit['primary'] {
+  if (limits === null) return null
   for (const limit of limits) {
-    for (const [fallback, window] of [
-      ['основная', limit.primary],
-      ['доп.', limit.secondary],
-    ] as const) {
-      if (window === null) continue
-      const remaining = Math.max(0, Math.min(100, 100 - window.usedPercent))
-      lines.push(
-        `Квота ${durationLabel(window.windowDurationMins, fallback)}: ${remaining.toFixed(0)}% осталось` +
-          resetLabel(window.resetsAt),
-      )
-      if (lines.length === 2) return lines
+    for (const window of [limit.primary, limit.secondary]) {
+      if (window?.windowDurationMins === durationMins) return window
     }
   }
-  return lines.length > 0 ? lines : ['Квота: нет данных']
+  return null
 }
 
-function phaseLine(snapshot: AgentUxStatusSnapshot | null, busy: boolean): string {
-  if (busy || snapshot?.phase === 'PREPARING' || snapshot?.phase === 'ACTIVE') {
-    return '🟡 <b>Codex работает</b>'
-  }
-  if (snapshot?.phase === 'FAILED' || snapshot?.phase === 'UNKNOWN') {
-    return '🔴 <b>Codex требует внимания</b>'
-  }
-  if (snapshot?.phase === 'INTERRUPTED') return '⚪️ <b>Codex остановлен</b>'
-  return '🟢 <b>Codex готов</b>'
+function remaining(window: AgentRateLimit['primary']): number | null {
+  if (window === null) return null
+  return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)))
 }
 
 function renderStatus(
-  projectId: string,
+  settings: Pick<AgentTurnSettings, 'model' | 'effort'> | null,
+  defaults: AgentRuntimeDefaults | null,
   snapshot: AgentUxStatusSnapshot | null,
   limits: readonly AgentRateLimit[] | null,
-  busy: boolean,
 ): string {
-  const lines = [
-    phaseLine(snapshot, busy),
-    `Проект: <code>${escapeHtml(projectId)}</code>`,
-    ...quotaLines(limits),
-  ]
-  if (snapshot?.inputTokens !== null && snapshot?.inputTokens !== undefined) {
-    const input = snapshot.inputTokens
-    if (snapshot.contextWindow !== null && snapshot.contextWindow > 0) {
-      const percent = Math.min(999, Math.round((input / snapshot.contextWindow) * 100))
-      lines.push(
-        `Контекст: ${formatTokens(input)} / ${formatTokens(snapshot.contextWindow)} · ${percent}%`,
-      )
-    } else {
-      lines.push(`Контекст: ${formatTokens(input)}`)
-    }
-    const cached = Math.min(input, snapshot.cachedInputTokens ?? 0)
-    lines.push(`Cached: ${formatTokens(cached)} · new ${formatTokens(input - cached)}`)
-  } else {
-    lines.push('Контекст: —')
-  }
-  return lines.join('\n')
+  const model = compactField(settings?.model) ?? compactField(defaults?.model) ?? 'default'
+  const effort = compactField(settings?.effort) ?? compactField(defaults?.effort) ?? 'default'
+  const parts = [model, effort]
+  const fiveHour = remaining(rateLimitWindow(limits, 5 * 60))
+  const weekly = remaining(rateLimitWindow(limits, 7 * 24 * 60))
+  if (fiveHour !== null) parts.push(`5h:${fiveHour}%`)
+  if (weekly !== null) parts.push(`w:${weekly}%`)
+  const context = snapshot?.inputTokens !== null && snapshot?.inputTokens !== undefined &&
+    snapshot.contextWindow !== null && snapshot.contextWindow > 0
+    ? `${Math.min(999, Math.round((snapshot.inputTokens / snapshot.contextWindow) * 100))}%`
+    : '—'
+  parts.push(`ctx:${context}`)
+  return parts.join(' ')
 }
 
 /**
@@ -127,21 +98,24 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
   private readonly quotaRefreshMs: number
   private readonly now: () => number
   private readonly typingTimers = new Map<string, ReturnType<typeof setInterval>>()
-  private readonly busyOperations = new Map<string, Pick<TextTurnOperation, 'chatId' | 'projectId'>>()
   private readonly refreshStates = new Map<string, {
     pending: { chatId: string; projectId: string; forceQuota: boolean } | null
     promise: Promise<void>
   }>()
   private quotaCache: { limits: readonly AgentRateLimit[] | null; expiresAtMs: number } | null = null
+  private readonly runtimeDefaults = new Map<
+    string,
+    { value: AgentRuntimeDefaults | null; expiresAtMs: number }
+  >()
   private closed = false
 
   constructor(
     private readonly database: Database,
     private readonly api: TelegramTextApi,
-    private readonly backend: Pick<AgentBackend, 'readRateLimits'>,
+    private readonly backend: Pick<AgentBackend, 'readRateLimits' | 'readRuntimeDefaults'>,
     private readonly statusProvider: AgentUxStatusProvider,
     private readonly botId: string,
-    options: TelegramNativeTurnUxOptions = {},
+    private readonly options: TelegramNativeTurnUxOptions = {},
   ) {
     const enabled = options.enabled ?? true
     this.typingIndicator = enabled && (options.typingIndicator ?? false)
@@ -156,9 +130,7 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
       throw new TypeError('quotaRefreshMs must be positive')
     }
   }
-
   onPreparing(operation: TextTurnOperation, _settings: AgentTurnSettings): void {
-    this.busyOperations.set(operation.operationKey, operation)
     this.startTyping(operation)
     void this.refreshChat(operation.chatId, operation.projectId)
   }
@@ -226,12 +198,10 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     this.closed = true
     for (const timer of this.typingTimers.values()) clearInterval(timer)
     this.typingTimers.clear()
-    this.busyOperations.clear()
     for (const state of this.refreshStates.values()) state.pending = null
   }
 
   private finish(operation: TextTurnOperation): void {
-    this.busyOperations.delete(operation.operationKey)
     const timer = this.typingTimers.get(operation.operationKey)
     if (timer !== undefined) clearInterval(timer)
     this.typingTimers.delete(operation.operationKey)
@@ -253,12 +223,13 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
 
   private async refreshStatus(chatId: string, projectId: string, forceQuota: boolean): Promise<void> {
     if (this.closed) return
-    const limits = await this.readQuota(forceQuota)
+    const [limits, defaults] = await Promise.all([
+      this.readQuota(forceQuota),
+      this.readDefaults(projectId, forceQuota),
+    ])
     const snapshot = this.statusProvider.getStatus(this.botId, chatId, projectId)
-    const busy = [...this.busyOperations.values()].some(
-      (operation) => operation.chatId === chatId && operation.projectId === projectId,
-    )
-    const text = renderStatus(projectId, snapshot, limits, busy)
+    const settings = this.settingsForChat(chatId, projectId)
+    const text = renderStatus(settings, defaults, snapshot, limits)
     const row = this.database.query<StatusPinRow, [string, string]>(
       'SELECT * FROM telegram_status_pins WHERE bot_id = ? AND chat_id = ?',
     ).get(this.botId, chatId)
@@ -270,7 +241,7 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
 
     if (row?.message_id !== null && row?.message_id !== undefined && this.api.editMessageText !== undefined) {
       try {
-        await this.api.editMessageText(chatId, row.message_id, text, { parse_mode: 'HTML' })
+        await this.api.editMessageText(chatId, row.message_id, text, {})
         this.persist(chatId, projectId, row.message_id, text, row.pinned === 1, row.created_at_ms)
         if (row.pinned !== 1) {
           await this.pinAndPersist(chatId, row.message_id, projectId, text, row.created_at_ms)
@@ -284,7 +255,6 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     let messageId: number
     try {
       const sent = await this.api.sendMessage(chatId, text, {
-        parse_mode: 'HTML',
         disable_notification: true,
       })
       messageId = sent.message_id
@@ -355,6 +325,31 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
       return limits
     } catch {
       return this.quotaCache?.limits ?? null
+    }
+  }
+
+  private settingsForChat(
+    chatId: string,
+    projectId: string,
+  ): Pick<AgentTurnSettings, 'model' | 'effort'> | null {
+    try {
+      return this.options.settingsForChat?.(chatId, projectId) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  private async readDefaults(projectId: string, force: boolean): Promise<AgentRuntimeDefaults | null> {
+    const nowMs = this.now()
+    const cached = this.runtimeDefaults.get(projectId)
+    if (!force && cached !== undefined && cached.expiresAtMs > nowMs) return cached.value
+    if (this.backend.readRuntimeDefaults === undefined) return cached?.value ?? null
+    try {
+      const value = await this.backend.readRuntimeDefaults(this.options.projectCwd?.(projectId))
+      this.runtimeDefaults.set(projectId, { value, expiresAtMs: nowMs + this.quotaRefreshMs })
+      return value
+    } catch {
+      return cached?.value ?? null
     }
   }
 }

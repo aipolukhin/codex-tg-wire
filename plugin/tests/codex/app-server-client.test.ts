@@ -366,6 +366,10 @@ describe('CodexAppServerClient typed operations', () => {
       params?: unknown
       result: unknown
     }> = [
+      { run: () => client.readConfig({ cwd: '/srv/project', includeLayers: false }),
+        method: 'config/read', params: { cwd: '/srv/project', includeLayers: false }, result: {
+          config: { model: 'gpt-5.6-sol', model_reasoning_effort: 'xhigh' }, origins: {},
+        } },
       { run: () => client.readAccount(), method: 'account/read', params: {}, result: {
         account: null, requiresOpenaiAuth: true,
       } },

@@ -9,6 +9,7 @@ import type {
   AgentModel,
   AgentNativeThread,
   AgentRateLimit,
+  AgentRuntimeDefaults,
   AgentReviewTarget,
   AgentSandboxMode,
   AgentTextTurnInput,
@@ -28,6 +29,8 @@ import type {
   AccountReadResult,
   AccountUsageParams,
   AccountUsageResult,
+  ConfigReadParams,
+  ConfigReadResult,
   ServerNotification,
   ModelListParams,
   ModelListResult,
@@ -64,6 +67,7 @@ interface CodexBackendClient {
   readAccount?(params?: { refreshToken?: boolean }): Promise<AccountReadResult>
   startDeviceLogin?(): Promise<AccountLoginStartResult>
   readRateLimits?(): Promise<AccountRateLimitsResult>
+  readConfig?(params?: ConfigReadParams): Promise<ConfigReadResult>
   readAccountUsage?(params?: AccountUsageParams): Promise<AccountUsageResult>
   listThreads?(params?: ThreadListParams): Promise<ThreadListResult>
   setThreadName?(params: ThreadSetNameParams): Promise<void>
@@ -522,6 +526,26 @@ export class CodexAppServerBackend implements AgentBackend {
       planType: value.planType,
       reachedType: value.rateLimitReachedType,
     }))
+  }
+
+  async readRuntimeDefaults(cwd?: string): Promise<AgentRuntimeDefaults> {
+    const result = this.client.readConfig === undefined
+      ? null
+      : await this.client.readConfig({
+          ...(cwd === undefined ? {} : { cwd }),
+          includeLayers: false,
+        })
+    let model = result?.config.model ?? null
+    let effort = result?.config.model_reasoning_effort ?? null
+    if (model === null || effort === null) {
+      const models = await this.listModels()
+      const selected = model === null
+        ? models.find((candidate) => candidate.isDefault) ?? models[0]
+        : models.find((candidate) => candidate.model === model)
+      model ??= selected?.model ?? null
+      effort ??= selected?.defaultEffort ?? null
+    }
+    return { model, effort }
   }
 
   async readUsage(threadId?: string): Promise<AgentUsageSnapshot> {

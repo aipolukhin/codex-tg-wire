@@ -81,6 +81,13 @@ class FakeBackendClient {
     }
   }
 
+  async readConfig() {
+    return {
+      config: { model: 'gpt-5.6-sol', model_reasoning_effort: 'xhigh' },
+      origins: {},
+    }
+  }
+
   async readAccountUsage() {
     return {
       summary: {
@@ -217,6 +224,9 @@ describe('CodexAppServerBackend text turns', () => {
     expect(await backend.readRateLimits()).toEqual([expect.objectContaining({
       id: 'codex', name: 'Codex', primary: expect.objectContaining({ usedPercent: 12.5 }),
     })])
+    expect(await backend.readRuntimeDefaults('/workspace/project')).toEqual({
+      model: 'gpt-5.6-sol', effort: 'xhigh',
+    })
     expect(await backend.readUsage()).toMatchObject({
       lifetimeTokens: '123', peakDailyTokens: '45', currentStreakDays: '3',
       recentDaily: [{ date: '2026-08-29', tokens: '12' }],

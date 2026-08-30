@@ -342,7 +342,19 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     backend,
     ux,
     options.botId,
-    options.ux,
+    {
+      ...options.ux,
+      projectCwd: (projectId) => options.projects.find((project) => project.id === projectId)?.cwd,
+      settingsForChat: (chatId, projectId) => {
+        const current = settings.getProjectSettings(options.botId, chatId, projectId)
+        return current === null
+          ? null
+          : {
+              ...(current.model === null ? {} : { model: current.model }),
+              ...(current.effort === null ? {} : { effort: current.effort }),
+            }
+      },
+    },
   )
   // Persist telemetry first; the native projection then reads the new snapshot.
   const uxObserver: AgentTurnUxObserver = {

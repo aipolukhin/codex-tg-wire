@@ -13,6 +13,8 @@ import type {
   AccountReadResult,
   AccountUsageParams,
   AccountUsageResult,
+  ConfigReadParams,
+  ConfigReadResult,
   InitializeParams,
   InitializeResult,
   ModelListParams,
@@ -229,6 +231,10 @@ export class CodexAppServerClient {
 
   listModels(params: ModelListParams = {}): Promise<ModelListResult> {
     return this.request<ModelListResult>('model/list', params)
+  }
+
+  readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResult> {
+    return this.request<ConfigReadResult>('config/read', params)
   }
 
   readAccount(params: AccountReadParams = {}): Promise<AccountReadResult> {

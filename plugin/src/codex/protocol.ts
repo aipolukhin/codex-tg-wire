@@ -213,6 +213,21 @@ export interface ModelListResult {
   nextCursor: string | null
 }
 
+export interface ConfigReadParams {
+  cwd?: string | null
+  includeLayers?: boolean
+}
+
+export interface ConfigReadResult {
+  config: {
+    model: string | null
+    model_reasoning_effort: string | null
+    [key: string]: unknown
+  }
+  origins: Record<string, unknown>
+  layers?: unknown[] | null
+}
+
 // Account and thread control types intentionally mirror only the stable
 // fields rendered by the Telegram control plane. Unknown App Server fields
 // remain available through index signatures so a compatible Codex patch can

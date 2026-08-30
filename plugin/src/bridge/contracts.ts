@@ -272,6 +272,11 @@ export interface AgentRateLimit {
   reachedType: string | null
 }
 
+export interface AgentRuntimeDefaults {
+  model: string | null
+  effort: string | null
+}
+
 export interface AgentUsageSnapshot {
   lifetimeTokens: string | null
   peakDailyTokens: string | null
@@ -455,6 +460,7 @@ export interface AgentBackend {
   readAccount?(): Promise<AgentAccountSnapshot>
   startDeviceLogin?(): Promise<AgentDeviceLogin>
   readRateLimits?(): Promise<AgentRateLimit[]>
+  readRuntimeDefaults?(cwd?: string): Promise<AgentRuntimeDefaults>
   readUsage?(threadId?: string): Promise<AgentUsageSnapshot>
   listNativeThreads?(input: {
     cwd: readonly string[]

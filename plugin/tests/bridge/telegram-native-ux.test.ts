@@ -112,7 +112,10 @@ describe('Telegram native UX', () => {
     const ux = new TelegramNativeTurnUx(
       database,
       telegram,
-      { readRateLimits: async () => { quotaReads += 1; return limits } },
+      {
+        readRateLimits: async () => { quotaReads += 1; return limits },
+        readRuntimeDefaults: async () => ({ model: 'gpt-5.6-sol', effort: 'xhigh' }),
+      },
       { getStatus: () => snapshot },
       'primary',
       { pinnedStatus: true, now: () => NOW },
@@ -121,12 +124,9 @@ describe('Telegram native UX', () => {
     await ux.refreshChat('7001', 'workspace')
     expect(telegram.sent).toHaveLength(1)
     expect(telegram.sent[0]?.options).toEqual({
-      parse_mode: 'HTML',
       disable_notification: true,
     })
-    expect(telegram.sent[0]?.text).toContain('🟢 <b>Codex готов</b>')
-    expect(telegram.sent[0]?.text).toContain('Квота 5 ч: 92% осталось')
-    expect(telegram.sent[0]?.text).toContain('Контекст: 16k / 258k · 6%')
+    expect(telegram.sent[0]?.text).toBe('gpt-5.6-sol xhigh 5h:92% w:79% ctx:6%')
     expect(telegram.sent[0]?.text).not.toContain(operation.text)
     expect(telegram.pins).toEqual([{ chatId: '7001', messageId: 101 }])
 
@@ -142,7 +142,7 @@ describe('Telegram native UX', () => {
     ])
 
     telegram.failNextEdit = true
-    snapshot = { ...snapshot, phase: 'FAILED' }
+    snapshot = { ...snapshot, phase: 'FAILED', inputTokens: 25_000 }
     await ux.refreshChat('7001', 'workspace')
     expect(telegram.sent).toHaveLength(2)
     expect(telegram.pins.at(-1)).toEqual({ chatId: '7001', messageId: 102 })

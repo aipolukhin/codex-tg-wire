@@ -130,7 +130,14 @@ describe('startup turn recovery', () => {
       now: () => NOW + 1,
     }).run()
 
-    expect(sweep).toEqual({ candidates: 1, completed: 1, failed: 0, interrupted: 0, unknown: 0 })
+    expect(sweep).toEqual({
+      candidates: 1,
+      completed: 1,
+      failed: 0,
+      interrupted: 0,
+      unknown: 0,
+      unblocked: 0,
+    })
     expect(sessions.getTurn(active.turn.id)).toMatchObject({
       state: 'COMPLETED',
       finalResponse: {
@@ -184,7 +191,14 @@ describe('startup turn recovery', () => {
       now: () => NOW + 2,
     }).run()
 
-    expect(sweep).toEqual({ candidates: 3, completed: 0, failed: 1, interrupted: 1, unknown: 1 })
+    expect(sweep).toEqual({
+      candidates: 3,
+      completed: 0,
+      failed: 1,
+      interrupted: 1,
+      unknown: 1,
+      unblocked: 0,
+    })
     expect(sessions.getTurn(failed.turn.id)?.state).toBe('FAILED')
     expect(sessions.getTurn(interrupted.turn.id)?.state).toBe('INTERRUPTED')
     expect(sessions.getTurn(uncertain.turn.id)).toMatchObject({
@@ -225,5 +239,61 @@ describe('startup turn recovery', () => {
       finalResponse: { error: 'CodexTurnRecoveryUnknown:inspection_failed' },
     })
     expect(JSON.stringify(sessions.getTurn(active.turn.id))).not.toContain('stored thread unavailable')
+  })
+
+  test('rechecks UNKNOWN turns and releases messages that were blocked behind them', async () => {
+    const uncertain = activeTurn({
+      updateId: 40,
+      chatId: '7001',
+      threadId: 'thread-recheck',
+      turnId: 'turn-recheck',
+    })
+    sessions.markTerminal(uncertain.turn.id, 'UNKNOWN', 'AppServerClosedError', NOW + 1)
+    inbox.fail(uncertain.update.id, 'worker-40', 'TurnRecoveryRequiredError', NOW + 1)
+
+    const blockedUpdate = inbox.ingest({
+      botId: 'primary',
+      updateId: 41,
+      chatId: '7001',
+      routingClass: 'MESSAGE',
+      payload: { update_id: 41 },
+      receivedAtMs: NOW + 2,
+    }).update
+    inbox.claimNext({ workerId: 'worker-41', nowMs: NOW + 2, leaseDurationMs: 60_000 })
+    const blocked = sessions.prepareTextOperation({
+      operationKey: 'telegram:primary:41:turn',
+      inboxUpdateId: blockedUpdate.id,
+      botId: 'primary',
+      updateId: 41,
+      chatId: '7001',
+      projectId: 'workspace',
+      text: 'is the bridge alive?',
+    }, 'codex', NOW + 2)
+    expect(blocked.blockingTurn?.state).toBe('UNKNOWN')
+    inbox.fail(blockedUpdate.id, 'worker-41', 'TurnRecoveryRequiredError', NOW + 3)
+
+    backend.results.set('thread-recheck', {
+      state: 'INTERRUPTED',
+      turnId: 'turn-recheck',
+    })
+    const sweep = await new StartupTurnRecovery(sessions, inbox, outbox, backend, {
+      now: () => NOW + 4,
+    }).run()
+
+    expect(sweep).toEqual({
+      candidates: 1,
+      completed: 0,
+      failed: 0,
+      interrupted: 1,
+      unknown: 0,
+      unblocked: 1,
+    })
+    expect(sessions.getTurn(uncertain.turn.id)?.state).toBe('INTERRUPTED')
+    expect(sessions.getTurn(blocked.turn.id)?.state).toBe('QUEUED')
+    expect(inbox.get(blockedUpdate.id)).toMatchObject({
+      state: 'RETRY_WAIT',
+      routingClass: 'QUEUED_MESSAGE',
+      attemptCount: 0,
+    })
   })
 })

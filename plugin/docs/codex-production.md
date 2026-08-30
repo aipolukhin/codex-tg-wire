@@ -63,6 +63,7 @@ Environment=DASHI_CODEX_BRIDGE_CONFIG=/etc/dashi-codex-bridge/bridge.config.json
 ExecStart=/usr/bin/env bun /opt/dashi-codex-bridge/current/plugin/src/codex-telegram-service.ts
 Restart=on-failure
 RestartSec=5s
+KillMode=mixed
 WatchdogSec=180s
 ```
 
@@ -72,6 +73,13 @@ readiness degradation: долгий Codex turn законно держит од�
 `health.staleAfterMs` и не должен быть убит. `/ready` при этом остаётся degraded
 для мониторинга. Если сам event loop зависнет, watchdog timer не выполнится и
 systemd перезапустит процесс.
+
+`KillMode=mixed` оставляет дочерний Codex App Server живым во время graceful
+stop: сначала сигнал получает bridge, он дренирует текущий turn и outbox, затем
+сам закрывает App Server. На следующем запуске recovery повторно инспектирует не
+только `ACTIVE`, но и ранее неопределённые `UNKNOWN` turns. Если Codex уже может
+доказать terminal state, сообщения, заблокированные этим turn, возвращаются в
+durable FIFO автоматически.
 
 При запуске вне systemd можно передать `DASHI_TELEGRAM_BOT_TOKEN_FILE`; внутри unit файл `telegram-token` автоматически находится через `CREDENTIALS_DIRECTORY`. Credential resolver не следует symlink, ограничивает размер и не печатает secret path/value.
 
@@ -101,6 +109,12 @@ Restore проверяет manifest/hash/integrity, мигрирует стар�
 `retention.payloadMaxAgeDays` по умолчанию равен 30. После срока bridge затирает message/turn/interaction/delivery payloads и error text, удаляет private attachment/media files внутри их spool roots, но сохраняет update ids, operation keys, states и delivery proof для дедупликации. SQLite работает с `secure_delete=ON`. Shared outbound file не удаляется, пока на него ссылается свежий job.
 
 Telegram send path использует per-chat FIFO bucket, общий bot bucket и bounded retry по `429 retry_after`. Значения лежат в `telegram.rateLimit`; retry_after и число попыток имеют жёсткие потолки. Non-429 timeout не превращается во внутренний бесконечный retry. Replayed updates схлопываются по `(bot_id, update_id)`, а первый terminal callback response выигрывает транзакционно.
+
+Закреплённый status anchor — best-effort telemetry, а не часть outbox. Во время
+turn он обновляется не чаще раза в минуту; progress events не создают отдельные
+Telegram edits. `429` и временная сетевая ошибка никогда не превращаются в
+fallback `sendMessage`: новый anchor создаётся только когда Telegram явно
+подтвердил, что старое сообщение удалено или больше не редактируется.
 
 ## Chaos, soak и release gate
 

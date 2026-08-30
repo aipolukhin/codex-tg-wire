@@ -467,15 +467,41 @@ export class SqliteInboxRepository implements InboxRepository {
     return this.database.transaction(() => {
       this.database.run(
         `UPDATE telegram_updates
-         SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', available_at_ms = ?,
+         SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', attempt_count = 0,
+             available_at_ms = ?,
              lease_owner = NULL, lease_expires_at_ms = NULL,
+             processed_at_ms = NULL,
              last_error = 'completed Codex turn recovered after restart'
-         WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT')`,
+         WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT', 'FAILED')`,
         [nowMs, id],
       )
       this.releaseAlbum(id, nowMs, 'completed Codex turn recovered after restart')
       return this.get(id)
     }).immediate()
+  }
+
+  releaseTurnRecoveryBlocked(nowMs: number): number {
+    return this.database.transaction(() => this.database.run(
+      `UPDATE telegram_updates
+       SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', attempt_count = 0,
+           available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
+           processed_at_ms = NULL, last_error = 'turn recovery blocker resolved'
+       WHERE state = 'FAILED'
+         AND last_error = 'TurnRecoveryRequiredError'
+         AND EXISTS (
+           SELECT 1
+           FROM turns queued
+           WHERE queued.source_update_id = telegram_updates.id
+             AND queued.state = 'QUEUED'
+             AND NOT EXISTS (
+               SELECT 1 FROM turns blocker
+               WHERE blocker.session_id = queued.session_id
+                 AND blocker.id != queued.id
+                 AND blocker.state IN ('ACTIVE', 'UNKNOWN')
+             )
+         )`,
+      [nowMs],
+    ).changes).immediate()
   }
 
   quarantineForTurnRecovery(id: number, reason: string, nowMs: number): InboxUpdate | null {

@@ -14,6 +14,7 @@ export interface TurnRecoverySweep {
   failed: number
   interrupted: number
   unknown: number
+  unblocked: number
 }
 
 export interface StartupTurnRecoveryOptions {
@@ -76,12 +77,13 @@ export class StartupTurnRecovery {
       failed: 0,
       interrupted: 0,
       unknown: 0,
+      unblocked: 0,
     }
     for (const candidate of candidates) {
       const inspection = await this.inspect(candidate)
       const nowMs = this.now()
       if (inspection.state === 'COMPLETED') {
-        this.sessions.completeTurn(candidate.turn.id, inspection.result, nowMs)
+        this.sessions.completeRecoveredTurn(candidate.turn.id, inspection.result, nowMs)
         if (candidate.turn.sourceUpdateId !== null) {
           this.inbox.releaseForTurnRecovery(candidate.turn.sourceUpdateId, nowMs)
         }
@@ -92,7 +94,7 @@ export class StartupTurnRecovery {
       const errorName = inspection.state === 'UNKNOWN'
         ? `CodexTurnRecoveryUnknown:${inspection.reason}`
         : `CodexTurnRecovery${inspection.state}`
-      this.sessions.markTerminal(
+      this.sessions.markRecoveredTerminal(
         candidate.turn.id,
         inspection.state,
         errorName,
@@ -122,6 +124,7 @@ export class StartupTurnRecovery {
           ? 'interrupted'
           : 'unknown'] += 1
     }
+    sweep.unblocked = this.inbox.releaseTurnRecoveryBlocked(this.now())
     return sweep
   }
 

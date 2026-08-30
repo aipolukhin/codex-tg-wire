@@ -378,6 +378,21 @@ export class SqliteSessionRepository {
     return this.requireTurn(localTurnId)
   }
 
+  completeRecoveredTurn(localTurnId: string, result: TextTurnResult, nowMs: number): TurnRecord {
+    const changed = this.database.run(
+      `UPDATE turns
+       SET state = 'COMPLETED', backend_turn_id = ?, final_response_json = ?, finished_at_ms = ?
+       WHERE id = ? AND state IN ('ACTIVE', 'UNKNOWN')`,
+      [result.turnId, JSON.stringify(result), nowMs, localTurnId],
+    ).changes
+    if (changed !== 1) {
+      throw new SessionStateConflictError(
+        `turn ${localTurnId} cannot reconcile to COMPLETED`,
+      )
+    }
+    return this.requireTurn(localTurnId)
+  }
+
   markTerminal(
     localTurnId: string,
     state: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN',
@@ -399,6 +414,27 @@ export class SqliteSessionRepository {
     return this.requireTurn(localTurnId)
   }
 
+  markRecoveredTerminal(
+    localTurnId: string,
+    state: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN',
+    errorName: string,
+    nowMs: number,
+    backendTurnId: string | null = null,
+  ): TurnRecord {
+    const finishedAtMs = state === 'UNKNOWN' ? null : nowMs
+    const changed = this.database.run(
+      `UPDATE turns
+       SET state = ?, backend_turn_id = COALESCE(?, backend_turn_id),
+           final_response_json = ?, finished_at_ms = ?
+       WHERE id = ? AND state IN ('ACTIVE', 'UNKNOWN')`,
+      [state, backendTurnId, JSON.stringify({ error: errorName }), finishedAtMs, localTurnId],
+    ).changes
+    if (changed !== 1) {
+      throw new SessionStateConflictError(`turn ${localTurnId} cannot reconcile to ${state}`)
+    }
+    return this.requireTurn(localTurnId)
+  }
+
   getTurn(id: string): TurnRecord | null {
     const row = this.database
       .query<TurnRow, [string]>('SELECT * FROM turns WHERE id = ?')
@@ -413,7 +449,7 @@ export class SqliteSessionRepository {
   listActiveTurnsForRecovery(backend = 'codex'): ActiveTurnRecoveryCandidate[] {
     return this.database
       .query<TurnRow, []>(
-        `SELECT * FROM turns WHERE state = 'ACTIVE'
+        `SELECT * FROM turns WHERE state IN ('ACTIVE', 'UNKNOWN')
          ORDER BY created_at_ms, id`,
       )
       .all()

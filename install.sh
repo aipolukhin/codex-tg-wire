@@ -642,6 +642,7 @@ chmod 0600 "$TEMPORARY_PATH"
     "ExecStart=$(systemd_quote "$BUN_BINARY") $(systemd_quote "$PLUGIN_DIRECTORY/src/codex-telegram-service.ts")" \
     'Restart=on-failure' \
     'RestartSec=5s' \
+    'KillMode=mixed' \
     'TimeoutStopSec=120s' \
     'WatchdogSec=180s' \
     'UMask=0077' \

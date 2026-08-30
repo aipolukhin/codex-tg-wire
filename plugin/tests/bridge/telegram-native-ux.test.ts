@@ -25,7 +25,7 @@ class FakeTelegram implements TelegramTextApi {
   readonly pins: Array<{ chatId: string; messageId: number }> = []
   readonly deletes: Array<{ chatId: string; messageId: number }> = []
   readonly actions: Array<{ chatId: string; action: 'typing' }> = []
-  failNextEdit = false
+  nextEditError: unknown = null
   failNextPin = false
 
   async sendMessage(
@@ -38,9 +38,10 @@ class FakeTelegram implements TelegramTextApi {
   }
 
   async editMessageText(chatId: string, messageId: number, text: string): Promise<true> {
-    if (this.failNextEdit) {
-      this.failNextEdit = false
-      throw new Error('message to edit not found')
+    if (this.nextEditError !== null) {
+      const error = this.nextEditError
+      this.nextEditError = null
+      throw error
     }
     this.edits.push({ chatId, messageId, text })
     return true
@@ -156,7 +157,10 @@ describe('Telegram native UX', () => {
       expect.objectContaining({ chatId: '7001', messageId: 101 }),
     ])
 
-    telegram.failNextEdit = true
+    telegram.nextEditError = {
+      error_code: 400,
+      description: 'Bad Request: message to edit not found',
+    }
     snapshot = { ...snapshot, phase: 'FAILED', inputTokens: 25_000 }
     await ux.refreshChat('7001', 'workspace')
     expect(telegram.sent).toHaveLength(2)
@@ -165,6 +169,53 @@ describe('Telegram native UX', () => {
     expect(database.query<{ message_id: number; pinned: number }, []>(
       'SELECT message_id, pinned FROM telegram_status_pins',
     ).get()).toEqual({ message_id: 102, pinned: 1 })
+    ux.close()
+  })
+
+  test('does not recreate the status anchor after rate limits or transient edit failures', async () => {
+    const telegram = new FakeTelegram()
+    let inputTokens = 10
+    const ux = new TelegramNativeTurnUx(
+      database,
+      telegram,
+      {},
+      {
+        getStatus: () => ({
+          phase: 'ACTIVE',
+          activity: 'working',
+          planCompleted: 0,
+          planTotal: 0,
+          totalTokens: inputTokens,
+          inputTokens,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          threadTotalTokens: inputTokens,
+          contextWindow: 100,
+          updatedAtMs: NOW,
+        }),
+      },
+      'primary',
+      { pinnedStatus: true, now: () => NOW },
+    )
+
+    await ux.refreshChat('7001', 'workspace')
+    expect(telegram.sent).toHaveLength(1)
+
+    inputTokens = 20
+    telegram.nextEditError = {
+      error_code: 429,
+      description: 'Too Many Requests: retry after 60',
+      parameters: { retry_after: 60 },
+    }
+    await ux.refreshChat('7001', 'workspace')
+    expect(telegram.sent).toHaveLength(1)
+    expect(telegram.deletes).toHaveLength(0)
+
+    inputTokens = 30
+    telegram.nextEditError = new Error('temporary network failure')
+    await ux.refreshChat('7001', 'workspace')
+    expect(telegram.sent).toHaveLength(1)
+    expect(telegram.deletes).toHaveLength(0)
     ux.close()
   })
 

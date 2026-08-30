@@ -92,6 +92,7 @@ describe('v1 deployment packaging', () => {
     expect(unit).toContain('Type=notify')
     expect(unit).toContain('LoadCredential=telegram-token:')
     expect(unit).toContain('WatchdogSec=180s')
+    expect(unit).toContain('KillMode=mixed')
     expect(unit).toContain('/plugin/src/codex-telegram-service.ts')
     expect(unit).not.toContain('run start:codex')
     expect(unit).toContain('StateDirectory=dashi-codex-bridge')

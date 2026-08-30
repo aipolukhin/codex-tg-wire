@@ -41,8 +41,34 @@ export interface TelegramNativeTurnUxOptions {
 }
 
 const DEFAULT_TYPING_REFRESH_MS = 4_000
-const DEFAULT_ELAPSED_REFRESH_MS = 1_000
+const DEFAULT_ELAPSED_REFRESH_MS = 60_000
 const DEFAULT_QUOTA_REFRESH_MS = 5 * 60_000
+
+interface TelegramApiErrorShape {
+  error_code?: unknown
+  description?: unknown
+  error?: unknown
+}
+
+function telegramApiError(error: unknown): { code: number; description: string } | null {
+  if (typeof error !== 'object' || error === null) return null
+  const candidate = error as TelegramApiErrorShape
+  if (candidate.error !== undefined) return telegramApiError(candidate.error)
+  if (typeof candidate.error_code !== 'number' || typeof candidate.description !== 'string') {
+    return null
+  }
+  return { code: candidate.error_code, description: candidate.description.toLowerCase() }
+}
+
+function isStaleStatusAnchorError(error: unknown): boolean {
+  const apiError = telegramApiError(error)
+  if (apiError?.code !== 400) return false
+  return (
+    apiError.description.includes('message to edit not found') ||
+    apiError.description.includes("message can't be edited") ||
+    apiError.description.includes('message identifier is not specified')
+  )
+}
 
 function compactField(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null
@@ -188,9 +214,7 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     void this.refreshChat(operation.chatId, operation.projectId)
   }
 
-  onProgress(operation: TextTurnOperation, _progress: AgentTurnProgress): void {
-    void this.refreshChat(operation.chatId, operation.projectId)
-  }
+  onProgress(_operation: TextTurnOperation, _progress: AgentTurnProgress): void {}
 
   onCompleted(operation: TextTurnOperation, _result: TextTurnResult): void {
     this.finish(operation)
@@ -365,8 +389,12 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
           this.persist(chatId, projectId, row.message_id, text, true, row.created_at_ms)
         }
         return
-      } catch {
-        // Telegram may reject an old/deleted anchor. Recreate it below, as Telemax does.
+      } catch (error) {
+        // Only a proven stale/deleted anchor may be recreated. A 429 or a
+        // transient network error must stay best-effort; turning it into a
+        // sendMessage fallback amplifies Telegram flood limits and delays
+        // actual user replies.
+        if (!isStaleStatusAnchorError(error)) return
       }
     }
 

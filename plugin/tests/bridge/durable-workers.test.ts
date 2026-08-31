@@ -71,7 +71,7 @@ class FakeTurnTimeoutError extends Error {
 class FakeCapacityError extends Error {
   readonly agentTurnState = 'FAILED' as const
   readonly turnId = 'turn-capacity'
-  readonly failureCode = 'server_overloaded'
+  readonly failureCode = 'serverOverloaded'
   readonly retryable = true
 
   constructor() {

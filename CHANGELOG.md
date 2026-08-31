@@ -30,7 +30,7 @@ Claude package version is not the codex-tg-wire release version.
   delivery and native inline review targets.
 - Added an optional restart-safe Guided Plan gate with revise, confirm, execute
   and cancel actions.
-- Kept live task cards active across bounded `server_overloaded` recovery turns,
+- Kept live task cards active across bounded `serverOverloaded` recovery turns,
   retargeted cancellation to the replacement turn and localized task controls.
 
 ### Delivery and recovery

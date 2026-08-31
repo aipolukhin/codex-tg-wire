@@ -197,7 +197,7 @@ const DEFAULT_TURN_TIMEOUT_MS = 0
 const DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS = 3
 const DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS = 1_000
 const DEFAULT_TRANSIENT_RETRY_MAX_DELAY_MS = 4_000
-const TRANSIENT_TURN_ERROR_CODES = new Set(['server_overloaded'])
+const TRANSIENT_TURN_ERROR_CODES = new Set(['serverOverloaded'])
 
 const defaultSleep = (delayMs: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, delayMs)
@@ -218,6 +218,18 @@ function transientRecoveryInput(previous: CodexTurnFailedError): UserInput[] {
     'Reuse completed work and do not repeat irreversible actions.',
     'Finish the task and provide the final response.',
   ].join('\n'))]
+}
+
+function turnErrorCode(value: unknown): string | null {
+  if (!isRecord(value)) return null
+  const code = typeof value.codexErrorInfo === 'string'
+    ? value.codexErrorInfo
+    : typeof value.codex_error_info === 'string'
+      ? value.codex_error_info
+      : null
+  // The App Server wire schema is camelCase. Accept the rollout-log spelling
+  // as a compatibility input, but expose one canonical code to callers.
+  return code === 'server_overloaded' ? 'serverOverloaded' : code
 }
 
 function sandboxPolicy(mode: AgentSandboxMode, executionPolicy?: AgentExecutionPolicy) {
@@ -333,9 +345,7 @@ function parseTerminalTurn(params: unknown): { threadId: string; turn: TerminalT
   const errorMessage = isRecord(raw.error) && typeof raw.error.message === 'string'
     ? raw.error.message
     : null
-  const errorCode = isRecord(raw.error) && typeof raw.error.codex_error_info === 'string'
-    ? raw.error.codex_error_info
-    : null
+  const errorCode = turnErrorCode(raw.error)
   return {
     threadId: params.threadId,
     turn: { id: raw.id, status: raw.status, errorMessage, errorCode, messages, generatedImages },
@@ -361,9 +371,7 @@ function parseStoredTurn(value: unknown): TerminalTurn | null {
   const errorMessage = isRecord(value.error) && typeof value.error.message === 'string'
     ? value.error.message
     : null
-  const errorCode = isRecord(value.error) && typeof value.error.codex_error_info === 'string'
-    ? value.error.codex_error_info
-    : null
+  const errorCode = turnErrorCode(value.error)
   return {
     id: value.id,
     status: value.status,

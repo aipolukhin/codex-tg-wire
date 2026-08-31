@@ -854,7 +854,7 @@ describe('CodexAppServerBackend text turns', () => {
           id: 'turn-1', status: 'failed', items: [],
           error: {
             message: 'Selected model is at capacity. Please try a different model.',
-            codex_error_info: 'server_overloaded',
+            codexErrorInfo: 'serverOverloaded',
           },
         },
       },
@@ -896,7 +896,7 @@ describe('CodexAppServerBackend text turns', () => {
           threadId: 'thread-1',
           turn: {
             id: turnId, status: 'failed', items: [],
-            error: { message: 'capacity', codex_error_info: 'server_overloaded' },
+            error: { message: 'capacity', codexErrorInfo: 'serverOverloaded' },
           },
         },
       })
@@ -905,7 +905,7 @@ describe('CodexAppServerBackend text turns', () => {
     const error = await running.catch((caught: unknown) => caught)
     expect(error).toBeInstanceOf(CodexTurnFailedError)
     expect(error).toMatchObject({
-      turnId: 'turn-2', failureCode: 'server_overloaded', retryable: true,
+      turnId: 'turn-2', failureCode: 'serverOverloaded', retryable: true,
     })
     expect(client.turnStarts).toHaveLength(2)
     backend.close()

@@ -100,6 +100,7 @@ interface TerminalTurn {
   id: string
   status: 'completed' | 'interrupted' | 'failed' | 'inProgress'
   errorMessage: string | null
+  errorCode: string | null
   messages: AgentMessage[]
   generatedImages: GeneratedImage[]
 }
@@ -118,6 +119,10 @@ interface PendingTurn {
 
 export interface CodexAppServerBackendOptions {
   turnTimeoutMs?: number
+  transientRetryMaxAttempts?: number
+  transientRetryBaseDelayMs?: number
+  transientRetryMaxDelayMs?: number
+  sleep?: (delayMs: number) => Promise<void>
   threadStartDefaults?: Omit<ThreadStartParams, 'cwd'>
   threadResumeDefaults?: Omit<ThreadResumeParams, 'threadId' | 'cwd'>
   turnDefaults?: Omit<
@@ -145,11 +150,15 @@ export class CodexTurnNotActiveError extends Error {
 export class CodexTurnFailedError extends Error {
   readonly agentTurnState = 'FAILED' as const
   readonly turnId: string
+  readonly failureCode: string | null
+  readonly retryable: boolean
 
-  constructor(turnId: string, detail: string | null) {
+  constructor(turnId: string, detail: string | null, failureCode: string | null = null) {
     super(`Codex turn ${turnId} failed${detail === null ? '' : `: ${detail}`}`)
     this.name = 'CodexTurnFailedError'
     this.turnId = turnId
+    this.failureCode = failureCode
+    this.retryable = failureCode !== null && TRANSIENT_TURN_ERROR_CODES.has(failureCode)
   }
 }
 
@@ -185,6 +194,31 @@ export class CodexTurnTimeoutError extends Error {
 }
 
 const DEFAULT_TURN_TIMEOUT_MS = 0
+const DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS = 3
+const DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS = 1_000
+const DEFAULT_TRANSIENT_RETRY_MAX_DELAY_MS = 4_000
+const TRANSIENT_TURN_ERROR_CODES = new Set(['server_overloaded'])
+
+const defaultSleep = (delayMs: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, delayMs)
+})
+
+function nonNegativeSafeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative safe integer`)
+  }
+  return value
+}
+
+function transientRecoveryInput(previous: CodexTurnFailedError): UserInput[] {
+  return [textInput([
+    `The previous Codex turn ${previous.turnId} ended because the selected model was temporarily at capacity.`,
+    'Continue the current user task from the existing thread state.',
+    'Before any side effect, inspect the filesystem and relevant external state.',
+    'Reuse completed work and do not repeat irreversible actions.',
+    'Finish the task and provide the final response.',
+  ].join('\n'))]
+}
 
 function sandboxPolicy(mode: AgentSandboxMode, executionPolicy?: AgentExecutionPolicy) {
   const networkAccess = executionPolicy?.networkAccess ?? false
@@ -299,9 +333,12 @@ function parseTerminalTurn(params: unknown): { threadId: string; turn: TerminalT
   const errorMessage = isRecord(raw.error) && typeof raw.error.message === 'string'
     ? raw.error.message
     : null
+  const errorCode = isRecord(raw.error) && typeof raw.error.codex_error_info === 'string'
+    ? raw.error.codex_error_info
+    : null
   return {
     threadId: params.threadId,
-    turn: { id: raw.id, status: raw.status, errorMessage, messages, generatedImages },
+    turn: { id: raw.id, status: raw.status, errorMessage, errorCode, messages, generatedImages },
   }
 }
 
@@ -324,10 +361,14 @@ function parseStoredTurn(value: unknown): TerminalTurn | null {
   const errorMessage = isRecord(value.error) && typeof value.error.message === 'string'
     ? value.error.message
     : null
+  const errorCode = isRecord(value.error) && typeof value.error.codex_error_info === 'string'
+    ? value.error.codex_error_info
+    : null
   return {
     id: value.id,
     status: value.status,
     errorMessage,
+    errorCode,
     messages,
     generatedImages,
   }
@@ -492,6 +533,10 @@ function parseTurnProgress(notification: ServerNotification): AgentTurnProgress 
 export class CodexAppServerBackend implements AgentBackend {
   private readonly client: CodexBackendClient
   private readonly turnTimeoutMs: number
+  private readonly transientRetryMaxAttempts: number
+  private readonly transientRetryBaseDelayMs: number
+  private readonly transientRetryMaxDelayMs: number
+  private readonly sleep: (delayMs: number) => Promise<void>
   private readonly threadStartDefaults: Omit<ThreadStartParams, 'cwd'>
   private readonly threadResumeDefaults: Omit<ThreadResumeParams, 'threadId' | 'cwd'>
   private readonly turnDefaults: Omit<
@@ -508,6 +553,19 @@ export class CodexAppServerBackend implements AgentBackend {
   constructor(client: CodexAppServerClient | CodexBackendClient, options: CodexAppServerBackendOptions = {}) {
     this.client = client
     this.turnTimeoutMs = options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
+    this.transientRetryMaxAttempts = nonNegativeSafeInteger(
+      options.transientRetryMaxAttempts ?? DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS,
+      'transientRetryMaxAttempts',
+    )
+    this.transientRetryBaseDelayMs = nonNegativeSafeInteger(
+      options.transientRetryBaseDelayMs ?? DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS,
+      'transientRetryBaseDelayMs',
+    )
+    this.transientRetryMaxDelayMs = nonNegativeSafeInteger(
+      options.transientRetryMaxDelayMs ?? DEFAULT_TRANSIENT_RETRY_MAX_DELAY_MS,
+      'transientRetryMaxDelayMs',
+    )
+    this.sleep = options.sleep ?? defaultSleep
     this.threadStartDefaults = options.threadStartDefaults ?? {}
     this.threadResumeDefaults = options.threadResumeDefaults ?? {}
     this.turnDefaults = options.turnDefaults ?? {}
@@ -742,60 +800,88 @@ export class CodexAppServerBackend implements AgentBackend {
     const threadId = thread.id
     if (this.pendingByThread.has(threadId)) throw new CodexTurnBusyError(threadId)
 
-    const pending = this.createPending(threadId, lifecycle)
-    this.pendingByThread.set(threadId, pending)
-    try {
-      await lifecycle.onThreadReady?.(threadId, thread.created)
-      const started = await this.client.startTurn({
-        ...this.turnDefaults,
-        ...(input.settings?.model === undefined ? {} : { model: input.settings.model }),
-        ...(input.settings?.effort === undefined ? {} : { effort: input.settings.effort }),
-        ...(input.settings?.approvalPolicy === undefined
-          ? {}
-          : { approvalPolicy: input.settings.approvalPolicy }),
-        ...(input.settings?.sandbox === undefined
-          ? {}
-          : { sandboxPolicy: sandboxPolicy(input.settings.sandbox, input.executionPolicy) }),
-        threadId,
-        clientUserMessageId: input.operationKey,
-        input: turnInputs(input),
-        cwd: input.cwd,
-      })
-      if (pending.turnId !== null && pending.turnId !== started.turn.id) {
-        throw new CodexTurnProtocolError(
-          `turn/start returned ${started.turn.id} after events for ${pending.turnId}`,
-        )
+    await lifecycle.onThreadReady?.(threadId, thread.created)
+    const generatedImages = new Map<string, GeneratedImage>()
+    let previousFailure: CodexTurnFailedError | null = null
+    for (let attempt = 0; ; attempt += 1) {
+      const pending = this.createPending(threadId, lifecycle)
+      this.pendingByThread.set(threadId, pending)
+      let shouldRetry = false
+      try {
+        const started = await this.client.startTurn({
+          ...this.turnDefaults,
+          ...(input.settings?.model === undefined ? {} : { model: input.settings.model }),
+          ...(input.settings?.effort === undefined ? {} : { effort: input.settings.effort }),
+          ...(input.settings?.approvalPolicy === undefined
+            ? {}
+            : { approvalPolicy: input.settings.approvalPolicy }),
+          ...(input.settings?.sandbox === undefined
+            ? {}
+            : { sandboxPolicy: sandboxPolicy(input.settings.sandbox, input.executionPolicy) }),
+          threadId,
+          clientUserMessageId: attempt === 0
+            ? input.operationKey
+            : `${input.operationKey}:transient-retry:${attempt}`,
+          input: previousFailure === null ? turnInputs(input) : transientRecoveryInput(previousFailure),
+          cwd: input.cwd,
+        })
+        if (pending.turnId !== null && pending.turnId !== started.turn.id) {
+          throw new CodexTurnProtocolError(
+            `turn/start returned ${started.turn.id} after events for ${pending.turnId}`,
+          )
+        }
+        pending.turnId = started.turn.id
+        await lifecycle.onTurnStarted?.(threadId, started.turn.id)
+        const terminal = await pending.promise
+        if (terminal.id !== started.turn.id) {
+          throw new CodexTurnProtocolError(
+            `turn/completed returned ${terminal.id}, expected ${started.turn.id}`,
+          )
+        }
+        for (const image of pending.generatedImages.values()) generatedImages.set(image.id, image)
+        for (const image of terminal.generatedImages) generatedImages.set(image.id, image)
+        if (terminal.status === 'interrupted') throw new CodexTurnInterruptedError(terminal.id)
+        if (terminal.status === 'failed') {
+          const failure = new CodexTurnFailedError(
+            terminal.id,
+            terminal.errorMessage,
+            terminal.errorCode,
+          )
+          if (!failure.retryable || attempt >= this.transientRetryMaxAttempts) throw failure
+          previousFailure = failure
+          shouldRetry = true
+        } else {
+          if (terminal.status !== 'completed') {
+            throw new CodexTurnProtocolError(
+              `turn/completed carried non-terminal status ${terminal.status}`,
+            )
+          }
+          const text = finalText(terminal, pending.messages)
+          if (text.trim().length === 0) {
+            throw new CodexTurnProtocolError(
+              `Codex turn ${terminal.id} completed without a final message`,
+            )
+          }
+          const artifacts = finalArtifacts(terminal, generatedImages)
+          return {
+            threadId,
+            turnId: terminal.id,
+            finalText: text,
+            ...(artifacts.length === 0 ? {} : { artifacts }),
+          }
+        }
+      } finally {
+        if (!shouldRetry) this.clearPending(threadId, pending)
       }
-      pending.turnId = started.turn.id
-      await lifecycle.onTurnStarted?.(threadId, started.turn.id)
-      const terminal = await pending.promise
-      if (terminal.id !== started.turn.id) {
-        throw new CodexTurnProtocolError(
-          `turn/completed returned ${terminal.id}, expected ${started.turn.id}`,
-        )
+      const delayMs = Math.min(
+        this.transientRetryMaxDelayMs,
+        this.transientRetryBaseDelayMs * (2 ** attempt),
+      )
+      try {
+        await this.sleep(delayMs)
+      } finally {
+        this.clearPending(threadId, pending)
       }
-      if (terminal.status === 'interrupted') throw new CodexTurnInterruptedError(terminal.id)
-      if (terminal.status === 'failed') {
-        throw new CodexTurnFailedError(terminal.id, terminal.errorMessage)
-      }
-      if (terminal.status !== 'completed') {
-        throw new CodexTurnProtocolError(
-          `turn/completed carried non-terminal status ${terminal.status}`,
-        )
-      }
-      const text = finalText(terminal, pending.messages)
-      if (text.trim().length === 0) {
-        throw new CodexTurnProtocolError(`Codex turn ${terminal.id} completed without a final message`)
-      }
-      const artifacts = finalArtifacts(terminal, pending.generatedImages)
-      return {
-        threadId,
-        turnId: terminal.id,
-        finalText: text,
-        ...(artifacts.length === 0 ? {} : { artifacts }),
-      }
-    } finally {
-      this.clearPending(threadId, pending)
     }
   }
 
@@ -835,7 +921,7 @@ export class CodexAppServerBackend implements AgentBackend {
       }
       if (terminal.status === 'interrupted') throw new CodexTurnInterruptedError(terminal.id)
       if (terminal.status === 'failed') {
-        throw new CodexTurnFailedError(terminal.id, terminal.errorMessage)
+        throw new CodexTurnFailedError(terminal.id, terminal.errorMessage, terminal.errorCode)
       }
       if (terminal.status !== 'completed') {
         throw new CodexTurnProtocolError(

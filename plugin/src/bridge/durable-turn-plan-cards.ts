@@ -89,11 +89,11 @@ function escapeRichInline(value: string): string {
 
 function title(phase: PlanPhase): string {
   switch (phase) {
-    case 'ACTIVE': return 'Task progress'
-    case 'COMPLETED': return 'Task complete'
-    case 'FAILED': return 'Task failed'
-    case 'INTERRUPTED': return 'Task cancelled'
-    case 'UNKNOWN': return 'Task status unknown'
+    case 'ACTIVE': return 'Ход задачи'
+    case 'COMPLETED': return 'Задача выполнена'
+    case 'FAILED': return 'Задача не завершена'
+    case 'INTERRUPTED': return 'Задача отменена'
+    case 'UNKNOWN': return 'Статус задачи неизвестен'
   }
 }
 
@@ -104,14 +104,14 @@ function buttons(row: PlanCardRow): { inline_keyboard: Array<Array<{ text: strin
   if (row.cancel_state === 'CONFIRMING') {
     return {
       inline_keyboard: [[
-        { text: '⏹ Confirm cancel', callback_data: `dx:t:${row.token}:confirm` },
-        { text: '↩ Keep running', callback_data: `dx:t:${row.token}:keep` },
+        { text: '⏹ Подтвердить', callback_data: `dx:t:${row.token}:confirm` },
+        { text: '↩ Продолжить', callback_data: `dx:t:${row.token}:keep` },
       ]],
     }
   }
   return {
     inline_keyboard: [[
-      { text: '⏹ Cancel task', callback_data: `dx:t:${row.token}:cancel` },
+      { text: '⏹ Отменить задачу', callback_data: `dx:t:${row.token}:cancel` },
     ]],
   }
 }
@@ -125,11 +125,11 @@ function richText(row: PlanCardRow): string {
     const prefix = item.status === 'in_progress' ? '⏳ ' : ''
     lines.push(`- [${checked}] ${prefix}${escapeRichInline(item.step)}`)
   }
-  lines.push('', `**${completed} / ${steps.length} complete**`)
+  lines.push('', `**Выполнено: ${completed} / ${steps.length}**`)
   if (row.cancel_state === 'CONFIRMING') {
-    lines.push('', '> Cancel this task? Confirm below.')
+    lines.push('', '> Отменить эту задачу? Подтверди ниже.')
   } else if (row.cancel_state === 'REQUESTED') {
-    lines.push('', '> Cancellation requested…')
+    lines.push('', '> Отмена запрошена…')
   }
   return lines.join('\n')
 }
@@ -142,11 +142,11 @@ function fallbackText(row: PlanCardRow): string {
     const mark = item.status === 'completed' ? '☑️' : item.status === 'in_progress' ? '⏳' : '☐'
     lines.push(`${mark} ${escapeHtml(item.step)}`)
   }
-  lines.push('', `<b>${completed} / ${steps.length} complete</b>`)
+  lines.push('', `<b>Выполнено: ${completed} / ${steps.length}</b>`)
   if (row.cancel_state === 'CONFIRMING') {
-    lines.push('', 'Cancel this task? Confirm below.')
+    lines.push('', 'Отменить эту задачу? Подтверди ниже.')
   } else if (row.cancel_state === 'REQUESTED') {
-    lines.push('', 'Cancellation requested…')
+    lines.push('', 'Отмена запрошена…')
   }
   return lines.join('\n')
 }
@@ -183,7 +183,23 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
 
   onThreadReady(_operation: TextTurnOperation, _threadId: string): void {}
 
-  onTurnStarted(_operation: TextTurnOperation, _threadId: string, _turnId: string): void {}
+  onTurnStarted(operation: TextTurnOperation, threadId: string, turnId: string): void {
+    const cancellationRequested = this.database.transaction(() => {
+      const row = this.getByOperation(operation.operationKey)
+      if (row === null || row.phase !== 'ACTIVE' || row.turn_id === turnId) return false
+      row.thread_id = threadId
+      row.turn_id = turnId
+      if (row.cancel_state === 'REQUESTED') row.interrupt_sent_at_ms = null
+      row.updated_at_ms = this.now()
+      this.enqueueEdit(row, row.updated_at_ms)
+      return row.cancel_state === 'REQUESTED'
+    }).immediate()
+    if (cancellationRequested) {
+      void this.backend.interruptTurn(threadId, turnId)
+        .then(() => this.markInterruptSent(operation.operationKey))
+        .catch(() => undefined)
+    }
+  }
 
   onProgress(operation: TextTurnOperation, progress: AgentTurnProgress): void {
     if (progress.kind !== 'plan') return
@@ -255,7 +271,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
     if (input.action === 'cancel') return this.requestConfirmation(input)
     if (input.action === 'keep') return this.keepRunning(input)
     if (input.action === 'confirm') return this.confirmCancel(input)
-    return { deliveryJobId: null, toast: 'Unknown task action' }
+    return { deliveryJobId: null, toast: 'Неизвестное действие' }
   }
 
   async recoverStartup(): Promise<number> {
@@ -295,21 +311,21 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
   }): TurnPlanCardActionResult {
     return this.database.transaction(() => {
       const row = this.getByToken(input.token, input.chatId)
-      if (row === null) return { deliveryJobId: null, toast: 'Task not found' }
+      if (row === null) return { deliveryJobId: null, toast: 'Задача не найдена' }
       if (row.phase !== 'ACTIVE' || row.cancel_state === 'CLOSED') {
-        return { deliveryJobId: null, toast: 'Task already finished' }
+        return { deliveryJobId: null, toast: 'Задача уже завершена' }
       }
       if (row.cancel_state === 'REQUESTED') {
-        return { deliveryJobId: null, toast: 'Cancellation already requested' }
+        return { deliveryJobId: null, toast: 'Отмена уже запрошена' }
       }
       if (row.cancel_state === 'CONFIRMING') {
-        return { deliveryJobId: null, toast: 'Confirm cancellation below' }
+        return { deliveryJobId: null, toast: 'Подтверди отмену ниже' }
       }
       row.cancel_state = 'CONFIRMING'
       row.updated_at_ms = this.now()
       return {
         deliveryJobId: this.enqueueEdit(row, row.updated_at_ms),
-        toast: 'Confirmation required',
+        toast: 'Нужно подтверждение',
       }
     }).immediate()
   }
@@ -320,22 +336,22 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
   }): TurnPlanCardActionResult {
     return this.database.transaction(() => {
       const row = this.getByToken(input.token, input.chatId)
-      if (row === null) return { deliveryJobId: null, toast: 'Task not found' }
+      if (row === null) return { deliveryJobId: null, toast: 'Задача не найдена' }
       if (row.phase !== 'ACTIVE' || row.cancel_state === 'CLOSED') {
-        return { deliveryJobId: null, toast: 'Task already finished' }
+        return { deliveryJobId: null, toast: 'Задача уже завершена' }
       }
       if (row.cancel_state === 'REQUESTED') {
-        return { deliveryJobId: null, toast: 'Cancellation already requested' }
+        return { deliveryJobId: null, toast: 'Отмена уже запрошена' }
       }
       if (row.cancel_state === 'AVAILABLE') {
-        return { deliveryJobId: null, toast: 'Task is still running' }
+        return { deliveryJobId: null, toast: 'Задача всё ещё выполняется' }
       }
       row.cancel_state = 'AVAILABLE'
       row.cancel_operation_key = null
       row.updated_at_ms = this.now()
       return {
         deliveryJobId: this.enqueueEdit(row, row.updated_at_ms),
-        toast: 'Task continues',
+        toast: 'Задача продолжается',
       }
     }).immediate()
   }
@@ -347,15 +363,15 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
   }): Promise<TurnPlanCardActionResult> {
     const began = this.database.transaction(() => {
       const row = this.getByToken(input.token, input.chatId)
-      if (row === null) return { row: null, deliveryJobId: null, toast: 'Task not found' }
+      if (row === null) return { row: null, deliveryJobId: null, toast: 'Задача не найдена' }
       if (row.phase !== 'ACTIVE' || row.cancel_state === 'CLOSED') {
-        return { row: null, deliveryJobId: null, toast: 'Task already finished' }
+        return { row: null, deliveryJobId: null, toast: 'Задача уже завершена' }
       }
       if (row.cancel_state === 'AVAILABLE') {
-        return { row: null, deliveryJobId: null, toast: 'Tap Cancel task first' }
+        return { row: null, deliveryJobId: null, toast: 'Сначала нажми «Отменить задачу»' }
       }
       if (row.cancel_state === 'REQUESTED' && row.interrupt_sent_at_ms !== null) {
-        return { row: null, deliveryJobId: null, toast: 'Cancellation already requested' }
+        return { row: null, deliveryJobId: null, toast: 'Отмена уже запрошена' }
       }
       let deliveryJobId: string | null = null
       if (row.cancel_state === 'CONFIRMING') {
@@ -364,7 +380,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
         row.updated_at_ms = this.now()
         deliveryJobId = this.enqueueEdit(row, row.updated_at_ms)
       }
-      return { row: this.requireByOperation(row.operation_key), deliveryJobId, toast: 'Cancelling task…' }
+      return { row: this.requireByOperation(row.operation_key), deliveryJobId, toast: 'Отменяю задачу…' }
     }).immediate()
     if (began.row === null) {
       return { deliveryJobId: began.deliveryJobId, toast: began.toast }
@@ -379,12 +395,12 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
           turn.state === 'COMPLETED',
         )
       }
-      return { deliveryJobId: began.deliveryJobId, toast: 'Task already finished' }
+      return { deliveryJobId: began.deliveryJobId, toast: 'Задача уже завершена' }
     }
 
     await this.backend.interruptTurn(began.row.thread_id, began.row.turn_id)
     this.markInterruptSent(began.row.operation_key)
-    return { deliveryJobId: began.deliveryJobId, toast: 'Cancellation requested' }
+    return { deliveryJobId: began.deliveryJobId, toast: 'Отмена запрошена' }
   }
 
   private close(operationKey: string, phase: PlanPhase, completeSteps: boolean): void {

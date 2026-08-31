@@ -46,6 +46,7 @@ class FakeBackendClient {
   readonly closeListeners = new Set<(close: TransportClose) => void>()
   threadIds = ['thread-1']
   turnIds = new Map<string, string>([['thread-1', 'turn-1']])
+  turnIdQueues = new Map<string, string[]>()
   emitDuringTurnStart: (() => void) | undefined
   emitDuringReviewStart: (() => void) | undefined
   modelPages: ModelListResult[] = [{ data: [], nextCursor: null }]
@@ -139,7 +140,7 @@ class FakeBackendClient {
 
   async startTurn(params: TurnStartParams): Promise<TurnStartResult> {
     this.turnStarts.push(params)
-    const id = this.turnIds.get(params.threadId)
+    const id = this.turnIdQueues.get(params.threadId)?.shift() ?? this.turnIds.get(params.threadId)
     if (id === undefined) throw new Error(`no fake turn id for ${params.threadId}`)
     this.emitDuringTurnStart?.()
     return { turn: { id } }
@@ -829,6 +830,85 @@ describe('CodexAppServerBackend text turns', () => {
       await expect(result).rejects.toBeInstanceOf(item.expected)
       backend.close()
     }
+  })
+
+  test('continues the same durable task after transient model capacity failure', async () => {
+    const client = new FakeBackendClient()
+    client.turnIdQueues.set('thread-1', ['turn-1', 'turn-2'])
+    const sleeps: number[] = []
+    const started: string[] = []
+    const backend = new CodexAppServerBackend(client, {
+      transientRetryMaxAttempts: 1,
+      transientRetryBaseDelayMs: 25,
+      sleep: async (delayMs) => { sleeps.push(delayMs) },
+    })
+    const running = backend.runTextTurn(turnInput(), {
+      onTurnStarted: (_threadId, turnId) => { started.push(turnId) },
+    })
+    await waitForTurnStart(client)
+    client.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: {
+          id: 'turn-1', status: 'failed', items: [],
+          error: {
+            message: 'Selected model is at capacity. Please try a different model.',
+            codex_error_info: 'server_overloaded',
+          },
+        },
+      },
+    })
+
+    await waitForTurnStart(client, 2)
+    expect(sleeps).toEqual([25])
+    expect(started).toEqual(['turn-1', 'turn-2'])
+    expect(client.turnStarts[1]).toMatchObject({
+      threadId: 'thread-1',
+      clientUserMessageId: 'telegram:primary:501:turn:transient-retry:1',
+      cwd: '/workspace/project',
+    })
+    expect(JSON.stringify(client.turnStarts[1]?.input)).toContain('inspect the filesystem')
+    expect(JSON.stringify(client.turnStarts[1]?.input)).toContain('do not repeat irreversible actions')
+    expect(JSON.stringify(client.turnStarts[1]?.input)).not.toContain('проверь тесты')
+
+    emitCompleted(client, 'thread-1', 'turn-2', 'Продолжил без дублей')
+    expect(await running).toEqual({
+      threadId: 'thread-1', turnId: 'turn-2', finalText: 'Продолжил без дублей',
+    })
+    backend.close()
+  })
+
+  test('bounds transient retries and preserves the structured failure reason', async () => {
+    const client = new FakeBackendClient()
+    client.turnIdQueues.set('thread-1', ['turn-1', 'turn-2'])
+    const backend = new CodexAppServerBackend(client, {
+      transientRetryMaxAttempts: 1,
+      sleep: async () => undefined,
+    })
+    const running = backend.runTextTurn(turnInput())
+
+    for (const [index, turnId] of ['turn-1', 'turn-2'].entries()) {
+      await waitForTurnStart(client, index + 1)
+      client.emit({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: {
+            id: turnId, status: 'failed', items: [],
+            error: { message: 'capacity', codex_error_info: 'server_overloaded' },
+          },
+        },
+      })
+    }
+
+    const error = await running.catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(CodexTurnFailedError)
+    expect(error).toMatchObject({
+      turnId: 'turn-2', failureCode: 'server_overloaded', retryable: true,
+    })
+    expect(client.turnStarts).toHaveLength(2)
+    backend.close()
   })
 
   test('isolates concurrent threads and rejects a second active turn on one thread', async () => {

@@ -68,6 +68,18 @@ class FakeTurnTimeoutError extends Error {
   }
 }
 
+class FakeCapacityError extends Error {
+  readonly agentTurnState = 'FAILED' as const
+  readonly turnId = 'turn-capacity'
+  readonly failureCode = 'server_overloaded'
+  readonly retryable = true
+
+  constructor() {
+    super('capacity detail must not be delivered')
+    this.name = 'CodexTurnFailedError'
+  }
+}
+
 interface PreparedDelivery {
   jobId: string
   payload: unknown
@@ -569,6 +581,26 @@ describe('durable text vertical slice', () => {
       chatId: '7001',
       text: '⏱ Codex не завершил turn за отведённое время и был остановлен. Контекст thread сохранён — отправь «продолжай», чтобы продолжить.',
     })
+  })
+
+  test('explains an exhausted automatic capacity recovery without exposing internals', async () => {
+    const accepted = inbox.ingest(textUpdate(510))
+    coordinator.failure = new FakeCapacityError()
+    const worker = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-capacity',
+      now: () => nowMs,
+      retryPolicy: exponentialRetryPolicy({ maxAttempts: 1 }),
+    })
+
+    expect(await worker.runOnce()).toMatchObject({
+      outcome: 'enqueued', updateId: accepted.update.id,
+    })
+    expect(outbox.getBySourceKey('telegram:primary-bot:510:turn:terminal')?.payload).toEqual({
+      chatId: '7001',
+      text: '⚠️ Модель всё ещё перегружена после автоматических попыток. Прогресс сохранён в thread — отправь «продолжай», и Codex сначала проверит текущее состояние.',
+    })
+    expect(JSON.stringify(outbox.getBySourceKey('telegram:primary-bot:510:turn:terminal')))
+      .not.toContain('capacity detail')
   })
 
   test('exhausted infrastructure retries also produce a durable user notice', async () => {

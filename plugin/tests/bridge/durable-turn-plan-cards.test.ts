@@ -85,7 +85,7 @@ describe('DurableTurnPlanCards', () => {
       format: 'rich',
       options: {
         reply_markup: {
-          inline_keyboard: [[{ text: '⏹ Cancel task' }]],
+          inline_keyboard: [[{ text: '⏹ Отменить задачу' }]],
         },
       },
     })
@@ -113,7 +113,7 @@ describe('DurableTurnPlanCards', () => {
       threadId: 'thread-1', turnId: 'turn-1', finalText: 'done',
     })
     const terminal = outbox.getBySourceKey(`${operation.operationKey}:plan-progress:edit:2`)
-    expect(JSON.stringify(terminal?.payload)).toContain('## Task complete')
+    expect(JSON.stringify(terminal?.payload)).toContain('## Задача выполнена')
     expect(JSON.stringify(terminal?.payload)).toContain('"inline_keyboard":[]')
     expect(JSON.stringify(terminal?.payload).match(/- \[x\]/g)).toHaveLength(3)
   })
@@ -134,15 +134,15 @@ describe('DurableTurnPlanCards', () => {
     const first = await cards.handleAction({
       operationKey: 'callback:1', token: row.token, chatId: '7001', action: 'cancel',
     })
-    expect(first.toast).toBe('Confirmation required')
+    expect(first.toast).toBe('Нужно подтверждение')
     expect(interrupts).toEqual([])
-    expect(JSON.stringify(outbox.get(first.deliveryJobId!)?.payload)).toContain('Confirm cancel')
+    expect(JSON.stringify(outbox.get(first.deliveryJobId!)?.payload)).toContain('Подтвердить')
 
     nowMs += 1
     const confirmed = await cards.handleAction({
       operationKey: 'callback:2', token: row.token, chatId: '7001', action: 'confirm',
     })
-    expect(confirmed.toast).toBe('Cancellation requested')
+    expect(confirmed.toast).toBe('Отмена запрошена')
     expect(interrupts).toEqual([{ threadId: 'thread-1', turnId: 'turn-1' }])
 
     await cards.handleAction({
@@ -159,6 +159,63 @@ describe('DurableTurnPlanCards', () => {
     expect(persisted).toEqual({
       phase: 'INTERRUPTED', cancel_state: 'CLOSED', interrupt_sent_at_ms: nowMs,
     })
+  })
+
+  test('retargets cancellation to the replacement turn after transparent retry', async () => {
+    cards.onProgress(operation, {
+      kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
+      steps: [
+        { step: 'First', status: 'completed' },
+        { step: 'Second', status: 'in_progress' },
+      ],
+      atMs: nowMs,
+    })
+
+    nowMs += 1
+    cards.onTurnStarted(operation, 'thread-1', 'turn-2')
+    expect(database.query<{ turn_id: string }, []>(
+      'SELECT turn_id FROM telegram_turn_plan_cards',
+    ).get()?.turn_id).toBe('turn-2')
+
+    const row = database.query<{ token: string }, []>(
+      'SELECT token FROM telegram_turn_plan_cards',
+    ).get()!
+    await cards.handleAction({
+      operationKey: 'callback:retry-cancel', token: row.token, chatId: '7001', action: 'cancel',
+    })
+    await cards.handleAction({
+      operationKey: 'callback:retry-confirm', token: row.token, chatId: '7001', action: 'confirm',
+    })
+    expect(interrupts).toEqual([{ threadId: 'thread-1', turnId: 'turn-2' }])
+  })
+
+  test('reapplies an in-flight cancellation when a recovery turn replaces its target', async () => {
+    cards.onProgress(operation, {
+      kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
+      steps: [
+        { step: 'First', status: 'in_progress' },
+        { step: 'Second', status: 'pending' },
+      ],
+      atMs: nowMs,
+    })
+    const row = database.query<{ token: string }, []>(
+      'SELECT token FROM telegram_turn_plan_cards',
+    ).get()!
+    await cards.handleAction({
+      operationKey: 'callback:cancel-old', token: row.token, chatId: '7001', action: 'cancel',
+    })
+    await cards.handleAction({
+      operationKey: 'callback:confirm-old', token: row.token, chatId: '7001', action: 'confirm',
+    })
+    expect(interrupts).toEqual([{ threadId: 'thread-1', turnId: 'turn-1' }])
+
+    cards.onTurnStarted(operation, 'thread-1', 'turn-2')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(interrupts).toEqual([
+      { threadId: 'thread-1', turnId: 'turn-1' },
+      { threadId: 'thread-1', turnId: 'turn-2' },
+    ])
   })
 
   test('does not create a progress card for a one-step plan', () => {

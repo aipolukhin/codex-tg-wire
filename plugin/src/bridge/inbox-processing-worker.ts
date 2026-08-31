@@ -72,6 +72,13 @@ function terminalTurnNotice(error: unknown): string | null {
   if (error.agentTurnState === 'INTERRUPTED') {
     return '⏹ Turn был остановлен. Контекст thread сохранён — отправь «продолжай» или начни новый через /new.'
   }
+  if (
+    error instanceof Error &&
+    'retryable' in error && error.retryable === true &&
+    'failureCode' in error && error.failureCode === 'server_overloaded'
+  ) {
+    return '⚠️ Модель всё ещё перегружена после автоматических попыток. Прогресс сохранён в thread — отправь «продолжай», и Codex сначала проверит текущее состояние.'
+  }
   return '⚠️ Codex завершил turn с ошибкой. Контекст thread сохранён — повтори запрос или начни новый через /new.'
 }
 

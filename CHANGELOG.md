@@ -30,6 +30,14 @@ Claude package version is not the codex-tg-wire release version.
   delivery and native inline review targets.
 - Added an optional restart-safe Guided Plan gate with revise, confirm, execute
   and cancel actions.
+- Kept live task cards active across bounded `server_overloaded` recovery turns,
+  retargeted cancellation to the replacement turn and localized task controls.
+
+### Delivery and recovery
+
+- A temporary model-capacity failure now continues safely in the same durable
+  thread after checking existing state, instead of replaying the original
+  request or immediately reporting a terminal failure.
 
 ### Required before stable v1.0
 

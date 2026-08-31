@@ -563,7 +563,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
       retention?.runIfDue()
       return sweep
     },
-    runUxHeartbeat: () => ux.runHeartbeat() + nativeUx.runHeartbeat(),
+    runUxHeartbeat: () => ux.runHeartbeat() + planCards.runHeartbeat() + nativeUx.runHeartbeat(),
     refreshNativeStatus: (chatId) => nativeUx.refreshChat(chatId, projectIdForChat(chatId), true),
     async enqueueOutboundMedia(input) {
       if (outboundMediaStore === undefined) throw new Error('outbound media is not configured')

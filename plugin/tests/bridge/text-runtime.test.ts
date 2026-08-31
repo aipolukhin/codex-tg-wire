@@ -576,6 +576,127 @@ describe('durable text runtime composition', () => {
       .toBe('COMPLETED')
   })
 
+  test('keeps a natural-language product discussion read-only until an explicit go-ahead', async () => {
+    runtime.ingest({
+      update_id: 823,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'Твои предложения? Как лучше реализовать липкий режим обсуждения?',
+      },
+    }, NOW)
+    const concept = runtime.processInboundOnce()
+    const threadStart = await waitForRequest(transport, 'thread/start')
+    transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-discussion' } } })
+    const conceptTurn = await waitForRequestNumber(transport, 'turn/start', 1)
+    expect(conceptTurn).toMatchObject({
+      params: {
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly' },
+        input: [{ type: 'text', text: expect.stringContaining('DISCUSSION ONLY') }],
+      },
+    })
+    transport.emit({ id: conceptTurn.id, result: { turn: { id: 'turn-concept' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-discussion', turnId: 'turn-concept',
+        item: {
+          type: 'agentMessage', id: 'concept-answer', phase: 'final_answer',
+          text: 'Предлагаю durable discussion state и явную отмашку.',
+        },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-discussion',
+        turn: { id: 'turn-concept', status: 'completed', items: [] },
+      },
+    })
+    expect((await concept).outcome).toBe('enqueued')
+    expect(database.query<{ state: string }, []>('SELECT state FROM guided_plans').get()?.state)
+      .toBe('AWAITING_CONFIRMATION')
+
+    runtime.ingest({
+      update_id: 824,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'Ещё мне нужно, чтобы реализация показывала живой статус.',
+      },
+    }, NOW + 1)
+    clockNow = NOW + 1
+    const requirement = runtime.processInboundOnce()
+    const discussionResume = await waitForRequestNumber(transport, 'thread/resume', 1)
+    transport.emit({ id: discussionResume.id, result: { thread: { id: 'thread-discussion' } } })
+    const requirementTurn = await waitForRequestNumber(transport, 'turn/start', 2)
+    expect(requirementTurn).toMatchObject({
+      params: {
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly' },
+        input: [{ type: 'text', text: expect.stringContaining('OWNER MESSAGE') }],
+      },
+    })
+    transport.emit({ id: requirementTurn.id, result: { turn: { id: 'turn-requirement' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-discussion', turnId: 'turn-requirement',
+        item: {
+          type: 'agentMessage', id: 'requirement-answer', phase: 'final_answer',
+          text: 'Scope дополнен живым статусом.',
+        },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-discussion',
+        turn: { id: 'turn-requirement', status: 'completed', items: [] },
+      },
+    })
+    expect((await requirement).outcome).toBe('enqueued')
+
+    runtime.ingest({
+      update_id: 825,
+      message: {
+        chat: { id: 7001, type: 'private' }, from: { id: 7001, is_bot: false },
+        text: 'Реализуй',
+      },
+    }, NOW + 2)
+    clockNow = NOW + 2
+    const executing = runtime.processInboundOnce()
+    const executionResume = await waitForRequestNumber(transport, 'thread/resume', 2)
+    transport.emit({ id: executionResume.id, result: { thread: { id: 'thread-discussion' } } })
+    const executeTurn = await waitForRequestNumber(transport, 'turn/start', 3)
+    expect(executeTurn).toMatchObject({
+      params: {
+        sandboxPolicy: { type: 'workspaceWrite' },
+        input: [{ type: 'text', text: expect.stringContaining('APPROVED RECOMMENDATION') }],
+      },
+    })
+    transport.emit({ id: executeTurn.id, result: { turn: { id: 'turn-discussion-execute' } } })
+    transport.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-discussion', turnId: 'turn-discussion-execute',
+        item: {
+          type: 'agentMessage', id: 'execute-discussion-answer', phase: 'final_answer',
+          text: 'Реализовано.',
+        },
+      },
+    })
+    transport.emit({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-discussion',
+        turn: { id: 'turn-discussion-execute', status: 'completed', items: [] },
+      },
+    })
+    expect((await executing).outcome).toBe('enqueued')
+    expect(database.query<{ state: string }, []>('SELECT state FROM guided_plans').get()?.state)
+      .toBe('COMPLETED')
+  })
+
   test('offers a durable busy choice and queues the prompt only after confirmation', async () => {
     runtime.ingest({
       update_id: 830,

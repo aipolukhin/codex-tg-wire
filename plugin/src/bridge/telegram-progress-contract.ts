@@ -28,6 +28,8 @@ export const TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS = [
   'While work remains, keep exactly one step in_progress. Immediately after a step is actually finished, call update_plan: mark it completed and move the next step to in_progress. Do not batch progress updates only at the end.',
   'If scope changes, rewrite the plan so it matches reality. Before the final answer, synchronize every step: completed only when verified, pending when unfinished, and no stale in_progress item.',
   'For work lasting longer than 60 seconds, send a concise commentary progress update at least every 60 seconds and after a material milestone. Commentary is never the final answer.',
+  'Before starting an operation likely to run longer than 60 seconds, state what is running, its scale when known, and why waiting is expected. Prefer a yielding command/session and report measurable progress between polls instead of blocking silently.',
+  'Progress commentary must describe observable facts such as bytes transferred, items processed, elapsed time, the current check, or a concrete wait reason. Never invent a percentage or ETA that the tool did not provide.',
   'Never claim completion or mark a step completed without evidence.',
 ].join('\n')
 

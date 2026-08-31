@@ -161,6 +161,42 @@ describe('DurableTurnPlanCards', () => {
     })
   })
 
+  test('edits the same card with user-facing commentary and elapsed long-operation time', () => {
+    cards.onProgress(operation, {
+      kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
+      steps: [
+        { step: 'Перенести медиатеку', status: 'in_progress' },
+        { step: 'Проверить результат', status: 'pending' },
+      ],
+      atMs: nowMs,
+    })
+    cards.onProgress(operation, {
+      kind: 'commentary', threadId: 'thread-1', turnId: 'turn-1',
+      text: 'rsync переносит 80 ГБ; операция ожидаемо долгая, процесс не завис.',
+      atMs: nowMs + 1,
+    })
+    cards.onProgress(operation, {
+      kind: 'activity', threadId: 'thread-1', turnId: 'turn-1',
+      activity: 'command', atMs: nowMs + 2,
+    })
+
+    const activityEdit = outbox.getBySourceKey(
+      `${operation.operationKey}:plan-progress:edit:2`,
+    )
+    expect(JSON.stringify(activityEdit?.payload)).toContain('Выполняю команду')
+    expect(JSON.stringify(activityEdit?.payload)).toContain('rsync переносит 80 ГБ')
+
+    nowMs += 61_002
+    expect(cards.runHeartbeat()).toBe(1)
+    const heartbeat = outbox.getBySourceKey(
+      `${operation.operationKey}:plan-progress:edit:3`,
+    )
+    expect(JSON.stringify(heartbeat?.payload)).toContain('1 мин')
+    expect(heartbeat?.dependsOnSourceKey).toBe(
+      `${operation.operationKey}:plan-progress:edit:2`,
+    )
+  })
+
   test('retargets cancellation to the replacement turn after transparent retry', async () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,

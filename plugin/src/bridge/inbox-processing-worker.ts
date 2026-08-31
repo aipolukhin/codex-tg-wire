@@ -342,7 +342,13 @@ export class InboxProcessingWorker {
     }
     const finalDeliveries = [...textDeliveries, ...artifactDeliveries]
     let completionDeliveries: readonly DeliveryJobInput[] = []
-    if (this.turnCompletionReporter !== undefined) {
+    // `busy_choice` and `guided_plan` are UI presentations, not completed work.
+    // In particular, a busy choice reuses the active turn id; treating it as a
+    // completion leaks that active turn's diff into an unrelated Git card.
+    if (
+      this.turnCompletionReporter !== undefined &&
+      (result.presentation ?? 'answer') === 'answer'
+    ) {
       const dependsOnSourceKey = finalDeliveries.at(-1)?.sourceKey
       completionDeliveries = await this.turnCompletionReporter.buildTurnCompletionDeliveries({
         update,

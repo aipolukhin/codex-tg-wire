@@ -293,6 +293,83 @@ export class SqliteControlInteractionRepository {
     return row === null ? null : planFromRow(row)
   }
 
+  getPlanByActionOperation(operationKey: string): GuidedPlanRecord | null {
+    const row = this.database
+      .query<PlanRow, [string]>(
+        'SELECT * FROM guided_plans WHERE action_operation_key = ? ORDER BY updated_at_ms DESC LIMIT 1',
+      )
+      .get(operationKey)
+    return row === null ? null : planFromRow(row)
+  }
+
+  getOpenPlan(input: {
+    botId: string
+    chatId: string
+    projectId: string
+    threadId: string
+  }): GuidedPlanRecord | null {
+    const row = this.database.query<PlanRow, [string, string, string, string]>(
+      `SELECT * FROM guided_plans
+       WHERE bot_id = ? AND chat_id = ? AND project_id = ? AND thread_id = ?
+         AND state IN ('AWAITING_CONFIRMATION', 'REVISION_REQUESTED', 'REVISING', 'EXECUTING')
+       ORDER BY updated_at_ms DESC LIMIT 1`,
+    ).get(input.botId, input.chatId, input.projectId, input.threadId)
+    return row === null ? null : planFromRow(row)
+  }
+
+  beginDiscussionRevision(
+    value: string,
+    chatId: string,
+    operationKey: string,
+    nowMs: number,
+  ): { outcome: 'started' | 'resumed' | 'closed' | 'not_found'; plan: GuidedPlanRecord | null } {
+    return this.database.transaction((): {
+      outcome: 'started' | 'resumed' | 'closed' | 'not_found'
+      plan: GuidedPlanRecord | null
+    } => {
+      const current = this.getPlanByToken(value)
+      if (current === null || current.chatId !== chatId) return { outcome: 'not_found', plan: null }
+      if (current.state === 'REVISING' && current.actionOperationKey === operationKey) {
+        return { outcome: 'resumed', plan: current }
+      }
+      if (
+        current.state !== 'AWAITING_CONFIRMATION' &&
+        current.state !== 'REVISION_REQUESTED'
+      ) return { outcome: 'closed', plan: current }
+      this.database.run(
+        `UPDATE guided_plans
+         SET state = 'REVISING', action_operation_key = ?, updated_at_ms = ?
+         WHERE id = ? AND state IN ('AWAITING_CONFIRMATION', 'REVISION_REQUESTED')`,
+        [operationKey, nowMs, current.id],
+      )
+      return { outcome: 'started', plan: this.requirePlan(current.id) }
+    }).immediate()
+  }
+
+  finishDiscussionRevision(
+    id: string,
+    operation: TextTurnOperation,
+    result: TextTurnResult,
+    nowMs: number,
+  ): GuidedPlanRecord {
+    this.database.run(
+      `UPDATE guided_plans
+       SET state = 'AWAITING_CONFIRMATION', input_json = ?, thread_id = ?,
+           planning_turn_id = ?, plan_text = ?, revision = revision + 1,
+           updated_at_ms = ?, last_error = NULL
+       WHERE id = ? AND state = 'REVISING'`,
+      [
+        JSON.stringify(operation),
+        result.threadId,
+        result.turnId,
+        result.finalText,
+        nowMs,
+        id,
+      ],
+    )
+    return this.requirePlan(id)
+  }
+
   beginPlanExecution(
     value: string,
     chatId: string,

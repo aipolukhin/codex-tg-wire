@@ -344,6 +344,18 @@ describe('CodexAppServerBackend text turns', () => {
       },
     })
     client.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        startedAtMs: 130,
+        item: {
+          type: 'agentMessage', id: 'progress-comment', phase: 'commentary',
+          text: 'rsync переносит 80 ГБ; операция ожидаемо долгая.',
+        },
+      },
+    })
+    client.emit({
       method: 'thread/tokenUsage/updated',
       params: {
         threadId: 'thread-1',
@@ -372,6 +384,10 @@ describe('CodexAppServerBackend text turns', () => {
           { step: 'private-step-a', status: 'completed' },
           { step: 'private-step-b', status: 'in_progress' },
         ],
+      },
+      {
+        kind: 'commentary', threadId: 'thread-1', turnId: 'turn-1',
+        text: 'rsync переносит 80 ГБ; операция ожидаемо долгая.', atMs: 130,
       },
       {
         kind: 'usage', threadId: 'thread-1', turnId: 'turn-1',

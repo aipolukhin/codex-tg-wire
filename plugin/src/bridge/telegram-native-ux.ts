@@ -214,6 +214,8 @@ export class TelegramNativeTurnUx implements AgentTurnUxObserver {
     void this.refreshChat(operation.chatId, operation.projectId)
   }
 
+  // Task progress belongs to DurableTurnPlanCards, which projects one Rich
+  // Message named «Ход задачи». The pin remains a compact session HUD.
   onProgress(_operation: TextTurnOperation, _progress: AgentTurnProgress): void {}
 
   onCompleted(operation: TextTurnOperation, _result: TextTurnResult): void {

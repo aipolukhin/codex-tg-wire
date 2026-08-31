@@ -409,6 +409,14 @@ export type AgentTurnProgress =
       atMs: number
     }
   | {
+      kind: 'commentary'
+      threadId: string
+      turnId: string
+      /** User-facing progress text authored by the agent, bounded by the backend. */
+      text: string
+      atMs: number
+    }
+  | {
       kind: 'usage'
       threadId: string
       turnId: string

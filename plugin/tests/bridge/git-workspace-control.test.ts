@@ -155,6 +155,14 @@ describe('GitWorkspaceControl', () => {
     expect(await answerOnly.buildTurnCompletionDeliveries(completionInput())).toEqual([])
   })
 
+  test('does not show a card for a busy presentation that reuses the active turn diff', async () => {
+    writeFileSync(join(workspace, 'README.md'), 'active turn change\n')
+    const input = completionInput()
+    input.result.presentation = 'busy_choice'
+
+    expect(await control.buildTurnCompletionDeliveries(input)).toEqual([])
+  })
+
   test('does not show a card when matching turn evidence leaves the repository clean', async () => {
     expect(await control.buildTurnCompletionDeliveries(completionInput())).toEqual([])
   })

@@ -6,6 +6,7 @@ import type { OutboxRepository } from '../durable/contracts.js'
 import type { SqliteSessionRepository, TurnState } from '../durable/session-repository.js'
 import { escapeHtml } from '../format/html.js'
 import type {
+  AgentActivity,
   AgentBackend,
   AgentTurnProgress,
   AgentTurnSettings,
@@ -39,8 +40,16 @@ interface PlanCardRow {
   cancel_operation_key: string | null
   interrupt_sent_at_ms: number | null
   steps_json: string
+  status_json: string
   created_at_ms: number
   updated_at_ms: number
+}
+
+interface PlanCardStatus {
+  activity: AgentActivity | null
+  activityStartedAtMs: number | null
+  commentary: string | null
+  commentaryAtMs: number | null
 }
 
 export interface TurnPlanCardActionResult {
@@ -51,6 +60,21 @@ export interface TurnPlanCardActionResult {
 const MIN_VISIBLE_PLAN_STEPS = 2
 const MAX_VISIBLE_PLAN_STEPS = 20
 const MAX_VISIBLE_STEP_CHARS = 160
+const MAX_VISIBLE_COMMENTARY_CHARS = 320
+const HEARTBEAT_INTERVAL_MS = 60_000
+
+const ACTIVITY_LABELS: Record<AgentActivity, string> = {
+  starting: 'Запускаю',
+  reasoning: 'Продумываю',
+  planning: 'Обновляю план',
+  command: 'Выполняю команду',
+  file_change: 'Изменяю файлы',
+  mcp: 'Работаю с инструментом',
+  web_search: 'Ищу информацию',
+  image: 'Обрабатываю изображение',
+  compacting: 'Сжимаю контекст',
+  working: 'Работаю',
+}
 
 function token(): string {
   return randomBytes(6).toString('hex')
@@ -74,6 +98,46 @@ function stepsFromRow(row: PlanCardRow): PlanStep[] {
   } catch {
     return []
   }
+}
+
+function emptyStatus(): PlanCardStatus {
+  return {
+    activity: null,
+    activityStartedAtMs: null,
+    commentary: null,
+    commentaryAtMs: null,
+  }
+}
+
+function statusFromRow(row: PlanCardRow): PlanCardStatus {
+  try {
+    const value = JSON.parse(row.status_json) as Partial<PlanCardStatus>
+    const activity = typeof value.activity === 'string' && value.activity in ACTIVITY_LABELS
+      ? value.activity as AgentActivity
+      : null
+    return {
+      activity,
+      activityStartedAtMs: Number.isSafeInteger(value.activityStartedAtMs)
+        ? value.activityStartedAtMs as number
+        : null,
+      commentary: typeof value.commentary === 'string' ? value.commentary : null,
+      commentaryAtMs: Number.isSafeInteger(value.commentaryAtMs)
+        ? value.commentaryAtMs as number
+        : null,
+    }
+  } catch {
+    return emptyStatus()
+  }
+}
+
+function elapsed(startedAtMs: number | null, nowMs: number): string | null {
+  if (startedAtMs === null) return null
+  const seconds = Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000))
+  if (seconds < 60) return `${seconds} сек`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} мин`
+  const hours = Math.floor(minutes / 60)
+  return `${hours} ч ${minutes % 60} мин`
 }
 
 function normalizeSteps(steps: AgentTurnProgress & { kind: 'plan' }): PlanStep[] {
@@ -116,8 +180,9 @@ function buttons(row: PlanCardRow): { inline_keyboard: Array<Array<{ text: strin
   }
 }
 
-function richText(row: PlanCardRow): string {
+function richText(row: PlanCardRow, nowMs: number): string {
   const steps = stepsFromRow(row)
+  const status = statusFromRow(row)
   const completed = steps.filter((step) => step.status === 'completed').length
   const lines = [`## ${title(row.phase)}`, '']
   for (const item of steps) {
@@ -126,6 +191,11 @@ function richText(row: PlanCardRow): string {
     lines.push(`- [${checked}] ${prefix}${escapeRichInline(item.step)}`)
   }
   lines.push('', `**Выполнено: ${completed} / ${steps.length}**`)
+  if (row.phase === 'ACTIVE' && status.activity !== null) {
+    const duration = elapsed(status.activityStartedAtMs, nowMs)
+    lines.push('', `> **Сейчас:** ${escapeRichInline(ACTIVITY_LABELS[status.activity])}${duration === null ? '' : ` · ${escapeRichInline(duration)}`}`)
+    if (status.commentary !== null) lines.push(`> ${escapeRichInline(status.commentary)}`)
+  }
   if (row.cancel_state === 'CONFIRMING') {
     lines.push('', '> Отменить эту задачу? Подтверди ниже.')
   } else if (row.cancel_state === 'REQUESTED') {
@@ -134,8 +204,9 @@ function richText(row: PlanCardRow): string {
   return lines.join('\n')
 }
 
-function fallbackText(row: PlanCardRow): string {
+function fallbackText(row: PlanCardRow, nowMs: number): string {
   const steps = stepsFromRow(row)
+  const status = statusFromRow(row)
   const completed = steps.filter((step) => step.status === 'completed').length
   const lines = [`<b>${escapeHtml(title(row.phase))}</b>`, '']
   for (const item of steps) {
@@ -143,6 +214,11 @@ function fallbackText(row: PlanCardRow): string {
     lines.push(`${mark} ${escapeHtml(item.step)}`)
   }
   lines.push('', `<b>Выполнено: ${completed} / ${steps.length}</b>`)
+  if (row.phase === 'ACTIVE' && status.activity !== null) {
+    const duration = elapsed(status.activityStartedAtMs, nowMs)
+    lines.push('', `<b>Сейчас:</b> ${escapeHtml(ACTIVITY_LABELS[status.activity])}${duration === null ? '' : ` · ${escapeHtml(duration)}`}`)
+    if (status.commentary !== null) lines.push(escapeHtml(status.commentary))
+  }
   if (row.cancel_state === 'CONFIRMING') {
     lines.push('', 'Отменить эту задачу? Подтверди ниже.')
   } else if (row.cancel_state === 'REQUESTED') {
@@ -151,15 +227,15 @@ function fallbackText(row: PlanCardRow): string {
   return lines.join('\n')
 }
 
-function payload(row: PlanCardRow): unknown {
+function payload(row: PlanCardRow, nowMs: number): unknown {
   const replyMarkup = buttons(row)
   return {
     chatId: row.chat_id,
-    text: richText(row),
+    text: richText(row, nowMs),
     format: 'rich',
     options: { reply_markup: replyMarkup },
     fallback: [{
-      text: fallbackText(row),
+      text: fallbackText(row, nowMs),
       options: { parse_mode: 'HTML', reply_markup: replyMarkup },
     }],
   }
@@ -202,19 +278,49 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
   }
 
   onProgress(operation: TextTurnOperation, progress: AgentTurnProgress): void {
-    if (progress.kind !== 'plan') return
-    const steps = normalizeSteps(progress)
-    if (steps.length < MIN_VISIBLE_PLAN_STEPS) return
     const nowMs = this.now()
     this.database.transaction(() => {
       const existing = this.getByOperation(operation.operationKey)
+      if (progress.kind !== 'plan') {
+        if (existing === null || existing.phase !== 'ACTIVE' || existing.turn_id !== progress.turnId) {
+          return
+        }
+        const status = statusFromRow(existing)
+        if (progress.kind === 'activity') {
+          if (status.activity === progress.activity) return
+          status.activity = progress.activity
+          status.activityStartedAtMs = progress.atMs
+        } else if (progress.kind === 'commentary') {
+          const commentary = progress.text.trim().replace(/\s+/g, ' ')
+            .slice(0, MAX_VISIBLE_COMMENTARY_CHARS)
+          if (commentary.length === 0 || commentary === status.commentary) return
+          status.commentary = commentary
+          status.commentaryAtMs = progress.atMs
+          status.activity ??= 'working'
+          status.activityStartedAtMs ??= progress.atMs
+        } else {
+          return
+        }
+        existing.status_json = JSON.stringify(status)
+        existing.updated_at_ms = nowMs
+        this.enqueueEdit(existing, nowMs)
+        return
+      }
+      const steps = normalizeSteps(progress)
+      if (steps.length < MIN_VISIBLE_PLAN_STEPS) return
       if (existing === null) {
         const rootSourceKey = `${operation.operationKey}:plan-progress`
+        const initialStatus: PlanCardStatus = {
+          ...emptyStatus(),
+          activity: 'planning',
+          activityStartedAtMs: progress.atMs,
+        }
         const inserted = this.database.run(
           `INSERT INTO telegram_turn_plan_cards
             (operation_key, token, bot_id, chat_id, project_id, thread_id, turn_id,
-             root_source_key, tail_source_key, steps_json, created_at_ms, updated_at_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+             root_source_key, tail_source_key, steps_json, status_json,
+             created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
           [
             operation.operationKey,
             token(),
@@ -226,6 +332,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
             rootSourceKey,
             rootSourceKey,
             JSON.stringify(steps),
+            JSON.stringify(initialStatus),
             nowMs,
             nowMs,
           ],
@@ -235,7 +342,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
         this.outbox.enqueue({
           sourceKey: rootSourceKey,
           kind: 'send_text',
-          payload: payload(created),
+          payload: payload(created, nowMs),
           createdAtMs: nowMs,
         })
         return
@@ -244,10 +351,32 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       const serialized = JSON.stringify(steps)
       if (serialized === existing.steps_json) return
       existing.steps_json = serialized
+      const status = statusFromRow(existing)
+      status.activity = 'planning'
+      status.activityStartedAtMs = progress.atMs
+      existing.status_json = JSON.stringify(status)
       existing.thread_id = progress.threadId
       existing.updated_at_ms = nowMs
       this.enqueueEdit(existing, nowMs)
     }).immediate()
+  }
+
+  runHeartbeat(): number {
+    const nowMs = this.now()
+    const rows = this.database.query<PlanCardRow, [number]>(
+      `SELECT * FROM telegram_turn_plan_cards
+       WHERE phase = 'ACTIVE' AND updated_at_ms <= ?
+       ORDER BY updated_at_ms, operation_key`,
+    ).all(nowMs - HEARTBEAT_INTERVAL_MS)
+    let refreshed = 0
+    for (const row of rows) {
+      const status = statusFromRow(row)
+      if (status.activity === null) continue
+      row.updated_at_ms = nowMs
+      this.enqueueEdit(row, nowMs)
+      refreshed += 1
+    }
+    return refreshed
   }
 
   onCompleted(operation: TextTurnOperation, _result: TextTurnResult): void {
@@ -436,7 +565,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       dependsOnSourceKey: row.tail_source_key,
       kind: 'edit',
       payload: {
-        ...payload(row) as Record<string, unknown>,
+        ...payload(row, nowMs) as Record<string, unknown>,
         targetSourceKey: row.root_source_key,
       },
       createdAtMs: nowMs,
@@ -451,7 +580,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       `UPDATE telegram_turn_plan_cards SET
          thread_id = ?, turn_id = ?, tail_source_key = ?, revision = ?, phase = ?,
          cancel_state = ?, cancel_operation_key = ?, interrupt_sent_at_ms = ?,
-         steps_json = ?, updated_at_ms = ?
+         steps_json = ?, status_json = ?, updated_at_ms = ?
        WHERE operation_key = ?`,
       [
         row.thread_id,
@@ -463,6 +592,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
         row.cancel_operation_key,
         row.interrupt_sent_at_ms,
         row.steps_json,
+        row.status_json,
         row.updated_at_ms,
         row.operation_key,
       ],

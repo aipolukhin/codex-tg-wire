@@ -10,7 +10,11 @@ import type {
   TextTurnOperation,
   TextTurnResult,
 } from '../../src/bridge/contracts.js'
-import { M65SessionCoordinator } from '../../src/bridge/m65-session-coordinator.js'
+import {
+  approvesDiscussion,
+  M65SessionCoordinator,
+  startsDiscussion,
+} from '../../src/bridge/m65-session-coordinator.js'
 import { SqliteControlInteractionRepository } from '../../src/durable/control-interaction-repository.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
 import { SqliteAgentSettingsRepository } from '../../src/durable/settings-repository.js'
@@ -83,9 +87,9 @@ describe('M6.5 session control plane', () => {
       sandbox: 'read-only', approvalPolicy: 'never',
     })
     expect(result.presentation).toBe('guided_plan')
-    expect(result.finalText).toContain('Выполнение ещё не началось')
+    expect(result.finalText).toContain('Изменения не выполнялись')
     expect(result.buttons?.flat().map((button) => button.text)).toEqual([
-      '▶️ Выполнить', '✏️ Изменить', '❌ Отменить',
+      '🚀 Реализовать', '🗑 Закрыть обсуждение',
     ])
     const persisted = controls.getPlanBySource(operation().operationKey)
     expect(persisted).toMatchObject({
@@ -105,6 +109,83 @@ describe('M6.5 session control plane', () => {
     )
     expect((await afterRestart.runTextTurn(operation())).finalText).toBe(result.finalText)
     expect(delegate.calls).toHaveLength(1)
+  })
+
+  test('recognizes discussion cues without turning explicit tasks into confirmation rituals', () => {
+    expect(startsDiscussion('Твои предложения? Как фиксим?')).toBe(true)
+    expect(startsDiscussion('Давай сначала обсудим архитектуру')).toBe(true)
+    expect(startsDiscussion('Реализуй этот вариант')).toBe(false)
+    expect(startsDiscussion('Брат, реализуй продуктовую идею')).toBe(false)
+    expect(startsDiscussion('Мне нужно, чтобы прогресс был живым')).toBe(false)
+    expect(startsDiscussion('Почини картинки')).toBe(false)
+    expect(approvesDiscussion('Да')).toBe(true)
+    expect(approvesDiscussion('реализуй')).toBe(true)
+    expect(approvesDiscussion('Да, но сначала обсудим детали')).toBe(false)
+  })
+
+  test('keeps requirements read-only during a durable discussion and executes only after approval', async () => {
+    const coordinator = new M65SessionCoordinator(
+      delegate, sessions, settings, controls, undefined, () => NOW,
+    )
+    const concept = {
+      ...operation(110),
+      text: 'Твои предложения? Как фиксим переход между обсуждением и реализацией?',
+    }
+    delegate.next = {
+      threadId: 'thread-discussion', turnId: 'turn-concept',
+      finalText: 'Предлагаю липкий discussion state и явную отмашку.',
+    }
+    const first = await coordinator.runTextTurn(concept)
+    expect(first.presentation).toBe('guided_plan')
+    expect(delegate.calls.at(-1)?.trustedSettingsOverride).toEqual({
+      sandbox: 'read-only', approvalPolicy: 'never',
+    })
+    sessions.attachExternalThread(
+      'primary', '7001', 'workspace', 'codex', 'thread-discussion', NOW + 1,
+    )
+
+    const afterRestart = new M65SessionCoordinator(
+      delegate,
+      new SqliteSessionRepository(database),
+      new SqliteAgentSettingsRepository(database),
+      new SqliteControlInteractionRepository(database),
+      undefined,
+      () => NOW + 2,
+    )
+    delegate.next = {
+      threadId: 'thread-discussion', turnId: 'turn-requirement',
+      finalText: 'Добавляем живой статус операции в ту же карточку.',
+    }
+    const requirement = {
+      ...operation(111),
+      text: 'Ещё мне нужно, чтобы карточка показывала долгий rsync.',
+    }
+    const discussed = await afterRestart.runTextTurn(requirement)
+    expect(discussed.presentation).toBe('guided_plan')
+    expect(delegate.calls.at(-1)).toMatchObject({
+      preferredThreadId: 'thread-discussion',
+      trustedSettingsOverride: { sandbox: 'read-only', approvalPolicy: 'never' },
+    })
+    expect(controls.getPlanBySource(concept.operationKey)).toMatchObject({
+      state: 'AWAITING_CONFIRMATION',
+      revision: 1,
+      planText: expect.stringContaining('живой статус'),
+    })
+
+    delegate.next = {
+      threadId: 'thread-discussion', turnId: 'turn-execution', finalText: 'Готово.',
+    }
+    const approval = { ...operation(112), text: 'Реализуй' }
+    const executed = await afterRestart.runTextTurn(approval)
+    expect(executed.finalText).toBe('Готово.')
+    expect(delegate.calls.at(-1)?.text).toContain('APPROVED RECOMMENDATION')
+    expect(delegate.calls.at(-1)?.trustedSettingsOverride).toBeUndefined()
+    expect(controls.getPlanBySource(concept.operationKey)?.state).toBe('COMPLETED')
+
+    const replay = await afterRestart.runTextTurn(approval)
+    expect(replay.finalText).toBe('Готово.')
+    expect(delegate.calls.filter((call) => call.text.includes('APPROVED RECOMMENDATION')))
+      .toHaveLength(1)
   })
 
   test('persists a busy choice without dispatching the second prompt', async () => {

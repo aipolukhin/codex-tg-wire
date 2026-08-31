@@ -485,6 +485,14 @@ function parseTurnProgress(notification: ServerNotification): AgentTurnProgress 
   if (notification.method === 'thread/compacted') {
     return { kind: 'activity', ...correlation, activity: 'compacting', atMs: Date.now() }
   }
+  if (notification.method === 'item/completed') {
+    const message = parseAgentMessage(params.item)
+    if (message?.phase !== 'commentary') return null
+    const text = message.text.trim().replace(/\s+/g, ' ').slice(0, 320)
+    return text.length === 0
+      ? null
+      : { kind: 'commentary', ...correlation, text, atMs: eventTime(params) }
+  }
   if (notification.method === 'turn/plan/updated') {
     if (!Array.isArray(params.plan)) return null
     const steps = params.plan.flatMap((value) => {

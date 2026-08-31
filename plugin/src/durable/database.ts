@@ -647,6 +647,16 @@ const MIGRATIONS: readonly Migration[] = [
         ON registered_projects (created_at_ms, project_id)`,
     ],
   },
+  {
+    version: 22,
+    name: 'turn_plan_live_status',
+    statements: [
+      `ALTER TABLE telegram_turn_plan_cards
+       ADD COLUMN status_json TEXT NOT NULL DEFAULT '{}'`,
+      `CREATE INDEX telegram_turn_plan_cards_heartbeat_idx
+        ON telegram_turn_plan_cards (phase, updated_at_ms)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

@@ -112,22 +112,36 @@ The chat stays quiet and native: Telegram shows **typing…** while Codex works,
 the accepted owner message gets a 👀 receipt, and one silent pinned status is
 edited in place as one preview-friendly line, for example
 `gpt-5.6-sol xhigh 5h:80% w:90% ctx:20%`. Quotas are remaining;
-`ctx` is occupied model context. No technical card is sent before every answer.
+`ctx` is occupied model context. Task steps and current activity never go into
+that pin. During a multi-step turn Codex updates a separate Rich Message named
+**Task progress** after every verified step; that one card is edited in place.
+User-facing commentary is projected into the same card, together with the
+current activity and its elapsed time. A long operation can therefore say, for
+example, `rsync is moving 80 GB · running for 18 min`, while a one-minute
+heartbeat keeps proving that the turn is alive.
 
 Replying to a delivered Codex answer routes the next message back to the exact
 thread that produced it — even if you switched sessions in the meantime.
 
-### Confirm a plan before Codex changes anything
+### Discuss first without accidentally starting implementation
 
-Enable `/plan on` and each new task follows a durable gate:
+Concept-oriented messages such as “let's discuss”, “what do you propose?” or
+“how should we build this?” open a durable discussion in read-only mode. Once
+opened, further requirements stay read-only instead of being reclassified as a
+new task. The latest recommendation is the execution scope; press
+**Implement** or send an unambiguous contextual go-ahead to execute it.
+
+A standalone direct task such as “fix the image delivery” still executes
+immediately. Enable `/plan on` when every new task should require confirmation.
+Both flows use the same durable gate:
 
 ```text
-draft in read-only mode → revise or cancel → confirm → execute normally
+discussion in read-only mode → refine or close → confirm scope → execute normally
 ```
 
 Planning and revision are forced to `sandbox=read-only` with
 `approvalPolicy=never`. The workspace only becomes writable after you press
-**Execute**. The pending plan and selected action survive a bridge restart.
+**Implement**. The pending discussion and selected action survive a bridge restart.
 
 ### Work with real project artifacts
 

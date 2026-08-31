@@ -466,6 +466,32 @@ describe('durable text vertical slice', () => {
     expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
   })
 
+  test('does not report a busy choice as a completed turn', async () => {
+    const accepted = inbox.ingest(textUpdate(504))
+    coordinator.started.set('telegram:primary-bot:504:turn', {
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      finalText: 'Codex уже выполняет turn. Что сделать с новым сообщением?',
+      presentation: 'busy_choice',
+    })
+    let reports = 0
+    const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
+      workerId: 'inbox-busy-no-completion',
+      now: () => nowMs,
+      turnCompletionReporter: {
+        buildTurnCompletionDeliveries: async () => {
+          reports += 1
+          return []
+        },
+      },
+    })
+
+    expect(await inbound.runOnce()).toMatchObject({ outcome: 'enqueued' })
+    expect(reports).toBe(0)
+    expect(outbox.getBySourceKey('telegram:primary-bot:504:turn:completion')).toBeNull()
+    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+  })
+
   test('replay after crash reuses the logical turn and deduplicates the final delivery', async () => {
     const accepted = inbox.ingest(textUpdate(502))
     const faultingOutbox = throwOnceAfterEnqueue(outbox)

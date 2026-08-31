@@ -325,6 +325,51 @@ describe('Telegram native UX', () => {
     ux.close()
   })
 
+  test('keeps task progress and activity out of the pinned session HUD', async () => {
+    const telegram = new FakeTelegram()
+    const snapshot: AgentUxStatusSnapshot = {
+      phase: 'ACTIVE',
+      activity: 'file_change',
+      planCompleted: 1,
+      planTotal: 4,
+      totalTokens: null,
+      inputTokens: null,
+      cachedInputTokens: null,
+      outputTokens: null,
+      threadTotalTokens: null,
+      contextWindow: null,
+      updatedAtMs: NOW,
+    }
+    const ux = new TelegramNativeTurnUx(
+      database,
+      telegram,
+      {},
+      { getStatus: () => snapshot },
+      'primary',
+      { pinnedStatus: true, now: () => NOW },
+    )
+
+    await ux.refreshChat(operation.chatId, operation.projectId)
+    expect(telegram.sent[0]?.text).toBe('default ctx:—')
+    ux.onProgress(operation, {
+      kind: 'plan',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      completed: 2,
+      total: 4,
+      steps: [
+        { step: 'Первый', status: 'completed' },
+        { step: 'Второй', status: 'completed' },
+        { step: 'Третий', status: 'in_progress' },
+        { step: 'Четвёртый', status: 'pending' },
+      ],
+      atMs: NOW + 1,
+    })
+    await Bun.sleep(0)
+    expect(telegram.edits).toEqual([])
+    ux.close()
+  })
+
   test('pulses native typing while a turn is active and stops at completion', async () => {
     const telegram = new FakeTelegram()
     const ux = new TelegramNativeTurnUx(

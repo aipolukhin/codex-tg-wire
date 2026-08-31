@@ -277,6 +277,7 @@ export class DurableTurnUxProjector implements AgentTurnUxObserver, AgentUxStatu
         row.activity = 'planning'
         return changed
       }
+      if (progress.kind === 'commentary') return false
       const previousBucket = this.usageBucket(row.input_tokens, row.context_window)
       row.total_tokens = progress.totalTokens
       row.input_tokens = progress.inputTokens

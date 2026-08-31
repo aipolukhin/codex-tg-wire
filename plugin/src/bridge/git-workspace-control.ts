@@ -244,6 +244,7 @@ export class GitWorkspaceControl implements GitWorkspaceController {
   async buildTurnCompletionDeliveries(
     input: FinalArtifactDelivery,
   ): Promise<readonly DeliveryJobInput[]> {
+    if ((input.result.presentation ?? 'answer') !== 'answer') return []
     const turnDiff = this.turnDiffProvider?.getLatestDiff(input.result.threadId)
     if (
       turnDiff === undefined ||

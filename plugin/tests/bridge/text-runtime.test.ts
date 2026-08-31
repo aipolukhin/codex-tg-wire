@@ -262,7 +262,17 @@ describe('durable text runtime composition', () => {
 
     const processing = runtime.processInboundOnce()
     const threadStart = await waitForRequest(transport, 'thread/start')
-    expect(threadStart).toMatchObject({ params: { cwd: '/srv/workspace' } })
+    expect(threadStart).toMatchObject({
+      params: {
+        cwd: '/srv/workspace',
+        sandbox: 'workspace-write',
+      },
+    })
+    const developerInstructions = 'params' in threadStart
+      ? (threadStart.params as { developerInstructions?: string }).developerInstructions ?? ''
+      : ''
+    expect(developerInstructions).toContain('TELEGRAM DISCUSS-THEN-EXECUTE CONTRACT')
+    expect(developerInstructions).toContain('TELEGRAM PROGRESS CONTRACT')
     transport.emit({ id: threadStart.id, result: { thread: { id: 'thread-live' } } })
 
     const turnStart = await waitForRequest(transport, 'turn/start')
@@ -270,9 +280,15 @@ describe('durable text runtime composition', () => {
       params: {
         threadId: 'thread-live',
         clientUserMessageId: 'telegram:primary:801:turn',
+        sandboxPolicy: { type: 'workspaceWrite' },
         input: [{ type: 'text', text: 'ответь коротко', text_elements: [] }],
       },
     })
+    expect(
+      ('params' in turnStart
+        ? turnStart.params as { approvalPolicy?: string }
+        : {}).approvalPolicy,
+    ).not.toBe('never')
     transport.emit({ id: turnStart.id, result: { turn: { id: 'turn-live' } } })
     transport.emit({
       method: 'item/completed',
@@ -521,7 +537,13 @@ describe('durable text runtime composition', () => {
     }, NOW + 2)
     const executing = runtime.processInboundOnce()
     const resume = await waitForRequest(transport, 'thread/resume')
-    expect(resume).toMatchObject({ params: { threadId: 'thread-guided', cwd: '/srv/workspace' } })
+    expect(resume).toMatchObject({
+      params: {
+        threadId: 'thread-guided',
+        cwd: '/srv/workspace',
+        developerInstructions: expect.stringContaining('TELEGRAM DISCUSS-THEN-EXECUTE CONTRACT'),
+      },
+    })
     transport.emit({ id: resume.id, result: { thread: { id: 'thread-guided' } } })
     const executeTurn = await waitForRequestNumber(transport, 'turn/start', 2)
     expect(executeTurn).toMatchObject({

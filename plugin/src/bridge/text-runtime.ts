@@ -71,6 +71,7 @@ import { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import { M65SessionCoordinator } from './m65-session-coordinator.js'
 import { M65InteractionHandler } from './m65-interaction-handler.js'
 import { GitWorkspaceControl } from './git-workspace-control.js'
+import { withTelegramProgressContract } from './telegram-progress-contract.js'
 import type {
   AgentApprovalPolicy,
   AgentSandboxMode,
@@ -336,16 +337,24 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
         allowedRootsProvider: () => projectCatalog.list().map((project) => project.cwd),
       })
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
+  const threadStartDefaults = options.codex?.threadStartDefaults ?? {}
+  const threadResumeDefaults = options.codex?.threadResumeDefaults ?? {}
   const backendOptions: CodexAppServerBackendOptions = {
     eventDiagnostics: new SqliteCodexEventRepository(options.database),
     artifactStore: new SqliteCodexArtifactRepository(options.database),
     ...(options.codex?.turnTimeoutMs === undefined ? {} : { turnTimeoutMs: options.codex.turnTimeoutMs }),
-    ...(options.codex?.threadStartDefaults === undefined
-      ? {}
-      : { threadStartDefaults: options.codex.threadStartDefaults }),
-    ...(options.codex?.threadResumeDefaults === undefined
-      ? {}
-      : { threadResumeDefaults: options.codex.threadResumeDefaults }),
+    threadStartDefaults: {
+      ...threadStartDefaults,
+      developerInstructions: withTelegramProgressContract(
+        threadStartDefaults.developerInstructions,
+      ),
+    },
+    threadResumeDefaults: {
+      ...threadResumeDefaults,
+      developerInstructions: withTelegramProgressContract(
+        threadResumeDefaults.developerInstructions,
+      ),
+    },
     ...(options.codex?.turnDefaults === undefined ? {} : { turnDefaults: options.codex.turnDefaults }),
   }
   const backend = new CodexAppServerBackend(options.codexClient, backendOptions)

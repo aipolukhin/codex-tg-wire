@@ -98,6 +98,8 @@ describe('GitWorkspaceControl', () => {
       PATH: '/usr/bin',
       HOME: '/home/test',
       SSH_AUTH_SOCK: '/run/agent.sock',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
       TELEGRAM_BOT_TOKEN: 'bot-secret',
       OPENAI_API_KEY: 'model-secret',
       GIT_ASKPASS: '/tmp/untrusted-helper',
@@ -105,6 +107,8 @@ describe('GitWorkspaceControl', () => {
       PATH: '/usr/bin',
       HOME: '/home/test',
       SSH_AUTH_SOCK: '/run/agent.sock',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
       GIT_TERMINAL_PROMPT: '0',
       LC_ALL: 'C',
     })

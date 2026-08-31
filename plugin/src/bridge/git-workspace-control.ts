@@ -71,6 +71,8 @@ export function sanitizedGitEnvironment(
     'LANG',
     'SSH_AUTH_SOCK',
     'XDG_CONFIG_HOME',
+    'XDG_RUNTIME_DIR',
+    'DBUS_SESSION_BUS_ADDRESS',
   ] as const) {
     const value = source[key]
     if (value !== undefined) safe[key] = value

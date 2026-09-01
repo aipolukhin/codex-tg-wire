@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 
 import { JSON_SCHEMA, load as loadYaml } from 'js-yaml'
@@ -19,6 +20,37 @@ export type DecisionImplementationStatus =
   | 'partial'
   | 'aligned'
   | 'unknown'
+
+export interface ImplementationEvidenceCheck {
+  name: string
+  command: string
+  outcome: 'pass' | 'fail' | 'not_run'
+  evidence: string
+}
+
+export interface ImplementationCheck {
+  checkedAt: string
+  checkedBy: string
+  repository: string
+  checkedCommit: string
+  implementationCommits: string[]
+  scopePaths: string[]
+  verdict: DecisionImplementationStatus
+  summary: string
+  checks: ImplementationEvidenceCheck[]
+}
+
+export interface DecisionHistoryEntry {
+  id: string
+  title: string
+  decidedAt: string
+  reason: string
+  lifecycle: DecisionLifecycle
+  supersedes: string | null
+  supersededBy: string | null
+  implementationStatus: DecisionImplementationStatus
+  implementationCheckedAt: string | null
+}
 
 export interface DecisionSource {
   telegramUpdateId: string
@@ -47,6 +79,8 @@ export interface DecisionSummary {
   supersededBy: string | null
   lifecycle: DecisionLifecycle
   implementationStatus: DecisionImplementationStatus
+  implementationCheckedAt: string | null
+  implementationSummary: string
   originStored: boolean
 }
 
@@ -58,11 +92,14 @@ export interface DecisionDetail extends DecisionSummary {
   evidence: string
   verification: string
   implementation: string
+  implementationCheck: ImplementationCheck | null
+  implementationChecks: ImplementationCheck[]
   source: DecisionSource
   history: string[]
+  policyHistory: DecisionHistoryEntry[]
 }
 
-interface ParsedDecision extends Omit<DecisionDetail, 'history'> {
+interface ParsedDecision extends Omit<DecisionDetail, 'history' | 'policyHistory'> {
   searchText: string
 }
 
@@ -97,6 +134,21 @@ export interface ProductDecisionRegistryOptions {
 }
 
 const MAX_CARD_BYTES = 1024 * 1024
+const MAX_IMPLEMENTATION_CHECK_BYTES = 256 * 1024
+const IMPLEMENTATION_CHECK_FIELDS = new Set([
+  'schema',
+  'decision_id',
+  'checked_at',
+  'checked_by',
+  'repository',
+  'checked_commit',
+  'implementation_commits',
+  'scope_paths',
+  'verdict',
+  'summary',
+  'checks',
+])
+const IMPLEMENTATION_EVIDENCE_FIELDS = new Set(['name', 'command', 'outcome', 'evidence'])
 const SOURCE_FIELDS = [
   'telegram_update_id',
   'telegram_message_id',
@@ -117,6 +169,129 @@ function requiredString(record: Record<string, unknown>, key: string, path: stri
     throw new ProductHomeRegistryError(`${path}: ${key} must be a non-empty string`)
   }
   return value.trim()
+}
+
+function exactFields(record: Record<string, unknown>, fields: ReadonlySet<string>, path: string): void {
+  const missing = [...fields].filter((field) => !(field in record))
+  const unknown = Object.keys(record).filter((field) => !fields.has(field))
+  if (missing.length > 0 || unknown.length > 0) {
+    throw new ProductHomeRegistryError(`${path}: implementation-check fields are invalid`)
+  }
+}
+
+function requiredStrings(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+  maximum = 100,
+): string[] {
+  const value = record[key]
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new ProductHomeRegistryError(`${path}: ${key} must be an array`)
+  }
+  const strings = value.map((item, index) => {
+    if (typeof item !== 'string' || item.trim().length === 0) {
+      throw new ProductHomeRegistryError(`${path}: ${key}[${index}] must be a non-empty string`)
+    }
+    return item.trim()
+  })
+  if (new Set(strings).size !== strings.length) {
+    throw new ProductHomeRegistryError(`${path}: ${key} contains duplicates`)
+  }
+  return strings
+}
+
+function parseImplementationCheck(text: string, filename: string): {
+  decisionId: string
+  check: ImplementationCheck
+} {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    throw new ProductHomeRegistryError(`${filename}: implementation check is invalid JSON`)
+  }
+  if (!isRecord(value)) {
+    throw new ProductHomeRegistryError(`${filename}: implementation check must be an object`)
+  }
+  exactFields(value, IMPLEMENTATION_CHECK_FIELDS, filename)
+  if (value.schema !== 1) {
+    throw new ProductHomeRegistryError(`${filename}: implementation check schema is unsupported`)
+  }
+  const decisionId = requiredString(value, 'decision_id', filename)
+  if (!/^PD-[A-Z]{3}-\d{4}$/.test(decisionId)) {
+    throw new ProductHomeRegistryError(`${filename}: implementation decision id is invalid`)
+  }
+  const checkedAt = requiredString(value, 'checked_at', filename)
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(checkedAt) || !Number.isFinite(Date.parse(checkedAt))) {
+    throw new ProductHomeRegistryError(`${filename}: checked_at is invalid`)
+  }
+  const stamp = checkedAt.replaceAll('-', '').replaceAll(':', '')
+  if (filename !== `${decisionId}-${stamp}.json`) {
+    throw new ProductHomeRegistryError(`${filename}: filename does not match decision and check time`)
+  }
+  const checkedCommit = requiredString(value, 'checked_commit', filename)
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(checkedCommit)) {
+    throw new ProductHomeRegistryError(`${filename}: checked_commit is invalid`)
+  }
+  const implementationCommits = requiredStrings(value, 'implementation_commits', filename)
+  if (implementationCommits.some((commit) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit))) {
+    throw new ProductHomeRegistryError(`${filename}: implementation commit is invalid`)
+  }
+  const scopePaths = requiredStrings(value, 'scope_paths', filename)
+  if (scopePaths.some((scope) => scope.startsWith('/') || scope.split('/').some((part) => part === '' || part === '.' || part === '..'))) {
+    throw new ProductHomeRegistryError(`${filename}: scope path is unsafe`)
+  }
+  const verdict = requiredString(value, 'verdict', filename)
+  if (!['not_implemented', 'partial', 'aligned', 'unknown'].includes(verdict)) {
+    throw new ProductHomeRegistryError(`${filename}: implementation verdict is invalid`)
+  }
+  const rawChecks = value.checks
+  if (!Array.isArray(rawChecks) || rawChecks.length < 1 || rawChecks.length > 100) {
+    throw new ProductHomeRegistryError(`${filename}: checks must contain evidence`)
+  }
+  const checks = rawChecks.map((raw, index): ImplementationEvidenceCheck => {
+    if (!isRecord(raw)) {
+      throw new ProductHomeRegistryError(`${filename}: checks[${index}] must be an object`)
+    }
+    exactFields(raw, IMPLEMENTATION_EVIDENCE_FIELDS, filename)
+    const outcome = requiredString(raw, 'outcome', filename)
+    if (outcome !== 'pass' && outcome !== 'fail' && outcome !== 'not_run') {
+      throw new ProductHomeRegistryError(`${filename}: checks[${index}] outcome is invalid`)
+    }
+    return {
+      name: requiredString(raw, 'name', filename),
+      command: requiredString(raw, 'command', filename),
+      outcome,
+      evidence: requiredString(raw, 'evidence', filename),
+    }
+  })
+  if ((verdict === 'aligned' || verdict === 'partial') && (implementationCommits.length === 0 || scopePaths.length === 0)) {
+    throw new ProductHomeRegistryError(`${filename}: implementation evidence is incomplete`)
+  }
+  if (verdict === 'aligned' && checks.some((check) => check.outcome !== 'pass')) {
+    throw new ProductHomeRegistryError(`${filename}: aligned check contains non-passing evidence`)
+  }
+  if (verdict === 'partial' && checks.every((check) => check.outcome === 'pass')) {
+    throw new ProductHomeRegistryError(`${filename}: partial check has no incomplete evidence`)
+  }
+  if (verdict === 'not_implemented' && implementationCommits.length > 0) {
+    throw new ProductHomeRegistryError(`${filename}: not implemented check names implementation commits`)
+  }
+  return {
+    decisionId,
+    check: {
+      checkedAt,
+      checkedBy: requiredString(value, 'checked_by', filename),
+      repository: requiredString(value, 'repository', filename),
+      checkedCommit,
+      implementationCommits,
+      scopePaths,
+      verdict: verdict as DecisionImplementationStatus,
+      summary: requiredString(value, 'summary', filename),
+      checks,
+    },
+  }
 }
 
 function nullableString(record: Record<string, unknown>, key: string, path: string): string | null {
@@ -290,6 +465,8 @@ function parseCard(
     supersededBy: null,
     lifecycle: 'active',
     implementationStatus: implementationStatus(implementation),
+    implementationCheckedAt: null,
+    implementationSummary: plainExcerpt(implementation),
     originStored: SOURCE_FIELDS.every((field) => typeof (rawMetadata.source as Record<string, unknown>)[field] === 'string'),
     briefVersion: briefVersion as number,
     briefSha256,
@@ -298,6 +475,8 @@ function parseCard(
     evidence,
     verification,
     implementation,
+    implementationCheck: null,
+    implementationChecks: [],
     source,
     searchText,
   }
@@ -312,8 +491,11 @@ function summary(decision: DecisionDetail): DecisionSummary {
     evidence: _evidence,
     verification: _verification,
     implementation: _implementation,
+    implementationCheck: _implementationCheck,
+    implementationChecks: _implementationChecks,
     source: _source,
     history: _history,
+    policyHistory: _policyHistory,
     ...rest
   } = decision
   return rest
@@ -358,6 +540,47 @@ export class ProductDecisionRegistry {
 
     const byId = new Map(parsed.map((card) => [card.id, card]))
     if (byId.size !== parsed.length) throw new ProductHomeRegistryError('decision ids are not unique')
+
+    const implementationDirectory = join(this.productRoot, 'implementation-checks')
+    const implementationByDecision = new Map<string, ImplementationCheck[]>()
+    let implementationEntries: Dirent[]
+    try {
+      implementationEntries = await readdir(implementationDirectory, { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      implementationEntries = []
+    }
+    for (const entry of implementationEntries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      const path = join(implementationDirectory, entry.name)
+      const fileStat = await stat(path)
+      if (fileStat.size > MAX_IMPLEMENTATION_CHECK_BYTES) {
+        throw new ProductHomeRegistryError(`implementation-checks/${entry.name}: file is too large`)
+      }
+      const parsedCheck = parseImplementationCheck(await readFile(path, 'utf8'), entry.name)
+      if (!byId.has(parsedCheck.decisionId)) {
+        throw new ProductHomeRegistryError(`${entry.name}: implementation check decision does not exist`)
+      }
+      const checks = implementationByDecision.get(parsedCheck.decisionId) ?? []
+      if (checks.some((check) => check.checkedAt === parsedCheck.check.checkedAt)) {
+        throw new ProductHomeRegistryError(`${entry.name}: duplicate implementation check time`)
+      }
+      checks.push(parsedCheck.check)
+      implementationByDecision.set(parsedCheck.decisionId, checks)
+    }
+    for (const card of parsed) {
+      const checks = (implementationByDecision.get(card.id) ?? [])
+        .sort((left, right) => left.checkedAt.localeCompare(right.checkedAt))
+      const latest = checks.at(-1) ?? null
+      card.implementationChecks = checks
+      card.implementationCheck = latest
+      if (latest !== null) {
+        card.implementationStatus = latest.verdict
+        card.implementationCheckedAt = latest.checkedAt
+        card.implementationSummary = latest.summary
+      }
+    }
+
     for (const card of parsed) {
       if (card.supersedes === null) continue
       const predecessor = byId.get(card.supersedes)
@@ -367,6 +590,9 @@ export class ProductDecisionRegistry {
       if (predecessor.policyKey !== card.policyKey) {
         throw new ProductHomeRegistryError(`${card.id}: supersedes changes policy_key`)
       }
+      if (predecessor.decidedAt >= card.decidedAt) {
+        throw new ProductHomeRegistryError(`${card.id}: superseding decision is not newer`)
+      }
       if (predecessor.supersededBy !== null) {
         throw new ProductHomeRegistryError(`${card.id}: decision history forks`)
       }
@@ -375,19 +601,46 @@ export class ProductDecisionRegistry {
       predecessor.reviewDue = false
     }
 
-    const histories = new Map<string, string[]>()
-    for (const card of parsed) {
-      const history = parsed
-        .filter((candidate) => candidate.policyKey === card.policyKey)
-        .sort((left, right) => left.decidedAt.localeCompare(right.decidedAt))
-        .map((candidate) => candidate.id)
-      histories.set(card.id, history)
+    const histories = new Map<string, ParsedDecision[]>()
+    const policyKeys = new Set(parsed.map((card) => card.policyKey))
+    for (const policyKey of policyKeys) {
+      const policyCards = parsed.filter((card) => card.policyKey === policyKey)
+      const roots = policyCards.filter((card) => card.supersedes === null)
+      if (roots.length !== 1) {
+        throw new ProductHomeRegistryError(`${policyKey}: decision history must have exactly one root`)
+      }
+      const chain: ParsedDecision[] = []
+      const seen = new Set<string>()
+      let current: ParsedDecision | undefined = roots[0]
+      while (current !== undefined) {
+        if (seen.has(current.id)) {
+          throw new ProductHomeRegistryError(`${policyKey}: decision history contains a cycle`)
+        }
+        seen.add(current.id)
+        chain.push(current)
+        current = current.supersededBy === null ? undefined : byId.get(current.supersededBy)
+      }
+      if (seen.size !== policyCards.length) {
+        throw new ProductHomeRegistryError(`${policyKey}: decision history is disconnected`)
+      }
+      for (const card of policyCards) histories.set(card.id, chain)
     }
     const decisions = parsed
       .sort((left, right) => right.decidedAt.localeCompare(left.decidedAt) || left.id.localeCompare(right.id))
       .map(({ searchText: _searchText, ...card }) => ({
         ...card,
-        history: histories.get(card.id) ?? [card.id],
+        history: (histories.get(card.id) ?? [card]).map((entry) => entry.id),
+        policyHistory: (histories.get(card.id) ?? [card]).map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          decidedAt: entry.decidedAt,
+          reason: entry.reason,
+          lifecycle: entry.lifecycle,
+          supersedes: entry.supersedes,
+          supersededBy: entry.supersededBy,
+          implementationStatus: entry.implementationStatus,
+          implementationCheckedAt: entry.implementationCheckedAt,
+        })),
       }))
     const domains = PRODUCT_HOME_DOMAINS.map((domain) => {
       const cards = decisions.filter((decision) => decision.domain === domain.id)
@@ -412,7 +665,7 @@ export class ProductDecisionRegistry {
   async list(options: {
     query?: string
     domain?: string
-    view?: 'all' | 'active' | 'review' | 'superseded'
+    view?: 'all' | 'active' | 'review' | 'superseded' | 'implementation'
   } = {}): Promise<{ decisions: DecisionSummary[]; snapshot: DecisionRegistrySnapshot }> {
     const snapshot = await this.snapshot()
     const query = options.query?.trim().toLocaleLowerCase('ru-RU') ?? ''
@@ -422,6 +675,9 @@ export class ProductDecisionRegistry {
       if (options.view === 'active' && decision.lifecycle !== 'active') return false
       if (options.view === 'review' && !decision.reviewDue) return false
       if (options.view === 'superseded' && decision.lifecycle !== 'superseded') return false
+      if (options.view === 'implementation' && (
+        decision.lifecycle !== 'active' || decision.implementationStatus === 'aligned'
+      )) return false
       if (query.length > 0 && !parsedForSearch.get(decision.id)?.includes(query)) return false
       return true
     }).map(summary)
@@ -450,6 +706,15 @@ export class ProductDecisionRegistry {
         decision.evidence,
         decision.verification,
         decision.implementation,
+        decision.implementationSummary,
+        decision.implementationChecks.flatMap((check) => [
+          check.summary,
+          check.repository,
+          check.checkedCommit,
+          check.implementationCommits.join(' '),
+          check.scopePaths.join(' '),
+          ...check.checks.flatMap((item) => [item.name, item.command, item.evidence]),
+        ]).join('\n'),
       ].join('\n').toLocaleLowerCase('ru-RU'))
     }
     return index

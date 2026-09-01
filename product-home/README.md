@@ -1,8 +1,8 @@
 # Razvilka Product Home
 
-Owner-only Telegram Mini App for reading accepted STVOR product decisions from
-Git. The browser receives no cards until the server validates Telegram
-`initData`, its age and the exact owner allowlist.
+Owner-only Telegram Mini App for reading accepted STVOR product decisions and
+immutable implementation checks from Git. The browser receives no cards until
+the server validates Telegram `initData`, its age and the exact owner allowlist.
 
 ## Build
 
@@ -15,8 +15,10 @@ bun build --compile src/product-home/main.ts --outfile ../product-home-server
 ```
 
 The production service serves the Vite build and read-only API from one origin.
-It reads `docs/product/` from a Git checkout on every request; SQLite is not a
-second product-decision store.
+It reads decision cards and `docs/product/implementation-checks/` from a Git
+checkout on every request; SQLite is not a second product-decision store. The
+latest check supplies the visible implementation verdict, while older checks
+and superseded decisions remain available as history.
 
 ## Kama layout
 

@@ -1,10 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 
-import { DurableBridgeService } from '../../src/bridge/durable-service.js'
+import { DurableBridgeService, productHomeMenuButton } from '../../src/bridge/durable-service.js'
 import type { DurableBridgeSupervisor } from '../../src/bridge/durable-supervisor.js'
 import type { DurableTextRuntime } from '../../src/bridge/text-runtime.js'
 
 describe('DurableBridgeService lifecycle', () => {
+  test('keeps the persistent Mini App menu button compact', () => {
+    expect(productHomeMenuButton('https://product.example/')).toEqual({
+      type: 'web_app',
+      text: 'PH',
+      web_app: { url: 'https://product.example/' },
+    })
+  })
+
   test('drains workers before closing backend, client and database exactly once', async () => {
     const events: string[] = []
     const supervisor = {

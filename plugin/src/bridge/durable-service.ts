@@ -57,6 +57,14 @@ export interface DurableBridgeOperations {
   watchdog?: SystemdWatchdog
 }
 
+export function productHomeMenuButton(publicUrl: string): {
+  type: 'web_app'
+  text: 'PH'
+  web_app: { url: string }
+} {
+  return { type: 'web_app', text: 'PH', web_app: { url: publicUrl } }
+}
+
 export class DurableBridgeService {
   private stopPromise: Promise<void> | null = null
   private started = false
@@ -171,11 +179,7 @@ export async function bootstrapDurableBridgeService(
       }
       await bot.api.setChatMenuButton({
         chat_id: numericChatId,
-        menu_button: {
-          type: 'web_app',
-          text: 'Product Home',
-          web_app: { url: config.productHome.publicUrl },
-        },
+        menu_button: productHomeMenuButton(config.productHome.publicUrl),
       })
     }
   }

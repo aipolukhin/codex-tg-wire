@@ -79,6 +79,7 @@ import {
   GitProductDecisionWriter,
   type ProductDecisionWriterOptions,
 } from './product-decision-writer.js'
+import { withProductDecisionRecall } from './product-decision-recall.js'
 import { withTelegramProgressContract } from './telegram-progress-contract.js'
 import type {
   AgentApprovalPolicy,
@@ -349,6 +350,11 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const interactionTimeoutMs = options.codex?.interactionTimeoutMs
   const threadStartDefaults = options.codex?.threadStartDefaults ?? {}
   const threadResumeDefaults = options.codex?.threadResumeDefaults ?? {}
+  const recallInstructions = (existing: string | null | undefined): string | null | undefined => (
+    options.productDecisions === undefined
+      ? existing
+      : withProductDecisionRecall(existing, options.productDecisions.repositoryPath)
+  )
   const backendOptions: CodexAppServerBackendOptions = {
     eventDiagnostics: new SqliteCodexEventRepository(options.database),
     artifactStore: new SqliteCodexArtifactRepository(options.database),
@@ -356,13 +362,13 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     threadStartDefaults: {
       ...threadStartDefaults,
       developerInstructions: withTelegramProgressContract(
-        threadStartDefaults.developerInstructions,
+        recallInstructions(threadStartDefaults.developerInstructions),
       ),
     },
     threadResumeDefaults: {
       ...threadResumeDefaults,
       developerInstructions: withTelegramProgressContract(
-        threadResumeDefaults.developerInstructions,
+        recallInstructions(threadResumeDefaults.developerInstructions),
       ),
     },
     ...(options.codex?.turnDefaults === undefined ? {} : { turnDefaults: options.codex.turnDefaults }),

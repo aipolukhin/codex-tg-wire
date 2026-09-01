@@ -25,7 +25,7 @@ async function request<T>(path: string): Promise<T> {
 export function loadDecisions(input: {
   query?: string
   domain?: string
-  view?: 'all' | 'active' | 'review' | 'superseded'
+  view?: 'all' | 'active' | 'review' | 'superseded' | 'implementation'
 } = {}): Promise<DecisionsResponse> {
   const search = new URLSearchParams()
   if (input.query?.trim()) search.set('query', input.query.trim())

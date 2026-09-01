@@ -35,8 +35,10 @@ async function fixture(): Promise<ProductHomeApplication> {
   roots.push(root)
   const staticDirectory = join(root, 'dist')
   const capacity = join(root, 'repository', 'docs', 'product', 'capacity')
+  const implementationChecks = join(root, 'repository', 'docs', 'product', 'implementation-checks')
   await mkdir(staticDirectory, { recursive: true })
   await mkdir(capacity, { recursive: true })
+  await mkdir(implementationChecks, { recursive: true })
   await writeFile(join(staticDirectory, 'index.html'), '<!doctype html><title>Product Home</title>')
   await writeFile(join(capacity, 'PD-CAP-0001-slots.md'), `---
 id: PD-CAP-0001
@@ -76,6 +78,24 @@ source:
 ## Реализация
 - Не реализовано.
 `)
+  await writeFile(join(implementationChecks, 'PD-CAP-0001-20260901T110000Z.json'), JSON.stringify({
+    schema: 1,
+    decision_id: 'PD-CAP-0001',
+    checked_at: '2026-09-01T11:00:00Z',
+    checked_by: 'codex:test',
+    repository: 'vpn-infra',
+    checked_commit: 'c'.repeat(40),
+    implementation_commits: ['d'.repeat(40)],
+    scope_paths: ['control-plane/placement.go'],
+    verdict: 'aligned',
+    summary: 'Placement соответствует принятому правилу.',
+    checks: [{
+      name: 'Placement test',
+      command: 'go test ./control-plane/...',
+      outcome: 'pass',
+      evidence: 'Тест граничного значения прошёл.',
+    }],
+  }, null, 2))
   return new ProductHomeApplication({
     host: '127.0.0.1',
     port: 8788,
@@ -115,14 +135,22 @@ describe('ProductHomeApplication', () => {
     const listBody = await list.json() as Record<string, unknown>
     expect(listBody.total).toBe(1)
     expect(JSON.stringify(listBody)).not.toContain('telegramUpdateId')
+    expect(JSON.stringify(listBody)).not.toContain('go test')
 
     const detail = await application.handle(new Request(
       'https://example.test/product-home/api/v1/decisions/PD-CAP-0001',
       { headers },
     ))
     expect(detail.status).toBe(200)
-    const detailBody = await detail.json() as { decision: { source: { telegramUpdateId: string } } }
+    const detailBody = await detail.json() as {
+      decision: {
+        source: { telegramUpdateId: string }
+        implementationCheck: { verdict: string; checks: Array<{ command: string }> }
+      }
+    }
     expect(detailBody.decision.source.telegramUpdateId).toBe('tg:update:1')
+    expect(detailBody.decision.implementationCheck.verdict).toBe('aligned')
+    expect(detailBody.decision.implementationCheck.checks[0]?.command).toBe('go test ./control-plane/...')
   })
 
   test('does not expose files outside the static build', async () => {

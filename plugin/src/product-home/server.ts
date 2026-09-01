@@ -79,9 +79,9 @@ function normalizedBasePath(publicUrl: string): string {
   return pathname.length === 0 ? '/' : `${pathname}/`
 }
 
-function validView(value: string | null): 'all' | 'active' | 'review' | 'superseded' {
+function validView(value: string | null): 'all' | 'active' | 'review' | 'superseded' | 'implementation' {
   if (value === null || value === 'all') return 'all'
-  if (value === 'active' || value === 'review' || value === 'superseded') return value
+  if (value === 'active' || value === 'review' || value === 'superseded' || value === 'implementation') return value
   throw new TypeError('invalid decision view')
 }
 

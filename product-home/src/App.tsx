@@ -5,7 +5,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate, useParam
 
 import { loadDecision, loadDecisions } from '@/api.ts'
 import { ArrowIcon, CheckIcon, ClockIcon, GridIcon, HomeIcon, LinkIcon, ReviewIcon, SearchIcon } from '@/icons.tsx'
-import type { DecisionDetail, DecisionSummary, DecisionsResponse, DomainId } from '@/types.ts'
+import type { DecisionDetail, DecisionSummary, DecisionsResponse, DomainId, ImplementationCheck, ImplementationStatus } from '@/types.ts'
 
 const EMPTY_RESPONSE: DecisionsResponse = {
   decisions: [],
@@ -68,7 +68,7 @@ function Layout({ title, children, tab = 'home' }: {
   </div>
 }
 
-function useDecisions(input: { query?: string; domain?: string; view?: 'all' | 'active' | 'review' | 'superseded' }) {
+function useDecisions(input: { query?: string; domain?: string; view?: 'all' | 'active' | 'review' | 'superseded' | 'implementation' }) {
   const [data, setData] = useState(EMPTY_RESPONSE)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -133,11 +133,11 @@ function DomainsPage() {
 }
 
 function ReviewPage() {
-  const [view, setView] = useState<'review' | 'superseded'>('review')
+  const [view, setView] = useState<'review' | 'implementation' | 'superseded'>('review')
   const { data, error, loading } = useDecisions({ view })
   return <Layout tab="review">
-    <div className="page-heading"><p className="eyebrow">Review</p><h1>Решения для внимания</h1><p>Наступившие даты пересмотра и сохранённая история замен.</p></div>
-    <div className="segmented"><button className={view === 'review' ? 'selected' : ''} onClick={() => setView('review')}>На review</button><button className={view === 'superseded' ? 'selected' : ''} onClick={() => setView('superseded')}>Заменены</button></div>
+    <div className="page-heading"><p className="eyebrow">Review</p><h1>Решения для внимания</h1><p>Пересмотр, соответствие реализации и сохранённая история замен.</p></div>
+    <div className="segmented"><button className={view === 'review' ? 'selected' : ''} onClick={() => setView('review')}>Review</button><button className={view === 'implementation' ? 'selected' : ''} onClick={() => setView('implementation')}>Реализация</button><button className={view === 'superseded' ? 'selected' : ''} onClick={() => setView('superseded')}>Заменены</button></div>
     <ResultState loading={loading} error={error} empty={data.decisions.length === 0}/>
     <div className="decision-list">{data.decisions.map((decision) => <DecisionCard key={decision.id} decision={decision}/>)}</div>
   </Layout>
@@ -158,6 +158,7 @@ function DecisionCard({ decision }: { decision: DecisionSummary }) {
     <span className="decision-copy">{decision.decision}</span>
     <span className="badges"><StatusBadge decision={decision}/></span>
     <span className="reason"><b>Почему:</b> {decision.reason}</span>
+    <span className="implementation-note"><b>Реализация:</b> {decision.implementationSummary}{decision.implementationCheckedAt ? ` · проверено ${formatDate(decision.implementationCheckedAt)}` : ''}</span>
     {decision.originStored && <span className="origin"><LinkIcon/> Источник сохранён</span>}
   </button>
 }
@@ -165,17 +166,13 @@ function DecisionCard({ decision }: { decision: DecisionSummary }) {
 function StatusBadge({ decision }: { decision: DecisionSummary }) {
   if (decision.lifecycle === 'superseded') return <span className="badge gray">Заменено</span>
   if (decision.reviewDue) return <span className="badge amber">Нужен review</span>
-  const implementation = {
-    not_implemented: 'Не реализовано',
-    partial: 'Частично',
-    aligned: 'Реализовано',
-    unknown: 'Реализация неизвестна',
-  }[decision.implementationStatus]
+  const implementation = implementationLabel(decision.implementationStatus)
   return <><span className="badge blue">Принято</span><span className={`badge ${decision.implementationStatus === 'aligned' ? 'green' : 'amber'}`}>{implementation}</span></>
 }
 
 function DecisionPage() {
   const { id = '' } = useParams()
+  const navigate = useNavigate()
   const [decision, setDecision] = useState<DecisionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
@@ -199,7 +196,12 @@ function DecisionPage() {
       <DetailSection title="Основания и допущения" text={decision.evidence}/>
       <DetailSection title="Что затронуто" text={decision.affected.map((item) => `- ${item}`).join('\n')}/>
       <DetailSection title="Как проверим" text={decision.verification}/>
-      <DetailSection title="Реализация" text={decision.implementation}/>
+      <DetailSection title="Реализация на момент принятия" text={decision.implementation}/>
+      <ImplementationEvidence decision={decision}/>
+      <section className="policy-history"><h2>История правила</h2><div>{decision.policyHistory.map((entry) => <button key={entry.id} className={entry.id === decision.id ? 'current' : ''} onClick={() => entry.id === decision.id ? undefined : navigate(`/decisions/${entry.id}`)}>
+        <span><b>{entry.id}</b><small>{formatDate(entry.decidedAt)} · {implementationLabel(entry.implementationStatus)}</small></span>
+        <span className="history-reason">{entry.reason}</span>
+      </button>)}</div></section>
       <section className="provenance"><h2>Происхождение</h2><dl>
         <div><dt>Принято</dt><dd>{formatDate(decision.decidedAt)} · {decision.decidedBy}</dd></div>
         <div><dt>Версия</dt><dd>v{decision.briefVersion} · {decision.briefSha256.slice(0, 12)}…</dd></div>
@@ -209,6 +211,38 @@ function DecisionPage() {
       </dl></section>
     </article>}
   </Layout>
+}
+
+function ImplementationEvidence({ decision }: { decision: DecisionDetail }) {
+  const latest = decision.implementationCheck
+  return <section className="implementation-evidence">
+    <h2>Проверка реализации</h2>
+    {latest === null
+      ? <div className="notice">Проверка ещё не проводилась. Статус взят только из карточки на момент принятия.</div>
+      : <ImplementationCheckCard value={latest} latest/>}
+    {decision.implementationChecks.length > 1 && <details>
+      <summary>Предыдущие проверки: {decision.implementationChecks.length - 1}</summary>
+      <div className="evidence-history">{decision.implementationChecks.slice(0, -1).reverse().map((check) => <ImplementationCheckCard key={check.checkedAt} value={check}/>)}</div>
+    </details>}
+  </section>
+}
+
+function ImplementationCheckCard({ value, latest = false }: { value: ImplementationCheck; latest?: boolean }) {
+  return <div className="evidence-card">
+    <div className="evidence-heading"><span className={`badge ${value.verdict === 'aligned' ? 'green' : 'amber'}`}>{implementationLabel(value.verdict)}</span><small>{latest ? 'Последняя проверка' : 'Проверка'} · {formatDate(value.checkedAt)}</small></div>
+    <p>{value.summary}</p>
+    <dl>
+      <div><dt>Состояние</dt><dd>{value.repository} · {value.checkedCommit.slice(0, 12)}</dd></div>
+      <div><dt>Коммиты реализации</dt><dd>{value.implementationCommits.length === 0 ? 'Нет' : value.implementationCommits.map((commit) => commit.slice(0, 12)).join(', ')}</dd></div>
+      <div><dt>Проверенные пути</dt><dd>{value.scopePaths.length === 0 ? 'Не зафиксированы' : value.scopePaths.join(', ')}</dd></div>
+    </dl>
+    <div className="evidence-items">{value.checks.map((check, index) => <div key={`${check.name}-${index}`}>
+      <span className={`check-outcome ${check.outcome}`}>{check.outcome === 'pass' ? 'Пройдено' : check.outcome === 'fail' ? 'Не пройдено' : 'Не запускалось'}</span>
+      <b>{check.name}</b>
+      <p>{check.evidence}</p>
+      <code>{check.command}</code>
+    </div>)}</div>
+  </div>
 }
 
 function DetailSection({ title, text }: { title: string; text: string }) {
@@ -228,6 +262,15 @@ function ResultState({ loading, error, empty }: { loading: boolean; error: strin
 
 function shortDomain(domain: DomainId): string {
   return { capacity: 'Capacity', commercial: 'Commercial', lifecycle: 'Lifecycle', 'customer-experience': 'CX', surfaces: 'Surfaces', legal: 'Legal' }[domain]
+}
+
+function implementationLabel(status: ImplementationStatus): string {
+  return {
+    not_implemented: 'Не реализовано',
+    partial: 'Частично',
+    aligned: 'Соответствует',
+    unknown: 'Неизвестно',
+  }[status]
 }
 
 function formatDate(value: string): string {

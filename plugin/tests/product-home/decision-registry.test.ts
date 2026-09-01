@@ -80,10 +80,39 @@ source:
 `
 }
 
+function implementationCheck(input: {
+  decisionId: string
+  checkedAt: string
+  verdict: 'not_implemented' | 'partial' | 'aligned' | 'unknown'
+  summary: string
+  outcome?: 'pass' | 'fail' | 'not_run'
+}): string {
+  const commit = 'c'.repeat(40)
+  return JSON.stringify({
+    schema: 1,
+    decision_id: input.decisionId,
+    checked_at: input.checkedAt,
+    checked_by: 'codex:test',
+    repository: 'vpn-infra',
+    checked_commit: commit,
+    implementation_commits: input.verdict === 'not_implemented' ? [] : [commit],
+    scope_paths: input.verdict === 'not_implemented' ? [] : ['control-plane/example.go'],
+    verdict: input.verdict,
+    summary: input.summary,
+    checks: [{
+      name: 'Проверка правила',
+      command: 'go test ./control-plane/...',
+      outcome: input.outcome ?? (input.verdict === 'aligned' ? 'pass' : 'not_run'),
+      evidence: input.verdict === 'aligned' ? 'Проверка прошла.' : 'Не все потребители проверены.',
+    }],
+  }, null, 2)
+}
+
 async function repository(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'product-home-registry-'))
   roots.push(root)
   await mkdir(join(root, 'docs', 'product', 'capacity'), { recursive: true })
+  await mkdir(join(root, 'docs', 'product', 'implementation-checks'), { recursive: true })
   return root
 }
 
@@ -116,6 +145,10 @@ describe('ProductDecisionRegistry', () => {
       reviewDue: true,
       implementationStatus: 'unknown',
       history: ['PD-CAP-0001', 'PD-CAP-0002'],
+      policyHistory: [
+        { id: 'PD-CAP-0001', supersededBy: 'PD-CAP-0002' },
+        { id: 'PD-CAP-0002', supersedes: 'PD-CAP-0001' },
+      ],
     })
     expect(snapshot.decisions[1]).toMatchObject({
       lifecycle: 'superseded',
@@ -123,6 +156,71 @@ describe('ProductDecisionRegistry', () => {
       supersededBy: 'PD-CAP-0002',
       implementationStatus: 'not_implemented',
     })
+  })
+
+  test('uses the latest immutable implementation check and searches its evidence', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'docs', 'product', 'capacity', 'PD-CAP-0001-slots.md'), card({
+      id: 'PD-CAP-0001',
+      decidedAt: '2026-09-01T00:00:00Z',
+    }))
+    const checks = join(root, 'docs', 'product', 'implementation-checks')
+    await writeFile(join(checks, 'PD-CAP-0001-20260901T100000Z.json'), implementationCheck({
+      decisionId: 'PD-CAP-0001',
+      checkedAt: '2026-09-01T10:00:00Z',
+      verdict: 'partial',
+      summary: 'Проверен только placement.',
+    }))
+    await writeFile(join(checks, 'PD-CAP-0001-20260901T110000Z.json'), implementationCheck({
+      decisionId: 'PD-CAP-0001',
+      checkedAt: '2026-09-01T11:00:00Z',
+      verdict: 'aligned',
+      summary: 'Placement и выдача подписки соответствуют решению.',
+    }))
+
+    const registry = new ProductDecisionRegistry({ repositoryPath: root })
+    const detail = await registry.get('PD-CAP-0001')
+    expect(detail).toMatchObject({
+      implementationStatus: 'aligned',
+      implementationCheckedAt: '2026-09-01T11:00:00Z',
+      implementationSummary: 'Placement и выдача подписки соответствуют решению.',
+      implementationCheck: { verdict: 'aligned' },
+    })
+    expect(detail?.implementationChecks).toHaveLength(2)
+    expect((await registry.list({ query: 'go test' })).decisions).toHaveLength(1)
+    expect((await registry.list({ view: 'implementation' })).decisions).toHaveLength(0)
+    const summary = (await registry.list()).decisions[0]
+    expect(summary).not.toHaveProperty('implementationChecks')
+    expect(summary).toMatchObject({ implementationStatus: 'aligned' })
+  })
+
+  test('fails closed for orphaned implementation checks', async () => {
+    const root = await repository()
+    await writeFile(
+      join(root, 'docs', 'product', 'implementation-checks', 'PD-CAP-9999-20260901T100000Z.json'),
+      implementationCheck({
+        decisionId: 'PD-CAP-9999',
+        checkedAt: '2026-09-01T10:00:00Z',
+        verdict: 'unknown',
+        summary: 'Недостаточно данных.',
+      }),
+    )
+    const registry = new ProductDecisionRegistry({ repositoryPath: root })
+    await expect(registry.snapshot()).rejects.toThrow('implementation check decision does not exist')
+  })
+
+  test('rejects disconnected replacement history', async () => {
+    const root = await repository()
+    await writeFile(join(root, 'docs', 'product', 'capacity', 'PD-CAP-0001-first.md'), card({
+      id: 'PD-CAP-0001',
+      decidedAt: '2026-09-01T00:00:00Z',
+    }))
+    await writeFile(join(root, 'docs', 'product', 'capacity', 'PD-CAP-0002-second.md'), card({
+      id: 'PD-CAP-0002',
+      decidedAt: '2026-09-02T00:00:00Z',
+    }))
+    const registry = new ProductDecisionRegistry({ repositoryPath: root })
+    await expect(registry.snapshot()).rejects.toThrow('must have exactly one root')
   })
 
   test('searches text, id, domain and affected systems', async () => {

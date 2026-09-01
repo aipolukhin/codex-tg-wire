@@ -6,6 +6,12 @@ Claude package version is not the codex-tg-wire release version.
 
 ## [Unreleased]
 
+### Product decisions
+
+- Product-decision capture now follows conversational intent instead of requiring
+  a prefix, supports Brand cards with `PD-BRD-####` IDs, and presents the exact
+  version through the `Принимаю vN` callback button.
+
 ### Installer
 
 - Fixed the host and Docker console frames so every row has the same width.

@@ -14,6 +14,7 @@ import type {
   ProductDecisionDraftRecord,
   ProductDecisionFlowRecord,
 } from '../durable/product-decision-repository.js'
+import { productDecisionDomainSpec } from './product-decision.js'
 
 export interface ProductDecisionWriteResult {
   decisionId: string
@@ -36,7 +37,6 @@ export interface ProductDecisionWriter {
   ): ProductDecisionWriteResult
 }
 
-const CARD = /^PD-CAP-(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/
 const HASH = /^[0-9a-f]{64}$/
 const GIT_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 const LOCK_NAME = 'product-decision-r1.lock'
@@ -101,18 +101,25 @@ function acceptanceNeedle(draft: ProductDecisionDraftRecord): string {
   return `telegram_acceptance_callback_query_id: ${quoted(draft.acceptanceCallbackQueryId ?? 'unknown')}`
 }
 
+function cardPattern(prefix: string): RegExp {
+  return new RegExp(`^PD-${prefix}-(\\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\\.md$`)
+}
+
 function findExisting(
   repository: string,
   domainDirectory: string,
+  prefix: string,
   draft: ProductDecisionDraftRecord,
 ): ProductDecisionWriteResult | null {
+  const card = cardPattern(prefix)
   const needle = acceptanceNeedle(draft)
   for (const name of readdirSync(domainDirectory)) {
-    if (!CARD.test(name)) continue
+    const match = name.match(card)
+    if (match?.[1] === undefined) continue
     const path = join(domainDirectory, name)
     const text = readFileSync(path, 'utf8')
     if (!text.includes(`brief_sha256: ${draft.briefSha256}`) || !text.includes(needle)) continue
-    const decisionId = name.slice(0, 'PD-CAP-0000'.length)
+    const decisionId = `PD-${prefix}-${match[1]}`
     const gitCommit = command(repository, 'git', ['log', '-1', '--format=%H', '--', path])
     if (!GIT_COMMIT.test(gitCommit)) throw new Error(`cannot prove Git commit for ${decisionId}`)
     return { decisionId, gitCommit, pushed: false, path }
@@ -134,15 +141,16 @@ function assertSupersedes(
   }
 }
 
-function nextDecisionId(domainDirectory: string): string {
+function nextDecisionId(domainDirectory: string, prefix: string, title: string): string {
+  const card = cardPattern(prefix)
   let highest = 0
   for (const name of readdirSync(domainDirectory)) {
-    const match = name.match(CARD)
+    const match = name.match(card)
     if (match?.[1] === undefined) continue
     highest = Math.max(highest, Number.parseInt(match[1], 10))
   }
-  if (highest >= 9_999) throw new Error('Capacity decision id range is exhausted')
-  return `PD-CAP-${String(highest + 1).padStart(4, '0')}`
+  if (highest >= 9_999) throw new Error(`${title} decision id range is exhausted`)
+  return `PD-${prefix}-${String(highest + 1).padStart(4, '0')}`
 }
 
 function renderCard(input: {
@@ -234,8 +242,8 @@ export class GitProductDecisionWriter implements ProductDecisionWriter {
       throw new TypeError('product decision repositoryPath must be the Git worktree root')
     }
     const validator = join(this.repository, 'scripts', 'product_decisions.py')
-    const capacity = join(this.repository, 'docs', 'product', 'capacity')
-    if (!existsSync(validator) || !existsSync(capacity)) {
+    const productRoot = join(this.repository, 'docs', 'product')
+    if (!existsSync(validator) || !existsSync(productRoot)) {
       throw new TypeError('repository does not contain the R0 product decision registry')
     }
   }
@@ -247,15 +255,19 @@ export class GitProductDecisionWriter implements ProductDecisionWriter {
     }
     const release = acquireLock(this.repository)
     try {
-      const domainDirectory = join(this.repository, 'docs', 'product', 'capacity')
-      const existing = findExisting(this.repository, domainDirectory, draft)
+      const domain = productDecisionDomainSpec(draft.brief.domain)
+      const domainDirectory = join(this.repository, 'docs', 'product', draft.brief.domain)
+      if (!existsSync(domainDirectory)) {
+        throw new Error(`product decision domain is not initialized: ${draft.brief.domain}`)
+      }
+      const existing = findExisting(this.repository, domainDirectory, domain.prefix, draft)
       if (existing !== null) return this.finishPush(existing)
 
       const status = command(this.repository, 'git', ['status', '--porcelain=v1', '--untracked-files=all'])
       if (status.length > 0) throw new Error('canonical product repository has uncommitted changes')
       assertSupersedes(domainDirectory, draft.brief.policyKey, draft.brief.supersedes)
 
-      const decisionId = nextDecisionId(domainDirectory)
+      const decisionId = nextDecisionId(domainDirectory, domain.prefix, domain.title)
       const cardPath = join(domainDirectory, `${decisionId}-${draft.brief.slug}.md`)
       const indexPath = join(domainDirectory, 'README.md')
       const oldIndex = readFileSync(indexPath, 'utf8')

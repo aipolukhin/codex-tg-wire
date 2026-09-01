@@ -3,10 +3,20 @@ import { createHash } from 'node:crypto'
 import type { TextTurnResult } from './contracts.js'
 
 export type ProductDecisionMode = 'research' | 'fix' | 'change'
+export type ProductDecisionDomain = 'capacity' | 'brand'
+
+const DOMAIN_SPECS = {
+  capacity: { prefix: 'CAP', title: 'Capacity' },
+  brand: { prefix: 'BRD', title: 'Brand' },
+} as const satisfies Record<ProductDecisionDomain, { prefix: string; title: string }>
+
+export function productDecisionDomainSpec(domain: ProductDecisionDomain) {
+  return DOMAIN_SPECS[domain]
+}
 
 export interface ProductDecisionBrief {
   schema: 1
-  domain: 'capacity'
+  domain: ProductDecisionDomain
   policyKey: string
   slug: string
   title: string
@@ -32,10 +42,10 @@ const BRIEF_START = '<product-decision-brief>'
 const BRIEF_END = '</product-decision-brief>'
 const POLICY_KEY = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const DECISION_ID = /^PD-CAP-\d{4}$/
+const DECISION_ID = /^PD-([A-Z]{3})-\d{4}$/
 const PLACEHOLDER = /<[^>\n]+>|\b(?:TODO|TBD|FIXME)\b|\?\?\?/iu
 const MODE = /^(Исследуем|Фиксируем|Меняем)\s*:\s*/iu
-const ACCEPT = /^Принимаю\s+v(\d+)\.?$/iu
+const ACCEPT = /^Принимаю\s+v(\d+)(?:,\s*SHA-256\s+[0-9a-f]{64})?\.?$/iu
 const MAX_SCALAR = 4_000
 const MAX_LIST = 40
 
@@ -82,21 +92,28 @@ export function parseProductDecisionBrief(value: unknown): ProductDecisionBrief 
   if (unknown.length > 0) throw new TypeError(`unknown brief fields: ${unknown.join(', ')}`)
   if (missing.length > 0) throw new TypeError(`missing brief fields: ${missing.join(', ')}`)
   if (value.schema !== 1) throw new TypeError('schema must equal 1')
-  if (value.domain !== 'capacity') throw new TypeError('R1 supports only the capacity domain')
+  if (value.domain !== 'capacity' && value.domain !== 'brand') {
+    throw new TypeError('unsupported product decision domain')
+  }
+  const domain = value.domain
+  const domainSpec = productDecisionDomainSpec(domain)
   const policyKey = cleanScalar(value.policyKey, 'policyKey')
-  if (!POLICY_KEY.test(policyKey) || !policyKey.startsWith('capacity.')) {
-    throw new TypeError('policyKey must be a dotted capacity identifier')
+  if (!POLICY_KEY.test(policyKey) || !policyKey.startsWith(`${domain}.`)) {
+    throw new TypeError(`policyKey must be a dotted ${domain} identifier`)
   }
   const slug = cleanScalar(value.slug, 'slug')
   if (!SLUG.test(slug)) throw new TypeError('slug must use lowercase ASCII words')
   let supersedes: string | null = null
   if (value.supersedes !== null) {
     supersedes = cleanScalar(value.supersedes, 'supersedes')
-    if (!DECISION_ID.test(supersedes)) throw new TypeError('supersedes must be a Capacity decision id')
+    const id = supersedes.match(DECISION_ID)
+    if (id?.[1] !== domainSpec.prefix) {
+      throw new TypeError(`supersedes must be a ${domainSpec.title} decision id`)
+    }
   }
   return {
     schema: 1,
-    domain: 'capacity',
+    domain,
     policyKey,
     slug,
     title: cleanScalar(value.title, 'title'),
@@ -198,7 +215,7 @@ export function productDecisionButtons(
   version: number,
 ): NonNullable<TextTurnResult['buttons']> {
   return [
-    [{ text: `✅ Принять и зафиксировать v${version}`, callbackData: `dx:d:${token}:accept` }],
+    [{ text: `✅ Принимаю v${version}`, callbackData: `dx:d:${token}:accept` }],
     [
       { text: '✏️ Изменить', callbackData: `dx:d:${token}:edit` },
       { text: '📊 Нужны данные', callbackData: `dx:d:${token}:data` },
@@ -212,8 +229,9 @@ export function renderProductDecisionCard(input: {
   version: number
   hash: string
 }): string {
+  const domain = productDecisionDomainSpec(input.brief.domain)
   return [
-    `Новая карточка Capacity · версия ${input.version}`,
+    `Новая карточка ${domain.title} · версия ${input.version}`,
     `SHA-256: ${input.hash}`,
     '',
     renderProductDecisionBrief(input.brief),
@@ -262,6 +280,7 @@ export function productDecisionAgentInstruction(input: {
       implementation: ['Не реализовано.'],
     }, null, 2),
     BRIEF_END,
+    'Поддерживаемые домены: capacity для ёмкости и размещения; brand для имени, позиционирования и правил бренда.',
     'Не показывай служебный блок раньше готовности. Вне блока отвечай владельцу обычным русским языком.',
     current,
     `СООБЩЕНИЕ ВЛАДЕЛЬЦА:\n${input.ownerText}`,

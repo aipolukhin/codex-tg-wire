@@ -7,13 +7,16 @@ STVOR Git repository.
 
 ## Owner flow
 
-Start a message with one of the modes:
+The bridge infers product-decision intent from the owner's message and the
+conversation context. These prefixes remain optional hints:
 
 - `Исследуем:` — collect evidence and compare options before recommending a card;
 - `Фиксируем:` — turn an existing owner decision into an exact card;
 - `Меняем:` — replace an accepted card while preserving its history.
 
-Before acceptance, the Codex turn is forced to `read-only` with approvals denied.
+Turns started with an explicit hint are forced to `read-only` with approvals
+denied. Semantically detected decision discussion follows the same read-only
+contract in the agent instructions.
 The agent starts with one complete interpretation, asks at most one material
 question at a time and must not invent rationale or evidence.
 
@@ -21,7 +24,7 @@ When the brief is complete, the bridge validates a strict schema and renders the
 human-readable card itself. Every version has a new random callback token and the
 SHA-256 of the exact rendered brief. The owner can:
 
-- accept and record the displayed version;
+- accept and record the displayed version with the `Принимаю vN` button;
 - close it and send an edit;
 - request more data;
 - reject it.
@@ -37,8 +40,8 @@ brief version and SHA-256. The Git writer:
 
 1. takes a repository lock and refuses a dirty canonical worktree;
 2. validates the replacement chain for `Меняем`;
-3. allocates the next `PD-CAP-####` ID;
-4. writes the card and regenerates the Capacity index;
+3. allocates the next domain ID (`PD-CAP-####` or `PD-BRD-####`);
+4. writes the card and regenerates its domain index;
 5. runs the product-decision validator and `git diff --check`;
 6. creates one scoped commit and, when configured, pushes it.
 
@@ -47,8 +50,9 @@ the next acceptance attempt finds that exact card and retries only the push. The
 first acceptance provenance is retained. Acceptance never changes application
 code, runtime configuration or a live service.
 
-R1 intentionally supports only the `capacity` domain. Product Home and broader
-domain coverage are later product milestones.
+R1 supports `capacity` and `brand`. Product Home exposes both alongside the
+remaining registry domains; durable capture of those remaining domains is a
+later product milestone.
 
 ## Configuration
 

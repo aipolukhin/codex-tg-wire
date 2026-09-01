@@ -59,6 +59,24 @@ const brief: ProductDecisionBrief = {
   implementation: ['Не реализовано.'],
 }
 
+const brandBrief: ProductDecisionBrief = {
+  schema: 1,
+  domain: 'brand',
+  policyKey: 'brand.public_service_name',
+  slug: 'public-service-name',
+  title: 'Публичное имя VPN-сервиса',
+  supersedes: null,
+  decision: 'Публичное имя сервиса — STVOR / STVOR VPN / СТВОР / СТВОР VPN.',
+  boundaries: ['Рабочее имя репозитория остаётся vpn-infra.'],
+  reason: 'Имя связывает навигацию, точность и управляемый проход.',
+  alternatives: ['Whynaut.', 'Продолжить поиск имени.'],
+  evidence: ['Решение владельца в Telegram.'],
+  affected: ['public name', 'customer surfaces'],
+  verification: 'Новые публичные поверхности используют имя STVOR.',
+  reviewAt: null,
+  implementation: ['Не проверено.'],
+}
+
 function operation(updateId: number, text: string): TextTurnOperation {
   return {
     operationKey: `telegram:bot:${updateId}:turn`,
@@ -122,16 +140,19 @@ function git(cwd: string, args: string[]): string {
 
 function createRegistry(repository: string): void {
   mkdirSync(join(repository, 'docs', 'product', 'capacity'), { recursive: true })
+  mkdirSync(join(repository, 'docs', 'product', 'brand'), { recursive: true })
   mkdirSync(join(repository, 'scripts'), { recursive: true })
   writeFileSync(join(repository, 'docs', 'product', 'capacity', 'README.md'), '# Capacity\n', 'utf8')
+  writeFileSync(join(repository, 'docs', 'product', 'brand', 'README.md'), '# Brand\n', 'utf8')
   writeFileSync(join(repository, 'scripts', 'product_decisions.py'), [
     'from pathlib import Path',
     'import sys',
     'root = Path(__file__).resolve().parents[1]',
-    'index = root / "docs/product/capacity/README.md"',
     'if sys.argv[1] == "index":',
-    '    cards = sorted((root / "docs/product/capacity").glob("PD-CAP-*.md"))',
-    '    index.write_text("# Capacity\\n" + "".join(f"- [{p.stem}]({p.name})\\n" for p in cards))',
+    '    for domain, prefix, title in [("capacity", "CAP", "Capacity"), ("brand", "BRD", "Brand")]:',
+    '        index = root / f"docs/product/{domain}/README.md"',
+    '        cards = sorted((root / f"docs/product/{domain}").glob(f"PD-{prefix}-*.md"))',
+    '        index.write_text(f"# {title}\\n" + "".join(f"- [{p.stem}]({p.name})\\n" for p in cards))',
     'elif sys.argv[1] != "check":',
     '    raise SystemExit(2)',
   ].join('\n'), 'utf8')
@@ -232,12 +253,31 @@ describe('R1 durable versions and acceptance', () => {
     })
     expect(card.finalText).toContain('версия 1')
     expect(card.finalText).toContain('SHA-256:')
-    expect(card.buttons?.[0]?.[0]?.text).toBe('✅ Принять и зафиксировать v1')
+    expect(card.buttons?.[0]?.[0]?.text).toBe('✅ Принимаю v1')
 
     const result = await coordinator.runTextTurn(operation(2, 'Принимаю v1.'))
     expect(result.finalText).toContain('PD-CAP-0001')
     expect(writer.calls).toBe(1)
     expect(delegate.calls).toHaveLength(1)
+  })
+
+  test('captures a complete Brand decision from natural language without requiring a prefix', async () => {
+    const delegate = new FakeCoordinator()
+    delegate.responses = [machineBrief(brandBrief)]
+    const acceptance = new ProductDecisionAcceptanceService(decisions, new FakeWriter(), () => NOW)
+    const coordinator = new ProductDecisionSessionCoordinator(delegate, decisions, acceptance, () => NOW)
+
+    const card = await coordinator.runTextTurn(operation(
+      11,
+      'Новое имя сервиса STVOR, рабочее имя репозитория vpn-infra оставляем. Фиксируем.',
+    ))
+
+    expect(delegate.calls).toHaveLength(1)
+    expect(delegate.calls[0]?.trustedSettingsOverride).toBeUndefined()
+    expect(card.finalText).toContain('Новая карточка Brand · версия 1')
+    expect(card.finalText).toContain('Публичное имя VPN-сервиса')
+    expect(card.buttons?.[0]?.[0]?.text).toBe('✅ Принимаю v1')
+    expect(decisions.getOpenFlow('bot', '7001', 'razvilka')).toMatchObject({ mode: 'fix' })
   })
 
   test('keeps the exact version active after a failed write and allows a safe retry', () => {
@@ -368,5 +408,33 @@ describe('R1 canonical Git writer', () => {
     const card = readFileSync(join(repository, 'docs/product/capacity/PD-CAP-0001-server-user-slots.md'), 'utf8')
     expect(card).toContain('telegram_acceptance_callback_query_id: "callback:first"')
     expect(card).not.toContain('callback:second')
+  })
+
+  test('writes Brand decisions with the BRD sequence into the Brand domain', () => {
+    const repository = join(root, 'brand-vpn-infra')
+    createRegistry(repository)
+    const flow = decisions.createFlow({
+      sourceOperationKey: 'source-brand', botId: 'bot', chatId: '7001', projectId: 'razvilka',
+      mode: 'fix', sourceUpdateId: '90', sourceMessageId: '190',
+      threadId: 'thread-brand', turnId: 'turn-brand', nowMs: NOW,
+    })
+    const stored = decisions.storeDraft({
+      flowId: flow.id, turnId: 'turn-brand', brief: brandBrief,
+      briefSha256: productDecisionHash(brandBrief), nowMs: NOW,
+    })
+    const began = decisions.beginAcceptance({
+      token: stored.token, chatId: '7001', operationKey: 'brand-accept',
+      acceptanceUpdateId: 'telegram:91', acceptanceMessageId: '291',
+      acceptanceCallbackQueryId: 'callback:91', nowMs: NOW,
+    })
+    if (began.flow === null || began.draft === null) throw new Error('acceptance did not start')
+
+    const result = new GitProductDecisionWriter({ repositoryPath: repository, push: false, now: () => NOW })
+      .write(began.flow, began.draft)
+
+    expect(result.decisionId).toBe('PD-BRD-0001')
+    expect(result.path).toBe(join(repository, 'docs/product/brand/PD-BRD-0001-public-service-name.md'))
+    expect(readFileSync(result.path, 'utf8')).toContain('policy_key: brand.public_service_name')
+    expect(readFileSync(join(repository, 'docs/product/brand/README.md'), 'utf8')).toContain('PD-BRD-0001')
   })
 })

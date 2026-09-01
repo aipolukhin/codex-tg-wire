@@ -238,12 +238,12 @@ describe('ProductDecisionRegistry', () => {
     expect((await registry.list({ query: 'возврат' })).decisions).toHaveLength(0)
   })
 
-  test('returns an empty six-domain home when Git has no accepted cards', async () => {
+  test('returns an empty seven-domain home when Git has no accepted cards', async () => {
     const root = await repository()
     const registry = new ProductDecisionRegistry({ repositoryPath: root })
     const snapshot = await registry.snapshot()
     expect(snapshot.decisions).toEqual([])
-    expect(snapshot.domains).toHaveLength(6)
+    expect(snapshot.domains).toHaveLength(7)
     expect(snapshot.stats).toEqual({ active: 0, reviewDue: 0, superseded: 0 })
   })
 })

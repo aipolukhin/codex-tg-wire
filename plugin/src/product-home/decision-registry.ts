@@ -6,6 +6,7 @@ import { JSON_SCHEMA, load as loadYaml } from 'js-yaml'
 
 export const PRODUCT_HOME_DOMAINS = [
   { id: 'capacity', title: 'Capacity' },
+  { id: 'brand', title: 'Brand' },
   { id: 'commercial', title: 'Commercial' },
   { id: 'lifecycle', title: 'Lifecycle' },
   { id: 'customer-experience', title: 'Customer experience' },

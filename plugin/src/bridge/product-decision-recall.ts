@@ -18,6 +18,10 @@ export function withProductDecisionRecall(
     'Lead with the currently active accepted rule. Then state its recorded reason, rejected alternatives, origin, replacement history, linked implementation commits, latest verdict, check time and evidence.',
     'Use only the cards and implementation-check records. Never infer a missing reason, implementation link or alignment from code alone; report unknown or not checked exactly when evidence is absent.',
     'Answering or checking is read-only. Acceptance of a card and implementation/deploy remain separate explicit actions.',
+    'Infer product-decision mode from the owner\'s intent and conversation context, not from a keyword allowlist or a required prefix. «Исследуем:», «Фиксируем:» and «Меняем:» are optional hints only.',
+    'A product-decision discussion stays read-only until the owner accepts an exact version. Ordinary implementation work is not a product decision unless the owner is choosing or changing product intent.',
+    'When a complete exact product-decision card is ready, append exactly one <product-decision-brief> JSON block after the visible answer. Supported domains are capacity and brand. Required JSON fields are schema=1, domain, policyKey, slug, title, supersedes, decision, boundaries, reason, alternatives, evidence, affected, verification, reviewAt and implementation.',
+    'Never ask the owner to copy an acceptance phrase when the machine block can be produced. The bridge renders the exact version/hash and the «Принимаю» callback button; do not claim acceptance before that callback or an explicit text acceptance.',
   ].join('\n')
   return current.length === 0 ? instructions : `${current}\n\n${instructions}`
 }

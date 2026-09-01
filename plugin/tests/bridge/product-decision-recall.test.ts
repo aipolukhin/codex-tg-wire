@@ -9,6 +9,9 @@ describe('withProductDecisionRecall', () => {
     expect(once).toContain('/srv/vpn-infra/docs/product/implementation-checks/')
     expect(once).toContain('resolve the complete policy_key chain')
     expect(once).toContain('Never infer a missing reason')
+    expect(once).toContain('intent and conversation context')
+    expect(once).toContain('<product-decision-brief>')
+    expect(once).toContain('«Принимаю» callback button')
     expect(withProductDecisionRecall(once, '/different/path')).toBe(once)
   })
 

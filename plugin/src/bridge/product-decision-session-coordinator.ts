@@ -52,7 +52,50 @@ export class ProductDecisionSessionCoordinator implements SessionCoordinator {
       if (acceptedVersion !== null) return this.acceptByText(operation, flow, acceptedVersion)
     }
 
-    if (mode === null && flow === null) return this.delegate.runTextTurn(operation)
+    if (mode === null && flow === null) {
+      const semanticTurn = await this.delegate.runTextTurn(operation)
+      const parsed = parseProductDecisionResult(semanticTurn.finalText)
+      if (parsed.brief === null) {
+        if (parsed.error === null) return semanticTurn
+        const { buttons: _buttons, ...plainTurn } = semanticTurn
+        return {
+          ...plainTurn,
+          finalText: `${parsed.visibleText}\n\n⚠️ Карточка не показана: ${parsed.error}.`.trim(),
+          presentation: 'product_decision',
+        }
+      }
+      flow = this.decisions.createFlow({
+        sourceOperationKey: operation.operationKey,
+        botId: operation.botId,
+        chatId: operation.chatId,
+        projectId: operation.projectId,
+        mode: parsed.brief.supersedes === null ? 'fix' : 'change',
+        sourceUpdateId: String(operation.updateId),
+        sourceMessageId: operation.sourceMessageId === undefined
+          ? 'unknown'
+          : String(operation.sourceMessageId),
+        threadId: semanticTurn.threadId,
+        turnId: semanticTurn.turnId,
+        nowMs: this.now(),
+      })
+      const draft = this.decisions.storeDraft({
+        flowId: flow.id,
+        turnId: semanticTurn.turnId,
+        brief: parsed.brief,
+        briefSha256: productDecisionHash(parsed.brief),
+        nowMs: this.now(),
+      })
+      return {
+        ...semanticTurn,
+        finalText: renderProductDecisionCard({
+          brief: draft.brief,
+          version: draft.version,
+          hash: draft.briefSha256,
+        }),
+        buttons: productDecisionButtons(draft.token, draft.version),
+        presentation: 'product_decision',
+      }
+    }
     if (flow?.state === 'ACCEPTING') {
       return {
         threadId: flow.threadId,

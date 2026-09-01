@@ -163,6 +163,22 @@ export async function bootstrapDurableBridgeService(
     [...config.telegram.allowedUserIds, ...config.telegram.allowedChatIds],
     options.logger ?? { info() {}, warn() {} },
   )
+  if (config.productHome.enabled && config.productHome.publicUrl !== undefined) {
+    for (const chatId of ownerPrivateChatIds(config.telegram.allowedUserIds)) {
+      const numericChatId = Number(chatId)
+      if (!Number.isSafeInteger(numericChatId)) {
+        throw new TypeError('Product Home owner chat id is outside Telegram safe integer range')
+      }
+      await bot.api.setChatMenuButton({
+        chat_id: numericChatId,
+        menu_button: {
+          type: 'web_app',
+          text: 'Product Home',
+          web_app: { url: config.productHome.publicUrl },
+        },
+      })
+    }
+  }
 
   let database: Database | undefined
   let codexClient: CodexAppServerClient | undefined
@@ -270,6 +286,9 @@ export async function bootstrapDurableBridgeService(
               push: config.productDecisions.push,
             },
           }
+        : {}),
+      ...(config.productHome.enabled && config.productHome.publicUrl !== undefined
+        ? { productHomeUrl: config.productHome.publicUrl }
         : {}),
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },

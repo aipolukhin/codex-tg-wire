@@ -282,6 +282,31 @@ describe('M6.5 personal commands', () => {
     expect(settings.getProjectSettings('primary', '7001', 'workspace')?.guidedPlanEnabled).toBeTrue()
   })
 
+  test('opens Product Home as a Telegram Web App when configured', async () => {
+    const productHome = new PersonalAlphaCommands(
+      new SqliteSessionRepository(database),
+      backend,
+      new SqliteOutboxRepository(database),
+      settings,
+      {
+        projects: [{ id: 'workspace', cwd: project }],
+        defaultProjectId: 'workspace',
+        productHomeUrl: 'https://example.test/product-home/',
+      },
+    )
+    expect(await productHome.handleCommand(command('home'))).toEqual({
+      text: 'Product Home открывает принятые решения STVOR, поиск и историю происхождения.',
+      webApp: {
+        text: '🏠 Открыть Product Home',
+        url: 'https://example.test/product-home/',
+      },
+    })
+    expect((await productHome.handleCommand(command('start'))).webApp).toEqual({
+      text: '🏠 Product Home',
+      url: 'https://example.test/product-home/',
+    })
+  })
+
   test('discovers, attaches and hands native sessions back to local Codex', async () => {
     expect((await commands.handleCommand(command('sessions'))).text).toContain('native-1')
     expect((await commands.handleCommand(command('attach', 'native-1'))).text).toContain('подключён')

@@ -6,6 +6,7 @@ type PersonalCommandSpec = CommandSpec & { command: PersonalAlphaCommandName }
 /** Native Telegram slash menu for the standalone Codex runtime. */
 export const PERSONAL_ALPHA_BOT_COMMANDS = [
   { command: 'start', description: 'открыть онбординг и основные действия' },
+  { command: 'home', description: 'открыть Product Home' },
   { command: 'settings', description: 'модель, effort, доступ и проект' },
   { command: 'status', description: 'текущий thread, turn и расход контекста' },
   { command: 'new', description: 'начать новый Codex thread' },

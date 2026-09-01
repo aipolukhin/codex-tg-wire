@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+git_dir=/opt/razvilka-product-home/repository.git
+work_tree=/opt/razvilka-product-home/repository
+
+while read -r old_revision new_revision ref_name; do
+  if [ "$ref_name" != "refs/heads/main" ]; then
+    continue
+  fi
+  if [ "$new_revision" = "0000000000000000000000000000000000000000" ]; then
+    echo "refusing deletion of Product Home main" >&2
+    exit 1
+  fi
+  umask 027
+  mkdir -p "$work_tree"
+  git --git-dir="$git_dir" --work-tree="$work_tree" checkout -f main
+  chown -R root:razvilka-product-home "$work_tree"
+  find "$work_tree" -type d -exec chmod 0750 {} \;
+  find "$work_tree" -type f -exec chmod 0640 {} \;
+done

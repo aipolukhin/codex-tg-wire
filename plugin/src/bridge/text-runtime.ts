@@ -116,6 +116,7 @@ export interface DurableTextRuntimeOptions {
   voiceTranscriber?: VoiceTranscriber
   voiceCredentials?: VoiceCredentialControl
   productDecisions?: ProductDecisionWriterOptions
+  productHomeUrl?: string
   bridgeVersion?: string
   codexVersion?: string
   retention?: {
@@ -480,6 +481,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(options.codexVersion === undefined ? {} : { codexVersion: options.codexVersion }),
     ...(outboundMediaStore === undefined ? {} : { outboundMediaStore }),
     ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
+    ...(options.productHomeUrl === undefined ? {} : { productHomeUrl: options.productHomeUrl }),
   })
   const gitWorkspace = new GitWorkspaceControl(projectCatalog, { turnDiffProvider: backend })
   const standardFeatureInteractions = new M65InteractionHandler(

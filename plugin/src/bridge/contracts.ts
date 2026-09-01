@@ -91,6 +91,7 @@ export type PersonalAlphaCommandName =
   | 'file'
   | 'review'
   | 'plan'
+  | 'home'
 
 export interface IncomingCommand {
   chatId: string
@@ -200,6 +201,7 @@ export interface CommandOperation {
 export interface CommandResult {
   text: string
   buttons?: readonly (readonly CommandButton[])[]
+  webApp?: { text: string; url: string }
   sensitiveInput?: boolean
   deleteSourceMessage?: boolean
 }

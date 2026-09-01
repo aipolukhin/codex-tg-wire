@@ -1080,6 +1080,33 @@ describe('DurableTelegramTextGateway outbound', () => {
     await expect(gateway.prepareDelivery(unsafe)).rejects.toThrow('inline keyboard URL is invalid')
   })
 
+  test('preserves a validated Telegram Web App button', async () => {
+    const delivery = gateway.buildCommandDelivery({
+      update: acceptedUpdate({
+        message: {
+          message_id: 1084,
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7001, is_bot: false },
+          text: '/home',
+        },
+      }),
+      sourceKey: 'command:home',
+      command: { chatId: '7001', projectId: 'workspace', name: 'home', args: '' },
+      result: {
+        text: 'Product Home',
+        webApp: { text: 'Открыть', url: 'https://example.com/product-home/' },
+      },
+      nowMs: NOW,
+    })
+    outbox.enqueue(delivery)
+    const lease = outbox.claimNext({ workerId: 'sender', nowMs: NOW, leaseDurationMs: 60_000 })!
+    const prepared = await gateway.prepareDelivery(lease)
+    if (prepared.kind !== 'send_text') throw new Error('expected text delivery')
+    expect(prepared.options.reply_markup?.inline_keyboard).toEqual([[
+      { text: 'Открыть', web_app: { url: 'https://example.com/product-home/' } },
+    ]])
+  })
+
   test('requires a valid Telegram message_id as delivery proof', async () => {
     api.messageId = 0
     const prepared = await gateway.prepareDelivery(claimedJob('hello'))

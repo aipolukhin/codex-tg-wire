@@ -69,6 +69,10 @@
     "remote": "origin",
     "push": true
   },
+  "productHome": {
+    "enabled": false,
+    "publicUrl": "https://example.com/product-home/"
+  },
   "ux": {
     "enabled": true,
     "chatStatusMessages": false,

@@ -106,6 +106,7 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.codex.turnTimeoutMs).toBe(0)
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
     expect(config.productDecisions).toEqual({ enabled: false, remote: 'origin', push: true })
+    expect(config.productHome).toEqual({ enabled: false })
     expect(config.ux.chatStatusMessages).toBeFalse()
     expect(config.ux.typingIndicator).toBeTrue()
     expect(config.ux.receivedReaction).toBeTrue()
@@ -273,6 +274,33 @@ describe('loadBridgeServiceConfig', () => {
     expect(() => loadBridgeRuntimeConfig({
       env: { DASHI_CODEX_BRIDGE_CONFIG: invalid.path },
     })).toThrow('is required when productDecisions.enabled is true')
+  })
+
+  test('requires a safe HTTPS Product Home URL when enabled', () => {
+    const valid = fixture({
+      productHome: {
+        enabled: true,
+        publicUrl: 'https://agent.example.test/product-home/',
+      },
+    })
+    expect(loadBridgeRuntimeConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: valid.path },
+    }).productHome).toEqual({
+      enabled: true,
+      publicUrl: 'https://agent.example.test/product-home/',
+    })
+
+    const missing = fixture({ productHome: { enabled: true } })
+    expect(() => loadBridgeRuntimeConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: missing.path },
+    })).toThrow('is required when productHome.enabled is true')
+
+    const unsafe = fixture({
+      productHome: { enabled: true, publicUrl: 'http://example.test/product-home/' },
+    })
+    expect(() => loadBridgeRuntimeConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: unsafe.path },
+    })).toThrow('credential-free HTTPS URL')
   })
 
   test('resolves and validates per-project execution policy', () => {

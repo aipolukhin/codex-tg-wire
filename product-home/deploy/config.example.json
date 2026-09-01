@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 8788,
+  "publicUrl": "https://example.com/product-home/",
+  "staticDirectory": "/opt/razvilka-product-home/current/public",
+  "repositoryPath": "/opt/razvilka-product-home/repository",
+  "telegramTokenFile": "/etc/razvilka-product-home/telegram-token",
+  "allowedUserIds": ["123456789"],
+  "initDataMaxAgeSeconds": 3600
+}

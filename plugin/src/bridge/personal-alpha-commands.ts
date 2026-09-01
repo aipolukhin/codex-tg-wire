@@ -43,6 +43,7 @@ export interface PersonalAlphaCommandsOptions {
   codexVersion?: string
   outboundMediaStore?: DurableOutboundMediaStore
   voiceCredentials?: VoiceCredentialControl
+  productHomeUrl?: string
 }
 
 const PROBLEM_LIST_LIMIT = 10
@@ -109,6 +110,7 @@ export class PersonalAlphaCommands implements CommandHandler {
   private readonly codexVersion: string
   private readonly outboundMediaStore: DurableOutboundMediaStore | undefined
   private readonly voiceCredentials: VoiceCredentialControl | undefined
+  private readonly productHomeUrl: string | undefined
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -131,6 +133,7 @@ export class PersonalAlphaCommands implements CommandHandler {
     this.codexVersion = options.codexVersion ?? 'unknown'
     this.outboundMediaStore = options.outboundMediaStore
     this.voiceCredentials = options.voiceCredentials
+    this.productHomeUrl = options.productHomeUrl
     if (this.projects.resolve(this.defaultProjectId) === null) {
       throw new TypeError(`default project is not configured: ${this.defaultProjectId}`)
     }
@@ -213,6 +216,8 @@ export class PersonalAlphaCommands implements CommandHandler {
         return { text: await this.review(operation) }
       case 'plan':
         return { text: this.planMode(operation) }
+      case 'home':
+        return this.productHome()
     }
   }
 
@@ -266,6 +271,19 @@ export class PersonalAlphaCommands implements CommandHandler {
     return {
       text: lines.join('\n'),
       ...(buttons.length === 0 ? {} : { buttons }),
+      ...(this.productHomeUrl === undefined
+        ? {}
+        : { webApp: { text: '🏠 Product Home', url: this.productHomeUrl } }),
+    }
+  }
+
+  private productHome(): CommandResult {
+    if (this.productHomeUrl === undefined) {
+      return { text: 'Product Home пока не настроен для этого deployment.' }
+    }
+    return {
+      text: 'Product Home открывает принятые решения STVOR, поиск и историю происхождения.',
+      webApp: { text: '🏠 Открыть Product Home', url: this.productHomeUrl },
     }
   }
 

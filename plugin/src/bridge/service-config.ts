@@ -116,6 +116,20 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    productHome: z
+      .object({
+        enabled: z.boolean().default(false),
+        publicUrl: z.string().url().refine((value) => {
+          const parsed = new URL(value)
+          return parsed.protocol === 'https:' &&
+            parsed.username.length === 0 &&
+            parsed.password.length === 0 &&
+            parsed.search.length === 0 &&
+            parsed.hash.length === 0
+        }, 'must be a credential-free HTTPS URL without query or fragment').optional(),
+      })
+      .strict()
+      .default({}),
     ux: z
       .object({
         enabled: z.boolean().default(true),
@@ -214,6 +228,13 @@ export const BridgeConfigFileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['productDecisions', 'repositoryPath'],
         message: 'is required when productDecisions.enabled is true',
+      })
+    }
+    if (config.productHome.enabled && config.productHome.publicUrl === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['productHome', 'publicUrl'],
+        message: 'is required when productHome.enabled is true',
       })
     }
     if (config.ux.heartbeatIntervalMs < config.ux.pollIntervalMs) {

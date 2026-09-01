@@ -107,6 +107,7 @@ export interface TelegramTextApi {
 export type TelegramInlineButton =
   | { text: string; callback_data: string; url?: never }
   | { text: string; url: string; callback_data?: never }
+  | { text: string; web_app: { url: string }; callback_data?: never; url?: never }
 
 export interface TelegramMessageOptions {
   parse_mode?: 'HTML'
@@ -373,14 +374,15 @@ function parseMessageOptions(
       }
       const callbackData = button.callback_data
       const url = button.url
+      const webApp = button.web_app
       const text = redactSecrets(button.text, extraSecrets)
-      if (typeof callbackData === 'string' && url === undefined) {
+      if (typeof callbackData === 'string' && url === undefined && webApp === undefined) {
         if (Buffer.byteLength(callbackData, 'utf8') > 64) {
           throw new TelegramDeliveryPayloadError('inline keyboard callback_data exceeds 64 bytes')
         }
         return { text, callback_data: callbackData }
       }
-      if (typeof url === 'string' && callbackData === undefined) {
+      if (typeof url === 'string' && callbackData === undefined && webApp === undefined) {
         try {
           const parsed = new URL(url)
           if (
@@ -395,6 +397,22 @@ function parseMessageOptions(
           throw new TelegramDeliveryPayloadError('inline keyboard URL is invalid')
         }
         return { text, url }
+      }
+      if (isRecord(webApp) && typeof webApp.url === 'string' && callbackData === undefined && url === undefined) {
+        try {
+          const parsed = new URL(webApp.url)
+          if (
+            webApp.url.length > 4_096 ||
+            parsed.protocol !== 'https:' ||
+            parsed.username.length > 0 ||
+            parsed.password.length > 0
+          ) {
+            throw new Error('unsafe URL')
+          }
+        } catch {
+          throw new TelegramDeliveryPayloadError('inline keyboard Web App URL is invalid')
+        }
+        return { text, web_app: { url: webApp.url } }
       }
       throw new TelegramDeliveryPayloadError('inline keyboard button must have exactly one action')
     })
@@ -973,22 +991,29 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
   }
 
   buildCommandDelivery(input: CommandDelivery): DeliveryJobInput {
+    const keyboard: TelegramInlineButton[][] = input.result.buttons?.map((row) => row.map((button) => (
+      'callbackData' in button
+        ? { text: button.text, callback_data: button.callbackData }
+        : { text: button.text, url: button.url }
+    ))) ?? []
+    if (input.result.webApp !== undefined) {
+      keyboard.unshift([{
+        text: input.result.webApp.text,
+        web_app: { url: input.result.webApp.url },
+      }])
+    }
     return {
       sourceKey: input.sourceKey,
       kind: 'send_text',
       payload: {
         chatId: input.command.chatId,
         text: input.result.text,
-        ...(input.result.buttons === undefined
+        ...(keyboard.length === 0
           ? {}
           : {
               options: {
                 reply_markup: {
-                  inline_keyboard: input.result.buttons.map((row) => row.map((button) => (
-                    'callbackData' in button
-                      ? { text: button.text, callback_data: button.callbackData }
-                      : { text: button.text, url: button.url }
-                  ))),
+                  inline_keyboard: keyboard,
                 },
               },
             }),

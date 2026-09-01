@@ -11,6 +11,7 @@ import type { ProductDecisionAcceptanceService } from './product-decision-accept
 import {
   acceptedProductDecisionVersion,
   parseProductDecisionResult,
+  parseProductDecisionTransition,
   productDecisionAgentInstruction,
   productDecisionButtons,
   productDecisionHash,
@@ -112,9 +113,6 @@ export class ProductDecisionSessionCoordinator implements SessionCoordinator {
       this.decisions.replaceFlow(flow.id, operation.operationKey, this.now())
       flow = null
       previousBrief = null
-    } else if (flow?.state === 'AWAITING_ACCEPTANCE') {
-      this.decisions.invalidateCurrentDraft(flow.id, 'edit', operation.operationKey, this.now())
-      flow = this.decisions.getFlow(flow.id)
     }
 
     const activeMode = mode ?? flow?.mode
@@ -128,11 +126,41 @@ export class ProductDecisionSessionCoordinator implements SessionCoordinator {
         version,
         currentBrief: previousBrief,
         ownerText: operation.text,
+        allowExecutionExit: flow !== null,
       }),
       ...(flow === null ? {} : { preferredThreadId: flow.threadId }),
       trustedSettingsOverride: { sandbox: 'read-only', approvalPolicy: 'never' },
     })
-    const parsed = parseProductDecisionResult(decisionTurn.finalText)
+    const transition = parseProductDecisionTransition(decisionTurn.finalText)
+    if (transition.action === 'execute' && flow !== null) {
+      this.decisions.replaceFlow(flow.id, operation.operationKey, this.now())
+      const { trustedSettingsOverride: _readOnly, ...executionOperation } = operation
+      return this.delegate.runTextTurn({
+        ...executionOperation,
+        preferredThreadId: decisionTurn.threadId,
+      })
+    }
+    if (transition.error !== null) {
+      if (flow !== null) this.decisions.replaceFlow(flow.id, operation.operationKey, this.now())
+      const { buttons: _buttons, ...plainDecisionTurn } = decisionTurn
+      return {
+        ...plainDecisionTurn,
+        finalText: '⚠️ Карточный режим закрыт: не удалось безопасно определить продолжение. Следующее сообщение пойдёт как обычный запрос.',
+        presentation: 'product_decision',
+      }
+    }
+
+    const parsed = parseProductDecisionResult(transition.visibleText)
+    if (parsed.error !== null) {
+      if (flow !== null) this.decisions.replaceFlow(flow.id, operation.operationKey, this.now())
+      const { buttons: _buttons, ...plainDecisionTurn } = decisionTurn
+      return {
+        ...plainDecisionTurn,
+        finalText: `${parsed.visibleText}\n\n⚠️ Некорректная карточка закрыта и не будет перехватывать следующие сообщения.`.trim(),
+        presentation: 'product_decision',
+      }
+    }
+
     if (flow === null) {
       flow = this.decisions.createFlow({
         sourceOperationKey: operation.operationKey,
@@ -149,18 +177,18 @@ export class ProductDecisionSessionCoordinator implements SessionCoordinator {
         nowMs: this.now(),
       })
     } else {
+      if (flow.state === 'AWAITING_ACCEPTANCE') {
+        this.decisions.invalidateCurrentDraft(flow.id, 'edit', operation.operationKey, this.now())
+      }
       this.decisions.updateConversation(flow.id, decisionTurn.threadId, decisionTurn.turnId, this.now())
       flow = this.decisions.getFlow(flow.id) as ProductDecisionFlowRecord
     }
 
     if (parsed.brief === null) {
       const { buttons: _buttons, ...plainDecisionTurn } = decisionTurn
-      const error = parsed.error === null
-        ? ''
-        : `\n\n⚠️ Карточка не показана: ${parsed.error}. Я должен подготовить новую корректную версию.`
       return {
         ...plainDecisionTurn,
-        finalText: `${parsed.visibleText}${error}`.trim(),
+        finalText: parsed.visibleText,
         presentation: 'product_decision',
       }
     }

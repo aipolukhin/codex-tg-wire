@@ -17,6 +17,8 @@ import { ProductDecisionInteractionHandler } from '../../src/bridge/product-deci
 import { ProductDecisionSessionCoordinator } from '../../src/bridge/product-decision-session-coordinator.js'
 import {
   parseProductDecisionResult,
+  parseProductDecisionTransition,
+  productDecisionAgentInstruction,
   productDecisionHash,
   productDecisionMode,
   renderProductDecisionBrief,
@@ -94,6 +96,10 @@ function machineBrief(value: ProductDecisionBrief = brief): string {
   return `Готово.\n\n<product-decision-brief>\n${JSON.stringify(value)}\n</product-decision-brief>`
 }
 
+function executionTransition(): string {
+  return '<product-decision-transition>{"action":"execute"}</product-decision-transition>'
+}
+
 class FakeCoordinator implements SessionCoordinator {
   calls: TextTurnOperation[] = []
   responses: string[] = [machineBrief()]
@@ -128,7 +134,7 @@ class FailOnceWriter extends FakeWriter {
   override write() {
     if (!this.failed) {
       this.failed = true
-      throw new Error('remote rejected the push')
+      throw new Error('fatal: remote https://owner-token@example.invalid rejected /srv/private/vpn-infra')
     }
     return super.write()
   }
@@ -196,6 +202,22 @@ describe('R1 decision brief', () => {
     expect(parsed.brief).toBeNull()
     expect(parsed.error).toContain('placeholder')
     expect(parsed.visibleText).toBe('Готово.')
+  })
+
+  test('uses a semantic execution transition instead of a required owner phrase', () => {
+    const instruction = productDecisionAgentInstruction({
+      mode: 'fix',
+      version: 2,
+      currentBrief: brief,
+      ownerText: 'Вариант подходит, теперь внеси это в работающий бот.',
+      allowExecutionExit: true,
+    })
+    expect(instruction).toContain('по смыслу и контексту')
+    expect(instruction).toContain('без списка ключевых слов')
+    expect(instruction).toContain('<product-decision-transition>')
+    expect(parseProductDecisionTransition(executionTransition())).toMatchObject({
+      action: 'execute', error: null, visibleText: '',
+    })
   })
 })
 
@@ -280,6 +302,93 @@ describe('R1 durable versions and acceptance', () => {
     expect(decisions.getOpenFlow('bot', '7001', 'razvilka')).toMatchObject({ mode: 'fix' })
   })
 
+  test('ends an open discussion and executes the same owner request under normal project policy', async () => {
+    const delegate = new FakeCoordinator()
+    delegate.responses = [executionTransition(), 'Изменения внесены и проверены.']
+    const flow = decisions.createFlow({
+      sourceOperationKey: 'source-execute', botId: 'bot', chatId: '7001', projectId: 'razvilka',
+      mode: 'fix', sourceUpdateId: '12', sourceMessageId: '112',
+      threadId: 'thread-execute', turnId: 'turn-draft', nowMs: NOW,
+    })
+    decisions.storeDraft({
+      flowId: flow.id, turnId: 'turn-draft', brief,
+      briefSha256: productDecisionHash(brief), nowMs: NOW,
+    })
+    const coordinator = new ProductDecisionSessionCoordinator(
+      delegate,
+      decisions,
+      new ProductDecisionAcceptanceService(decisions, new FakeWriter(), () => NOW),
+      () => NOW,
+    )
+    const ownerText = 'Вариант согласован. Внеси эти изменения в бот и проверь их.'
+
+    const result = await coordinator.runTextTurn(operation(12, ownerText))
+
+    expect(result.finalText).toBe('Изменения внесены и проверены.')
+    expect(delegate.calls).toHaveLength(2)
+    expect(delegate.calls[0]).toMatchObject({
+      preferredThreadId: 'thread-execute',
+      trustedSettingsOverride: { sandbox: 'read-only', approvalPolicy: 'never' },
+    })
+    expect(delegate.calls[0]?.text).toContain(ownerText)
+    expect(delegate.calls[1]).toMatchObject({ text: ownerText, preferredThreadId: 'thread-execute' })
+    expect(delegate.calls[1]?.trustedSettingsOverride).toBeUndefined()
+    expect(decisions.getOpenFlow('bot', '7001', 'razvilka')).toBeNull()
+    expect(decisions.getFlow(flow.id)?.state).toBe('REJECTED')
+  })
+
+  test('does not let a rejected card capture the next ordinary message', async () => {
+    const delegate = new FakeCoordinator()
+    delegate.responses = ['Обычный ответ вне карточного режима.']
+    const flow = decisions.createFlow({
+      sourceOperationKey: 'source-reject', botId: 'bot', chatId: '7001', projectId: 'razvilka',
+      mode: 'fix', sourceUpdateId: '13', sourceMessageId: '113',
+      threadId: 'thread-reject', turnId: 'turn-reject', nowMs: NOW,
+    })
+    const draft = decisions.storeDraft({
+      flowId: flow.id, turnId: 'turn-reject', brief,
+      briefSha256: productDecisionHash(brief), nowMs: NOW,
+    })
+    decisions.beginDraftAction({
+      token: draft.token, chatId: '7001', action: 'reject',
+      operationKey: 'reject-card', nowMs: NOW + 1,
+    })
+    const coordinator = new ProductDecisionSessionCoordinator(
+      delegate,
+      decisions,
+      new ProductDecisionAcceptanceService(decisions, new FakeWriter(), () => NOW),
+      () => NOW,
+    )
+
+    const result = await coordinator.runTextTurn(operation(13, 'Теперь обычный вопрос про репозиторий.'))
+
+    expect(result.finalText).toBe('Обычный ответ вне карточного режима.')
+    expect(delegate.calls).toHaveLength(1)
+    expect(delegate.calls[0]?.trustedSettingsOverride).toBeUndefined()
+  })
+
+  test('closes a malformed card so the following message is not trapped', async () => {
+    const delegate = new FakeCoordinator()
+    delegate.responses = [
+      machineBrief({ ...brief, reason: '<внутренняя причина>' }),
+      'Следующее сообщение обработано обычно.',
+    ]
+    const coordinator = new ProductDecisionSessionCoordinator(
+      delegate,
+      decisions,
+      new ProductDecisionAcceptanceService(decisions, new FakeWriter(), () => NOW),
+      () => NOW,
+    )
+
+    const broken = await coordinator.runTextTurn(operation(14, 'Фиксируем: подготовь карточку.'))
+    expect(broken.finalText).toContain('Некорректная карточка закрыта')
+    expect(decisions.getOpenFlow('bot', '7001', 'razvilka')).toBeNull()
+
+    const next = await coordinator.runTextTurn(operation(15, 'А теперь ответь на обычный вопрос.'))
+    expect(next.finalText).toBe('Следующее сообщение обработано обычно.')
+    expect(delegate.calls[1]?.trustedSettingsOverride).toBeUndefined()
+  })
+
   test('keeps the exact version active after a failed write and allows a safe retry', () => {
     const flow = decisions.createFlow({
       sourceOperationKey: 'source-retry', botId: 'bot', chatId: '7001', projectId: 'razvilka',
@@ -298,7 +407,14 @@ describe('R1 durable versions and acceptance', () => {
       acceptanceCallbackQueryId: 'cb-failed',
     })
     expect(first.outcome).toBe('failed')
-    expect(decisions.getDraftByToken(draft.token)).toMatchObject({ state: 'ACTIVE' })
+    if (first.outcome !== 'failed') throw new Error('write failure was not preserved')
+    expect(first.error).toBe('Не удалось зафиксировать карточку в Git. Можно повторить принятие.')
+    expect(first.error).not.toContain('owner-token')
+    expect(first.error).not.toContain('/srv/private')
+    expect(decisions.getDraftByToken(draft.token)).toMatchObject({
+      state: 'ACTIVE',
+      lastError: expect.stringContaining('owner-token'),
+    })
 
     const retry = acceptance.accept({
       token: draft.token, chatId: '7001', operationKey: 'accept-retry',
@@ -334,6 +450,40 @@ describe('R1 durable versions and acceptance', () => {
       kind: 'edit', payload: { chatId: '7001', messageId: 204, text: expect.stringContaining('PD-CAP-0001') },
     })
     expect(outbox.getBySourceKey('callback-op:decision-ack')).toMatchObject({ kind: 'reaction' })
+  })
+
+  test('decision callback never exposes an internal Git failure', async () => {
+    const flow = decisions.createFlow({
+      sourceOperationKey: 'source-private-error', botId: 'bot', chatId: '7001', projectId: 'razvilka',
+      mode: 'fix', sourceUpdateId: '16', sourceMessageId: '116',
+      threadId: 'thread-private-error', turnId: 'turn-private-error', nowMs: NOW,
+    })
+    const draft = decisions.storeDraft({
+      flowId: flow.id, turnId: 'turn-private-error', brief,
+      briefSha256: productDecisionHash(brief), nowMs: NOW,
+    })
+    const outbox = new SqliteOutboxRepository(database)
+    const legacy: InteractionHandler = { handleInteraction: async () => ({ deliveryJobId: null }) }
+    const handler = new ProductDecisionInteractionHandler(
+      legacy,
+      decisions,
+      new ProductDecisionAcceptanceService(decisions, new FailOnceWriter(), () => NOW),
+      outbox,
+      () => NOW,
+    )
+
+    await handler.handleInteraction({
+      operationKey: 'callback-private-error', botId: 'bot', inboxUpdateId: 16, updateId: 16,
+      response: {
+        kind: 'feature_action', feature: 'decision', chatId: '7001', token: draft.token,
+        action: 'accept', callbackQueryId: 'cb-private-error', callbackMessageId: 216,
+      },
+    })
+
+    const rendered = JSON.stringify(outbox.getBySourceKey('callback-private-error:decision-error')?.payload)
+    expect(rendered).toContain('Не удалось зафиксировать карточку в Git')
+    expect(rendered).not.toContain('owner-token')
+    expect(rendered).not.toContain('/srv/private')
   })
 })
 

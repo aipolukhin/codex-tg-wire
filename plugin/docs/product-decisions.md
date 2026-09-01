@@ -20,6 +20,13 @@ contract in the agent instructions.
 The agent starts with one complete interpretation, asks at most one material
 question at a time and must not invent rationale or evidence.
 
+An open decision flow is not a sticky execution gate. When the owner explicitly
+asks to implement the discussed option, a read-only semantic handoff closes that
+flow and the same Telegram update continues immediately under the ordinary
+project execution policy. This transition is inferred from intent; it has no
+required phrase or keyword allowlist. Rejected and malformed cards close their
+flow, so later messages are routed normally.
+
 When the brief is complete, the bridge validates a strict schema and renders the
 human-readable card itself. Every version has a new random callback token and the
 SHA-256 of the exact rendered brief. The owner can:
@@ -48,7 +55,9 @@ brief version and SHA-256. The Git writer:
 Repeated callbacks return the same decision. If commit succeeds and push fails,
 the next acceptance attempt finds that exact card and retries only the push. The
 first acceptance provenance is retained. Acceptance never changes application
-code, runtime configuration or a live service.
+code, runtime configuration or a live service. Git diagnostics stay in durable
+operator state; Telegram receives only a safe retryable error without commands,
+paths, remotes or transport detail.
 
 R1 supports `capacity` and `brand`. Product Home exposes both alongside the
 remaining registry domains; durable capture of those remaining domains is a

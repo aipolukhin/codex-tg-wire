@@ -20,6 +20,9 @@ export function withProductDecisionRecall(
     'Answering or checking is read-only. Acceptance of a card and implementation/deploy remain separate explicit actions.',
     'Infer product-decision mode from the owner\'s intent and conversation context, not from a keyword allowlist or a required prefix. «Исследуем:», «Фиксируем:» and «Меняем:» are optional hints only.',
     'A product-decision discussion stays read-only until the owner accepts an exact version. Ordinary implementation work is not a product decision unless the owner is choosing or changing product intent.',
+    'When the owner explicitly asks to implement the discussed option, end product-decision discussion mode immediately and execute under the ordinary project policy. Do not require a special phrase.',
+    'A rejected or invalid decision card is terminal for that flow and must not capture later messages.',
+    'Never expose internal Git commands, paths, remotes or transport errors to the owner; keep diagnostic detail in durable operator state and return only a retryable public error.',
     'When a complete exact product-decision card is ready, append exactly one <product-decision-brief> JSON block after the visible answer. Supported domains are capacity and brand. Required JSON fields are schema=1, domain, policyKey, slug, title, supersedes, decision, boundaries, reason, alternatives, evidence, affected, verification, reviewAt and implementation.',
     'Never ask the owner to copy an acceptance phrase when the machine block can be produced. The bridge renders the exact version/hash and the «Принимаю» callback button; do not claim acceptance before that callback or an explicit text acceptance.',
   ].join('\n')

@@ -11,6 +11,9 @@ Claude package version is not the codex-tg-wire release version.
 - Product-decision capture now follows conversational intent instead of requiring
   a prefix, supports Brand cards with `PD-BRD-####` IDs, and presents the exact
   version through the `Принимаю vN` callback button.
+- Explicit implementation intent now exits an open decision discussion in the
+  same Telegram turn, rejected or malformed cards no longer capture later
+  messages, and Git failures are redacted from owner-facing replies.
 
 ### Installer
 

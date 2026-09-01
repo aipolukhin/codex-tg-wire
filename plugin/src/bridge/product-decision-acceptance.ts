@@ -13,6 +13,8 @@ export type ProductDecisionAcceptanceOutcome =
   | { outcome: 'closed' | 'not_found'; flow: ProductDecisionFlowRecord | null; draft: ProductDecisionDraftRecord | null }
   | { outcome: 'failed'; flow: ProductDecisionFlowRecord; draft: ProductDecisionDraftRecord; error: string }
 
+const OWNER_WRITE_ERROR = 'Не удалось зафиксировать карточку в Git. Можно повторить принятие.'
+
 function safeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : 'Неизвестная ошибка записи'
   return raw.trim().split('\n')[0]?.slice(0, 500) || 'Неизвестная ошибка записи'
@@ -69,7 +71,7 @@ export class ProductDecisionAcceptanceService {
     } catch (error) {
       const message = safeError(error)
       const failed = this.decisions.failAcceptance(began.draft.id, message, this.now())
-      return { outcome: 'failed', flow: began.flow, draft: failed, error: message }
+      return { outcome: 'failed', flow: began.flow, draft: failed, error: OWNER_WRITE_ERROR }
     }
   }
 }

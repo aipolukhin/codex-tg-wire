@@ -38,8 +38,16 @@ export interface ParsedProductDecisionResult {
   error: string | null
 }
 
+export interface ParsedProductDecisionTransition {
+  visibleText: string
+  action: 'execute' | null
+  error: string | null
+}
+
 const BRIEF_START = '<product-decision-brief>'
 const BRIEF_END = '</product-decision-brief>'
+const TRANSITION_START = '<product-decision-transition>'
+const TRANSITION_END = '</product-decision-transition>'
 const POLICY_KEY = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const DECISION_ID = /^PD-([A-Z]{3})-\d{4}$/
@@ -170,6 +178,31 @@ export function parseProductDecisionResult(text: string): ParsedProductDecisionR
   }
 }
 
+export function parseProductDecisionTransition(text: string): ParsedProductDecisionTransition {
+  const start = text.indexOf(TRANSITION_START)
+  const end = text.indexOf(TRANSITION_END)
+  if (start < 0 && end < 0) return { visibleText: text, action: null, error: null }
+  if (
+    start < 0 ||
+    end < start ||
+    text.indexOf(TRANSITION_START, start + TRANSITION_START.length) >= 0 ||
+    text.indexOf(TRANSITION_END, end + TRANSITION_END.length) >= 0
+  ) {
+    return { visibleText: '', action: null, error: 'Некорректный переход режима' }
+  }
+  const raw = text.slice(start + TRANSITION_START.length, end).trim()
+  const visibleText = `${text.slice(0, start)}${text.slice(end + TRANSITION_END.length)}`.trim()
+  try {
+    const value = JSON.parse(raw) as unknown
+    if (!isRecord(value) || Object.keys(value).length !== 1 || value.action !== 'execute') {
+      throw new TypeError('unsupported product decision transition')
+    }
+    return { visibleText, action: 'execute', error: null }
+  } catch {
+    return { visibleText, action: null, error: 'Некорректный переход режима' }
+  }
+}
+
 function bullets(values: readonly string[]): string {
   return values.map((value) => `- ${value}`).join('\n')
 }
@@ -245,14 +278,26 @@ export function productDecisionAgentInstruction(input: {
   version: number
   currentBrief: ProductDecisionBrief | null
   ownerText: string
+  allowExecutionExit?: boolean
 }): string {
   const mode = input.mode === 'research' ? 'Исследуем' : input.mode === 'fix' ? 'Фиксируем' : 'Меняем'
   const current = input.currentBrief === null
     ? 'Нет предыдущей версии карточки.'
     : `Текущая версия карточки:\n${JSON.stringify(input.currentBrief, null, 2)}`
+  const executionExit = input.allowExecutionExit === true
+    ? [
+        'Сначала определи намерение владельца по смыслу и контексту, без списка ключевых слов и без обязательной речевой формулы.',
+        'Если владелец теперь явно просит внедрить, исправить или иначе выполнить уже обсуждённый вариант, не продолжай карточный режим и ничего не реализуй внутри этого read-only turn. Верни только этот служебный блок:',
+        TRANSITION_START,
+        JSON.stringify({ action: 'execute' }),
+        TRANSITION_END,
+        'Во всех остальных случаях продолжай обсуждение решения по правилам ниже и не показывай блок перехода.',
+      ].join('\n\n')
+    : 'Это начало или продолжение продуктового обсуждения; служебный переход в execution-mode сейчас не используется.'
   return [
     'PRODUCT DECISION R1 — READ-ONLY DISCUSSION.',
     `Режим: ${mode}. Следующая версия карточки: ${input.version}.`,
+    executionExit,
     'Не изменяй файлы, Git, runtime или внешние системы до отдельного принятия карточки владельцем.',
     'Сам изучи доступный контекст. Сначала предложи целостное понимание фразой «Я правильно понял, что …?». Не задавай анкету из терминов.',
     'Если остаётся одна существенная неоднозначность, задай один конкретный вопрос и объясни, что изменит ответ.',

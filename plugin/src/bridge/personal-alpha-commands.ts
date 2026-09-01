@@ -179,7 +179,7 @@ export class PersonalAlphaCommands implements CommandHandler {
       case 'approval':
         return { text: this.approval(operation) }
       case 'cwd':
-        return { text: await this.cwd(operation) }
+        return this.cwd(operation)
       case 'settings':
         return this.settingsPanel(operation)
       case 'auth':
@@ -844,25 +844,37 @@ export class PersonalAlphaCommands implements CommandHandler {
     return `Approval policy для проекта ${operation.command.projectId}: ${requested}.`
   }
 
-  private async cwd(operation: CommandOperation): Promise<string> {
+  private cwdPanel(botId: string, chatId: string): CommandResult {
+    const selected = this.settings.getSelectedProject(botId, chatId) ?? this.defaultProjectId
+    const projects = this.projects.list()
+    const buttons: CommandButton[][] = []
+    for (let index = 0; index < projects.length; index += 2) {
+      buttons.push(projects.slice(index, index + 2).map((project, offset) => ({
+        text: `${project.id === selected ? '✓ ' : ''}${project.id}`,
+        callbackData: `dx:s:set:cwd:${index + offset}`,
+      })))
+    }
+    return {
+      text: [
+        `Текущий проект: ${selected}`,
+        'Выбери зарегистрированный проект:',
+        this.projects.dynamicRegistrationEnabled
+          ? '/cwd <project-id или абсолютный путь> — подключить новый'
+          : '/cwd <project-id>',
+      ].join('\n'),
+      buttons,
+    }
+  }
+
+  private async cwd(operation: CommandOperation): Promise<CommandResult> {
     const requested = operation.command.args.trim()
     const selected = this.settings.getSelectedProject(
       operation.botId,
       operation.command.chatId,
     ) ?? this.defaultProjectId
-    if (requested.length === 0) {
-      return [
-        `Текущий проект: ${selected}`,
-        ...this.projects.list().map(
-          (project) => `${project.id === selected ? '●' : '○'} ${project.id}`,
-        ),
-        this.projects.dynamicRegistrationEnabled
-          ? '/cwd <project-id или абсолютный путь>'
-          : '/cwd <project-id>',
-      ].join('\n')
-    }
+    if (requested.length === 0) return this.cwdPanel(operation.botId, operation.command.chatId)
     const known = this.projects.resolve(requested)
-    if (known?.id === selected) return `Проект ${known.id} уже выбран.`
+    if (known?.id === selected) return { text: `Проект ${known.id} уже выбран.` }
     const overview = this.sessions.getOverview(
       operation.botId,
       operation.command.chatId,
@@ -870,41 +882,55 @@ export class PersonalAlphaCommands implements CommandHandler {
       this.backendName,
     )
     if (overview.activeTurn !== null) {
-      return `Нельзя сменить проект: turn ${overview.activeTurn.backendTurnId ?? overview.activeTurn.id} имеет состояние ${overview.activeTurn.state}.`
+      return {
+        text: `Нельзя сменить проект: turn ${overview.activeTurn.backendTurnId ?? overview.activeTurn.id} имеет состояние ${overview.activeTurn.state}.`,
+      }
     }
     const registration = known === null
       ? await this.projects.resolveOrRegister(requested)
       : { outcome: 'existing' as const, project: known }
     if (registration.outcome === 'disabled') {
-      return `Проект ${requested} не разрешён. Используй /cwd.`
+      return { text: `Проект ${requested} не разрешён. Используй /cwd.` }
     }
     if (registration.outcome === 'not_found') {
-      return `Проект ${requested} не найден. Укажи имя каталога рядом с настроенными проектами или абсолютный путь.`
+      return {
+        text: `Проект ${requested} не найден. Укажи имя каталога рядом с настроенными проектами или абсолютный путь.`,
+      }
     }
     if (registration.outcome === 'ambiguous') {
-      return `Найдено несколько каталогов. Укажи абсолютный путь:\n${registration.details ?? ''}`
+      return {
+        text: `Найдено несколько каталогов. Укажи абсолютный путь:\n${registration.details ?? ''}`,
+      }
     }
     if (registration.outcome === 'conflict') {
-      return `Имя проекта уже занято другим каталогом: ${registration.details ?? requested}. Укажи другой зарегистрированный project-id.`
+      return {
+        text: `Имя проекта уже занято другим каталогом: ${registration.details ?? requested}. Укажи другой зарегистрированный project-id.`,
+      }
     }
     if (registration.outcome === 'invalid') {
-      return 'Не удалось получить безопасный project-id. Имя каталога может содержать буквы, цифры, точку, дефис и подчёркивание.'
+      return {
+        text: 'Не удалось получить безопасный project-id. Имя каталога может содержать буквы, цифры, точку, дефис и подчёркивание.',
+      }
     }
-    if (registration.outcome === 'full') return 'Достигнут лимит в 100 проектов.'
+    if (registration.outcome === 'full') return { text: 'Достигнут лимит в 100 проектов.' }
     if (registration.outcome !== 'existing' && registration.outcome !== 'registered') {
-      return 'Не удалось зарегистрировать проект.'
+      return { text: 'Не удалось зарегистрировать проект.' }
     }
     const project = registration.project
-    if (project.id === selected) return `Проект ${project.id} уже выбран.`
+    if (project.id === selected) return { text: `Проект ${project.id} уже выбран.` }
     this.settings.selectProject(
       operation.botId,
       operation.command.chatId,
       project.id,
       this.now(),
     )
-    return registration.outcome === 'registered'
-      ? `Проект ${project.id} зарегистрирован: ${project.cwd}\nТекущий проект: ${project.id}.`
-      : `Текущий проект: ${project.id}. Следующее сообщение использует cwd этого проекта.`
+    const panel = this.cwdPanel(operation.botId, operation.command.chatId)
+    return {
+      ...panel,
+      text: registration.outcome === 'registered'
+        ? `Проект ${project.id} зарегистрирован: ${project.cwd}\n${panel.text}`
+        : panel.text,
+    }
   }
 
   private settingsPanel(operation: CommandOperation): CommandResult {
@@ -1012,13 +1038,7 @@ export class PersonalAlphaCommands implements CommandHandler {
         }
       }
       if (category === 'cwd') {
-        return {
-          text: 'Выбери проект:',
-          buttons: this.projects.list().map((project, index) => [{
-            text: project.id,
-            callbackData: `dx:s:set:cwd:${index}`,
-          }]),
-        }
+        return this.cwdPanel(input.botId, input.chatId)
       }
       if (category === 'plan') {
         return {
@@ -1089,7 +1109,7 @@ export class PersonalAlphaCommands implements CommandHandler {
       )
       if (overview.activeTurn !== null) return { text: 'Нельзя менять project во время активного turn.' }
       this.settings.selectProject(input.botId, input.chatId, project.id, this.now())
-      return { text: `Текущий проект: ${project.id}.` }
+      return this.cwdPanel(input.botId, input.chatId)
     } else if (category === 'plan') {
       if (rawIndex !== 'on' && rawIndex !== 'off') return { text: 'Неизвестный режим Guided Plan.' }
       this.settings.updateProjectSettings(

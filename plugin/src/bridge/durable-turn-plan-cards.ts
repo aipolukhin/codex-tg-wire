@@ -47,7 +47,6 @@ interface PlanCardRow {
 
 interface PlanCardStatus {
   activity: AgentActivity | null
-  activityStartedAtMs: number | null
   commentary: string | null
   commentaryAtMs: number | null
 }
@@ -61,7 +60,6 @@ const MIN_VISIBLE_PLAN_STEPS = 2
 const MAX_VISIBLE_PLAN_STEPS = 20
 const MAX_VISIBLE_STEP_CHARS = 160
 const MAX_VISIBLE_COMMENTARY_CHARS = 320
-const HEARTBEAT_INTERVAL_MS = 60_000
 const TASK_PROGRESS_MARKER = '[telegram-task-progress]'
 
 const ACTIVITY_LABELS: Record<AgentActivity, string> = {
@@ -104,7 +102,6 @@ function stepsFromRow(row: PlanCardRow): PlanStep[] {
 function emptyStatus(): PlanCardStatus {
   return {
     activity: null,
-    activityStartedAtMs: null,
     commentary: null,
     commentaryAtMs: null,
   }
@@ -118,9 +115,6 @@ function statusFromRow(row: PlanCardRow): PlanCardStatus {
       : null
     return {
       activity,
-      activityStartedAtMs: Number.isSafeInteger(value.activityStartedAtMs)
-        ? value.activityStartedAtMs as number
-        : null,
       commentary: typeof value.commentary === 'string' ? value.commentary : null,
       commentaryAtMs: Number.isSafeInteger(value.commentaryAtMs)
         ? value.commentaryAtMs as number
@@ -129,16 +123,6 @@ function statusFromRow(row: PlanCardRow): PlanCardStatus {
   } catch {
     return emptyStatus()
   }
-}
-
-function elapsed(startedAtMs: number | null, nowMs: number): string | null {
-  if (startedAtMs === null) return null
-  const seconds = Math.max(0, Math.floor((nowMs - startedAtMs) / 1_000))
-  if (seconds < 60) return `${seconds} сек`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} мин`
-  const hours = Math.floor(minutes / 60)
-  return `${hours} ч ${minutes % 60} мин`
 }
 
 function normalizeSteps(progress: AgentTurnProgress & { kind: 'plan' }): {
@@ -191,7 +175,7 @@ function buttons(row: PlanCardRow): { inline_keyboard: Array<Array<{ text: strin
   }
 }
 
-function richText(row: PlanCardRow, nowMs: number): string {
+function richText(row: PlanCardRow): string {
   const steps = stepsFromRow(row)
   const status = statusFromRow(row)
   const completed = steps.filter((step) => step.status === 'completed').length
@@ -203,8 +187,7 @@ function richText(row: PlanCardRow, nowMs: number): string {
   }
   lines.push('', `**Выполнено: ${completed} / ${steps.length}**`)
   if (row.phase === 'ACTIVE' && status.activity !== null) {
-    const duration = elapsed(status.activityStartedAtMs, nowMs)
-    lines.push('', `> **Сейчас:** ${escapeRichInline(ACTIVITY_LABELS[status.activity])}${duration === null ? '' : ` · ${escapeRichInline(duration)}`}`)
+    lines.push('', `> **Сейчас:** ${escapeRichInline(ACTIVITY_LABELS[status.activity])}`)
     if (status.commentary !== null) lines.push(`> ${escapeRichInline(status.commentary)}`)
   }
   if (row.cancel_state === 'CONFIRMING') {
@@ -215,7 +198,7 @@ function richText(row: PlanCardRow, nowMs: number): string {
   return lines.join('\n')
 }
 
-function fallbackText(row: PlanCardRow, nowMs: number): string {
+function fallbackText(row: PlanCardRow): string {
   const steps = stepsFromRow(row)
   const status = statusFromRow(row)
   const completed = steps.filter((step) => step.status === 'completed').length
@@ -226,8 +209,7 @@ function fallbackText(row: PlanCardRow, nowMs: number): string {
   }
   lines.push('', `<b>Выполнено: ${completed} / ${steps.length}</b>`)
   if (row.phase === 'ACTIVE' && status.activity !== null) {
-    const duration = elapsed(status.activityStartedAtMs, nowMs)
-    lines.push('', `<b>Сейчас:</b> ${escapeHtml(ACTIVITY_LABELS[status.activity])}${duration === null ? '' : ` · ${escapeHtml(duration)}`}`)
+    lines.push('', `<b>Сейчас:</b> ${escapeHtml(ACTIVITY_LABELS[status.activity])}`)
     if (status.commentary !== null) lines.push(escapeHtml(status.commentary))
   }
   if (row.cancel_state === 'CONFIRMING') {
@@ -238,15 +220,15 @@ function fallbackText(row: PlanCardRow, nowMs: number): string {
   return lines.join('\n')
 }
 
-function payload(row: PlanCardRow, nowMs: number): unknown {
+function payload(row: PlanCardRow): unknown {
   const replyMarkup = buttons(row)
   return {
     chatId: row.chat_id,
-    text: richText(row, nowMs),
+    text: richText(row),
     format: 'rich',
     options: { reply_markup: replyMarkup },
     fallback: [{
-      text: fallbackText(row, nowMs),
+      text: fallbackText(row),
       options: { parse_mode: 'HTML', reply_markup: replyMarkup },
     }],
   }
@@ -317,7 +299,6 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
         if (progress.kind === 'activity') {
           if (status.activity === progress.activity) return
           status.activity = progress.activity
-          status.activityStartedAtMs = progress.atMs
         } else if (progress.kind === 'commentary') {
           const commentary = progress.text.trim().replace(/\s+/g, ' ')
             .slice(0, MAX_VISIBLE_COMMENTARY_CHARS)
@@ -325,7 +306,6 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
           status.commentary = commentary
           status.commentaryAtMs = progress.atMs
           status.activity ??= 'working'
-          status.activityStartedAtMs ??= progress.atMs
         } else {
           return
         }
@@ -351,30 +331,11 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       existing.steps_json = serialized
       const status = statusFromRow(existing)
       status.activity = 'planning'
-      status.activityStartedAtMs = progress.atMs
       existing.status_json = JSON.stringify(status)
       existing.thread_id = progress.threadId
       existing.updated_at_ms = nowMs
       this.enqueueEdit(existing, nowMs)
     }).immediate()
-  }
-
-  runHeartbeat(): number {
-    const nowMs = this.now()
-    const rows = this.database.query<PlanCardRow, [number]>(
-      `SELECT * FROM telegram_turn_plan_cards
-       WHERE phase = 'ACTIVE' AND updated_at_ms <= ?
-       ORDER BY updated_at_ms, operation_key`,
-    ).all(nowMs - HEARTBEAT_INTERVAL_MS)
-    let refreshed = 0
-    for (const row of rows) {
-      const status = statusFromRow(row)
-      if (status.activity === null) continue
-      row.updated_at_ms = nowMs
-      this.enqueueEdit(row, nowMs)
-      refreshed += 1
-    }
-    return refreshed
   }
 
   onCompleted(operation: TextTurnOperation, _result: TextTurnResult): void {
@@ -402,7 +363,6 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
     const initialStatus: PlanCardStatus = {
       ...emptyStatus(),
       activity,
-      activityStartedAtMs: progress.atMs,
     }
     const inserted = this.database.run(
       `INSERT INTO telegram_turn_plan_cards
@@ -431,7 +391,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
     this.outbox.enqueue({
       sourceKey: rootSourceKey,
       kind: 'send_text',
-      payload: payload(created, nowMs),
+      payload: payload(created),
       createdAtMs: nowMs,
     })
   }
@@ -610,7 +570,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       dependsOnSourceKey: row.tail_source_key,
       kind: 'edit',
       payload: {
-        ...payload(row, nowMs) as Record<string, unknown>,
+        ...payload(row) as Record<string, unknown>,
         targetSourceKey: row.root_source_key,
       },
       createdAtMs: nowMs,

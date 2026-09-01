@@ -730,7 +730,12 @@ describe('PersonalAlphaCommands', () => {
   })
 
   test('/cwd selects only configured projects and refuses switching an active turn', async () => {
-    expect((await commands.handleCommand(command('cwd'))).text).toContain('● workspace')
+    const panel = await commands.handleCommand(command('cwd'))
+    expect(panel.text).toContain('Текущий проект: workspace')
+    expect(panel.buttons).toEqual([[
+      { text: '✓ workspace', callbackData: 'dx:s:set:cwd:0' },
+      { text: 'other', callbackData: 'dx:s:set:cwd:1' },
+    ]])
     expect((await commands.handleCommand(command('cwd', '/tmp/unsafe'))).text).toContain(
       'не разрешён',
     )
@@ -786,6 +791,14 @@ describe('PersonalAlphaCommands', () => {
     })
     expect(selected.text).toContain(`Проект vpn-infra зарегистрирован: ${vpnInfra}`)
     expect(settings.getSelectedProject('primary', '7001')).toBe('vpn-infra')
+    const panel = await dynamicCommands.handleCommand({
+      ...command('cwd'),
+      command: { chatId: '7001', projectId: 'vpn-infra', name: 'cwd', args: '' },
+    })
+    expect(panel.buttons?.flat()).toContainEqual({
+      text: '✓ vpn-infra',
+      callbackData: 'dx:s:set:cwd:1',
+    })
 
     const restored = new DurableProjectCatalog(database, {
       staticProjects: [{ id: 'main', cwd: main }],

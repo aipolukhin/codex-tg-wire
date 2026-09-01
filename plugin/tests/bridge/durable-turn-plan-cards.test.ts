@@ -161,7 +161,7 @@ describe('DurableTurnPlanCards', () => {
     })
   })
 
-  test('edits the same card with user-facing commentary and elapsed long-operation time', () => {
+  test('edits the same card with live activity but no duplicate elapsed timer', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
       steps: [
@@ -185,16 +185,9 @@ describe('DurableTurnPlanCards', () => {
     )
     expect(JSON.stringify(activityEdit?.payload)).toContain('Выполняю команду')
     expect(JSON.stringify(activityEdit?.payload)).toContain('rsync переносит 80 ГБ')
+    expect(JSON.stringify(activityEdit?.payload)).not.toMatch(/\d+ (?:сек|мин|ч)/)
 
-    nowMs += 61_002
-    expect(cards.runHeartbeat()).toBe(1)
-    const heartbeat = outbox.getBySourceKey(
-      `${operation.operationKey}:plan-progress:edit:3`,
-    )
-    expect(JSON.stringify(heartbeat?.payload)).toContain('1 мин')
-    expect(heartbeat?.dependsOnSourceKey).toBe(
-      `${operation.operationKey}:plan-progress:edit:2`,
-    )
+    expect(outbox.getBySourceKey(`${operation.operationKey}:plan-progress:edit:3`)).toBeNull()
   })
 
   test('retargets cancellation to the replacement turn after transparent retry', async () => {

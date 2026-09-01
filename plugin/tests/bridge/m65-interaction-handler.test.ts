@@ -81,7 +81,10 @@ beforeEach(() => {
   coordinator = new FakeCoordinator()
   gitActions = []
   const commands = new PersonalAlphaCommands(sessions, backend, outbox, settings, {
-    projects: [{ id: 'workspace', cwd: '/srv/workspace' }],
+    projects: [
+      { id: 'workspace', cwd: '/srv/workspace' },
+      { id: 'vpn-infra', cwd: '/srv/vpn-infra' },
+    ],
     defaultProjectId: 'workspace',
     now: () => NOW,
   })
@@ -110,6 +113,53 @@ afterEach(() => {
 })
 
 describe('M6.5 feature callbacks', () => {
+  test('edits /cwd into a persistent project picker and switches by button', async () => {
+    await handler.handleInteraction({
+      operationKey: 'telegram:primary:cwd-open:interaction', botId: 'primary',
+      inboxUpdateId: 30, updateId: 30,
+      response: {
+        kind: 'feature_action', feature: 'settings', chatId: '7001', token: 'settings',
+        action: 'open:cwd', callbackQueryId: 'cb-cwd-open', callbackMessageId: 87,
+      },
+    })
+    expect(outbox.getBySourceKey(
+      'telegram:primary:cwd-open:interaction:settings-edit',
+    )).toMatchObject({
+      kind: 'edit',
+      payload: {
+        chatId: '7001',
+        messageId: 87,
+        text: expect.stringContaining('Текущий проект: workspace'),
+        options: { reply_markup: { inline_keyboard: [[
+          { text: '✓ workspace', callback_data: 'dx:s:set:cwd:0' },
+          { text: 'vpn-infra', callback_data: 'dx:s:set:cwd:1' },
+        ]] } },
+      },
+    })
+
+    await handler.handleInteraction({
+      operationKey: 'telegram:primary:cwd-select:interaction', botId: 'primary',
+      inboxUpdateId: 31, updateId: 31,
+      response: {
+        kind: 'feature_action', feature: 'settings', chatId: '7001', token: 'settings',
+        action: 'set:cwd:1', callbackQueryId: 'cb-cwd-select', callbackMessageId: 87,
+      },
+    })
+
+    expect(settings.getSelectedProject('primary', '7001')).toBe('vpn-infra')
+    expect(outbox.getBySourceKey(
+      'telegram:primary:cwd-select:interaction:settings-edit',
+    )).toMatchObject({
+      payload: {
+        text: expect.stringContaining('Текущий проект: vpn-infra'),
+        options: { reply_markup: { inline_keyboard: [[
+          { text: 'workspace', callback_data: 'dx:s:set:cwd:0' },
+          { text: '✓ vpn-infra', callback_data: 'dx:s:set:cwd:1' },
+        ]] } },
+      },
+    })
+  })
+
   test('runs Git buttons through one durable edit and callback acknowledgement', async () => {
     const result = await handler.handleInteraction({
       operationKey: 'telegram:primary:0:turn:interaction', botId: 'primary',

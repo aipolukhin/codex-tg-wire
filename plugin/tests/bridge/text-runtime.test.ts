@@ -480,6 +480,32 @@ describe('durable text runtime composition', () => {
     ).toBe('other')
   })
 
+  test('/cwd sends registered projects as inline buttons through the durable outbox', async () => {
+    runtime.ingest({
+      update_id: 806,
+      message: {
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        text: '/cwd',
+      },
+    }, NOW)
+
+    expect((await runtime.processInboundOnce()).outcome).toBe('enqueued')
+    const row = database.query<{ payload_json: string }, []>(
+      `SELECT payload_json FROM delivery_jobs
+       WHERE kind = 'send_text' ORDER BY created_at_ms DESC, id DESC LIMIT 1`,
+    ).get()
+    expect(row).not.toBeNull()
+    expect(JSON.parse(row!.payload_json)).toMatchObject({
+      chatId: '7001',
+      text: expect.stringContaining('Текущий проект: workspace'),
+      options: { reply_markup: { inline_keyboard: [[
+        { text: '✓ workspace', callback_data: 'dx:s:set:cwd:0' },
+        { text: 'other', callback_data: 'dx:s:set:cwd:1' },
+      ]] } },
+    })
+  })
+
   test('runs Guided Plan as a durable confirm-before-execute flow', async () => {
     runtime.ingest({
       update_id: 820,

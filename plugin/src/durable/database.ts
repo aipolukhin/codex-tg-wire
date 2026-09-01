@@ -7,6 +7,8 @@ interface Migration {
   version: number
   name: string
   statements: readonly string[]
+  /** Some historical migration tests intentionally model only one feature table. */
+  requiredTables?: readonly string[]
 }
 
 const MIGRATIONS: readonly Migration[] = [
@@ -713,6 +715,29 @@ const MIGRATIONS: readonly Migration[] = [
         ON product_decision_drafts (state, updated_at_ms)`,
     ],
   },
+  {
+    version: 24,
+    name: 'durable_turn_auto_resume',
+    requiredTables: ['turns'],
+    statements: [
+      'ALTER TABLE turns ADD COLUMN backend_operation_key TEXT',
+      `UPDATE turns SET backend_operation_key = operation_key
+       WHERE backend_operation_key IS NULL`,
+      `CREATE TABLE turn_recovery_attempts (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+        attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+        previous_backend_operation_key TEXT NOT NULL,
+        previous_backend_turn_id TEXT,
+        inspected_state TEXT NOT NULL CHECK (inspected_state IN ('FAILED', 'INTERRUPTED')),
+        reason TEXT NOT NULL,
+        queued_at_ms INTEGER NOT NULL,
+        UNIQUE (turn_id, attempt_number)
+      )`,
+      `CREATE INDEX turn_recovery_attempts_turn_idx
+        ON turn_recovery_attempts (turn_id, attempt_number DESC)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0
@@ -760,7 +785,14 @@ function migrate(database: Database): void {
         .get(migration.version)
       if (alreadyApplied !== null) return
 
-      for (const statement of migration.statements) database.run(statement)
+      const requirementsPresent = migration.requiredTables?.every((table) =>
+        database.query<{ name: string }, [string]>(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+        ).get(table) !== null
+      ) ?? true
+      if (requirementsPresent) {
+        for (const statement of migration.statements) database.run(statement)
+      }
       database.run(
         'INSERT INTO schema_migrations (version, name, applied_at_ms) VALUES (?, ?, ?)',
         [migration.version, migration.name, Date.now()],

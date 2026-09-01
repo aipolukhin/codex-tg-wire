@@ -31,6 +31,7 @@ export interface TurnRecord {
   id: string
   sessionId: string
   operationKey: string
+  backendOperationKey: string
   backendTurnId: string | null
   sourceUpdateId: number | null
   state: TurnState
@@ -39,6 +40,17 @@ export interface TurnRecord {
   createdAtMs: number
   startedAtMs: number | null
   finishedAtMs: number | null
+}
+
+export interface TurnRecoveryAttemptRecord {
+  id: string
+  turnId: string
+  attemptNumber: number
+  previousBackendOperationKey: string
+  previousBackendTurnId: string | null
+  inspectedState: 'FAILED' | 'INTERRUPTED'
+  reason: string
+  queuedAtMs: number
 }
 
 export interface ThreadRegistryRecord {
@@ -121,6 +133,7 @@ interface TurnRow {
   id: string
   session_id: string
   operation_key: string
+  backend_operation_key: string | null
   backend_turn_id: string | null
   source_update_id: number | null
   state: TurnState
@@ -129,6 +142,17 @@ interface TurnRow {
   created_at_ms: number
   started_at_ms: number | null
   finished_at_ms: number | null
+}
+
+interface TurnRecoveryAttemptRow {
+  id: string
+  turn_id: string
+  attempt_number: number
+  previous_backend_operation_key: string
+  previous_backend_turn_id: string | null
+  inspected_state: 'FAILED' | 'INTERRUPTED'
+  reason: string
+  queued_at_ms: number
 }
 
 interface ThreadRegistryRow {
@@ -172,6 +196,7 @@ function turnFromRow(row: TurnRow): TurnRecord {
     id: row.id,
     sessionId: row.session_id,
     operationKey: row.operation_key,
+    backendOperationKey: row.backend_operation_key ?? row.operation_key,
     backendTurnId: row.backend_turn_id,
     sourceUpdateId: row.source_update_id,
     state: row.state,
@@ -182,6 +207,19 @@ function turnFromRow(row: TurnRow): TurnRecord {
     createdAtMs: row.created_at_ms,
     startedAtMs: row.started_at_ms,
     finishedAtMs: row.finished_at_ms,
+  }
+}
+
+function recoveryAttemptFromRow(row: TurnRecoveryAttemptRow): TurnRecoveryAttemptRecord {
+  return {
+    id: row.id,
+    turnId: row.turn_id,
+    attemptNumber: row.attempt_number,
+    previousBackendOperationKey: row.previous_backend_operation_key,
+    previousBackendTurnId: row.previous_backend_turn_id,
+    inspectedState: row.inspected_state,
+    reason: row.reason,
+    queuedAtMs: row.queued_at_ms,
   }
 }
 
@@ -259,11 +297,13 @@ export class SqliteSessionRepository {
       const turnId = crypto.randomUUID()
       this.database.run(
         `INSERT INTO turns
-          (id, session_id, operation_key, source_update_id, state, request_json, created_at_ms)
-         VALUES (?, ?, ?, ?, 'QUEUED', ?, ?)`,
+          (id, session_id, operation_key, backend_operation_key, source_update_id,
+           state, request_json, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, 'QUEUED', ?, ?)`,
         [
           turnId,
           session.id,
+          operation.operationKey,
           operation.operationKey,
           operation.inboxUpdateId,
           JSON.stringify(operation),
@@ -393,6 +433,30 @@ export class SqliteSessionRepository {
     return this.requireTurn(localTurnId)
   }
 
+  activateRecoveredBinding(
+    sessionId: string,
+    backend: string,
+    threadId: string,
+    nowMs: number,
+  ): ThreadBindingRecord {
+    return this.database.transaction(() => {
+      const binding = this.findBinding(sessionId, backend)
+      if (binding === null || binding.threadId !== threadId) {
+        throw new SessionStateConflictError(`thread binding for ${threadId} disappeared`)
+      }
+      if (binding.state !== 'PROVISIONAL' && binding.state !== 'ACTIVE') {
+        throw new SessionStateConflictError(`thread binding ${binding.id} is ${binding.state}`)
+      }
+      this.database.run(
+        `UPDATE thread_bindings SET state = 'ACTIVE', updated_at_ms = ?
+         WHERE id = ? AND state IN ('PROVISIONAL', 'ACTIVE')`,
+        [nowMs, binding.id],
+      )
+      this.upsertThreadRegistry(sessionId, backend, threadId, nowMs)
+      return this.requireBinding(binding.id)
+    }).immediate()
+  }
+
   markTerminal(
     localTurnId: string,
     state: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN',
@@ -433,6 +497,94 @@ export class SqliteSessionRepository {
       throw new SessionStateConflictError(`turn ${localTurnId} cannot reconcile to ${state}`)
     }
     return this.requireTurn(localTurnId)
+  }
+
+  requeueRecoveredTurn(
+    localTurnId: string,
+    sourceUpdateId: number,
+    inspectedState: 'FAILED' | 'INTERRUPTED',
+    reason: string,
+    nowMs: number,
+    backendTurnId: string | null = null,
+  ): { turn: TurnRecord; attempt: TurnRecoveryAttemptRecord } {
+    return this.database.transaction(() => {
+      const turn = this.requireTurn(localTurnId)
+      if (turn.state !== 'ACTIVE' && turn.state !== 'UNKNOWN') {
+        throw new SessionStateConflictError(
+          `turn ${localTurnId} is ${turn.state}, expected ACTIVE or UNKNOWN`,
+        )
+      }
+      if (turn.sourceUpdateId !== sourceUpdateId) {
+        throw new SessionStateConflictError(
+          `turn ${localTurnId} does not belong to inbox update ${sourceUpdateId}`,
+        )
+      }
+      const latest = this.getLatestRecoveryAttempt(localTurnId)
+      const attemptNumber = (latest?.attemptNumber ?? 0) + 1
+      const attemptId = crypto.randomUUID()
+      const nextBackendOperationKey = `${turn.operationKey}:auto-resume:${attemptNumber}`
+      this.database.run(
+        `INSERT INTO turn_recovery_attempts
+          (id, turn_id, attempt_number, previous_backend_operation_key,
+           previous_backend_turn_id, inspected_state, reason, queued_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          attemptId,
+          localTurnId,
+          attemptNumber,
+          turn.backendOperationKey,
+          backendTurnId ?? turn.backendTurnId,
+          inspectedState,
+          reason,
+          nowMs,
+        ],
+      )
+      const changed = this.database.run(
+        `UPDATE turns
+         SET state = 'QUEUED', backend_operation_key = ?, backend_turn_id = NULL,
+             final_response_json = NULL, started_at_ms = NULL, finished_at_ms = NULL
+         WHERE id = ? AND state IN ('ACTIVE', 'UNKNOWN')`,
+        [nextBackendOperationKey, localTurnId],
+      ).changes
+      if (changed !== 1) {
+        throw new SessionStateConflictError(`turn ${localTurnId} could not be queued for recovery`)
+      }
+      const sourceChanged = this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', attempt_count = 0,
+             available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
+             processed_at_ms = NULL,
+             last_error = 'Codex turn queued for automatic resume after restart'
+         WHERE id = ? AND state IN ('RECEIVED', 'LEASED', 'RETRY_WAIT', 'FAILED')`,
+        [nowMs, sourceUpdateId],
+      ).changes
+      if (sourceChanged !== 1) {
+        throw new SessionStateConflictError(
+          `inbox update ${sourceUpdateId} could not be queued for turn recovery`,
+        )
+      }
+      this.database.run(
+        `UPDATE telegram_album_groups
+         SET state = 'COLLECTING', ready_at_ms = ?, updated_at_ms = ?,
+             last_error = 'Codex turn queued for automatic resume after restart'
+         WHERE leader_update_row_id = ? AND state = 'PROCESSING'`,
+        [nowMs, nowMs, sourceUpdateId],
+      )
+      return {
+        turn: this.requireTurn(localTurnId),
+        attempt: this.requireRecoveryAttempt(attemptId),
+      }
+    }).immediate()
+  }
+
+  getLatestRecoveryAttempt(localTurnId: string): TurnRecoveryAttemptRecord | null {
+    const row = this.database
+      .query<TurnRecoveryAttemptRow, [string]>(
+        `SELECT * FROM turn_recovery_attempts
+         WHERE turn_id = ? ORDER BY attempt_number DESC LIMIT 1`,
+      )
+      .get(localTurnId)
+    return row === null ? null : recoveryAttemptFromRow(row)
   }
 
   getTurn(id: string): TurnRecord | null {
@@ -868,5 +1020,15 @@ export class SqliteSessionRepository {
     const turn = this.getTurn(id)
     if (turn === null) throw new Error(`turn ${id} not found`)
     return turn
+  }
+
+  private requireRecoveryAttempt(id: string): TurnRecoveryAttemptRecord {
+    const row = this.database
+      .query<TurnRecoveryAttemptRow, [string]>(
+        'SELECT * FROM turn_recovery_attempts WHERE id = ?',
+      )
+      .get(id)
+    if (row === null) throw new Error(`turn recovery attempt ${id} not found`)
+    return recoveryAttemptFromRow(row)
   }
 }

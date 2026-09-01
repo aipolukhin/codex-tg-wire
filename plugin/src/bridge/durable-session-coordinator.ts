@@ -11,6 +11,7 @@ import type {
 import {
   SqliteSessionRepository,
   type PreparedTextOperation,
+  type TurnRecoveryAttemptRecord,
   type TurnRecord,
 } from '../durable/session-repository.js'
 import { safeErrorSummary } from './retry-policy.js'
@@ -103,6 +104,23 @@ function cachedResult(turn: TurnRecord): TextTurnResult {
     throw new TurnRecoveryRequiredError(turn)
   }
   return value as TextTurnResult
+}
+
+function autoResumeText(
+  originalText: string,
+  recovery: TurnRecoveryAttemptRecord,
+): string {
+  const state = recovery.inspectedState === 'INTERRUPTED' ? 'прерван' : 'завершился ошибкой'
+  return [
+    '[Durable auto-resume after bridge restart]',
+    `Предыдущий backend-turn этой же задачи был подтверждённо ${state}.`,
+    'Продолжи исходную задачу в этом же Codex thread без дополнительного подтверждения пользователя.',
+    'Сначала сверь сохранённый план и фактическое состояние репозитория/сервисов.',
+    'Не повторяй уже завершённые изменения и внешние side effects; выполни только оставшуюся работу.',
+    '',
+    'Исходный запрос владельца:',
+    originalText,
+  ].join('\n')
 }
 
 export interface DurableSessionCoordinatorOptions {
@@ -210,16 +228,20 @@ export class DurableSessionCoordinator implements SessionCoordinator {
       sandbox: operation.trustedSettingsOverride?.sandbox ??
         overrides.sandbox ?? project.sandboxMode ?? 'workspace-write',
     }
+    const recovery = this.sessions.getLatestRecoveryAttempt(prepared.turn.id)
+    const backendText = recovery === null
+      ? operation.text
+      : autoResumeText(operation.text, recovery)
     const writableRoots = [...new Set([project.cwd, ...(project.writableRoots ?? [])])]
     this.notifyUx(() => this.uxObserver?.onPreparing(operation, settings))
     try {
       const result = await this.backend.runTextTurn(
         {
-          operationKey: operation.operationKey,
+          operationKey: prepared.turn.backendOperationKey,
           threadId: prepared.binding?.threadId ?? null,
           projectId: operation.projectId,
           cwd: project.cwd,
-          text: operation.text,
+          text: backendText,
           ...(operation.attachments === undefined || operation.attachments.length === 0
             ? {}
             : { attachments: operation.attachments }),

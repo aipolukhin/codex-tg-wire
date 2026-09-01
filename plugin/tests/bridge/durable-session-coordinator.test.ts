@@ -258,6 +258,76 @@ describe('DurableSessionCoordinator', () => {
     expect(backend.calls).toHaveLength(1)
   })
 
+  test('continues a recovered operation in the same thread with a distinct backend key', async () => {
+    const op = operation(634)
+    const prepared = sessions.prepareTextOperation(op, 'codex', nowMs)
+    sessions.markDispatching(prepared.turn.id, 'codex', 'codex-thread-recovery', true, nowMs)
+    sessions.markBackendTurnStarted(
+      prepared.turn.id,
+      'codex-turn-interrupted',
+      'codex',
+      'codex-thread-recovery',
+      nowMs,
+    )
+    sessions.requeueRecoveredTurn(
+      prepared.turn.id,
+      op.inboxUpdateId,
+      'INTERRUPTED',
+      'CodexTurnRecoveryINTERRUPTED',
+      nowMs + 1,
+      'codex-turn-interrupted',
+    )
+    backend.nextTurnId = 'codex-turn-resumed'
+
+    const result = await coordinator.runTextTurn(op)
+
+    expect(result.turnId).toBe('codex-turn-resumed')
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0]).toMatchObject({
+      operationKey: `${op.operationKey}:auto-resume:1`,
+      threadId: 'codex-thread-recovery',
+    })
+    expect(backend.calls[0]?.text).toContain('[Durable auto-resume after bridge restart]')
+    expect(backend.calls[0]?.text).toContain('Не повторяй уже завершённые изменения')
+    expect(backend.calls[0]?.text).toContain(op.text)
+  })
+
+  test('rolls back recovery atomically when the source update cannot be replayed', () => {
+    const op = operation(635)
+    const prepared = sessions.prepareTextOperation(op, 'codex', nowMs)
+    sessions.markDispatching(prepared.turn.id, 'codex', 'codex-thread-recovery', true, nowMs)
+    sessions.markBackendTurnStarted(
+      prepared.turn.id,
+      'codex-turn-interrupted',
+      'codex',
+      'codex-thread-recovery',
+      nowMs,
+    )
+    const claimed = inbox.claimNext({
+      workerId: 'inbox-recovery',
+      nowMs,
+      leaseDurationMs: 60_000,
+    })
+    expect(claimed?.id).toBe(op.inboxUpdateId)
+    inbox.markProcessed(op.inboxUpdateId, 'inbox-recovery', nowMs + 1)
+
+    expect(() => sessions.requeueRecoveredTurn(
+      prepared.turn.id,
+      op.inboxUpdateId,
+      'INTERRUPTED',
+      'CodexTurnRecoveryINTERRUPTED',
+      nowMs + 2,
+      'codex-turn-interrupted',
+    )).toThrow('could not be queued for turn recovery')
+
+    expect(sessions.getTurn(prepared.turn.id)).toMatchObject({
+      state: 'ACTIVE',
+      backendOperationKey: op.operationKey,
+      backendTurnId: 'codex-turn-interrupted',
+    })
+    expect(sessions.getLatestRecoveryAttempt(prepared.turn.id)).toBeNull()
+  })
+
   test('continues the active thread for the next operation in the same session', async () => {
     const first = operation(603)
     await coordinator.runTextTurn(first)

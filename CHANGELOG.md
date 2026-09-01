@@ -38,6 +38,10 @@ Claude package version is not the codex-tg-wire release version.
 - A temporary model-capacity failure now continues safely in the same durable
   thread after checking existing state, instead of replaying the original
   request or immediately reporting a terminal failure.
+- A turn proven failed or interrupted during bridge startup now automatically
+  resumes the same logical Telegram operation in its existing Codex thread.
+  Every replacement backend turn has a durable unique key and recovery ledger;
+  genuinely uncertain `UNKNOWN` work remains fail-closed to prevent duplicates.
 
 ### Required before stable v1.0
 

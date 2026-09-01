@@ -237,7 +237,7 @@ SQLite/WAL inbox ──► session coordinator ──► codex app-server --stdi
 | Telegram повторил update | Уникальный `(bot_id, update_id)` схлопнет дубль. |
 | Процесс умер до начала отправки | Lease вернётся в bounded retry. |
 | Telegram мог принять send, но ответ потерялся | Job станет `AMBIGUOUS` и не будет автоматически повторён. |
-| App Server исчез во время turn | Сохранённый turn сверяется через `thread/read`; неопределённость становится видимым `UNKNOWN`, а не новым скрытым turn. |
+| App Server исчез во время turn | Сохранённый turn сверяется через `thread/read`. Доказанное прерывание автоматически продолжает ту же logical operation в том же thread; неопределённость становится видимым `UNKNOWN` и не повторяется автоматически. |
 | Нужно восстановить delivery | `/failed` и `/ambiguous` показывают безопасные metadata и идемпотентные retry/resolve/archive actions. |
 
 codex-tg-wire не обещает невозможный end-to-end exactly-once. Он сохраняет

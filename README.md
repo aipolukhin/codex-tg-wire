@@ -240,7 +240,7 @@ The bridge service supervises a local App Server child process over stdio.
 | Duplicate Telegram update | `(bot_id, update_id)` deduplicates it. |
 | Process dies before a Telegram send starts | The leased job returns to bounded retry. |
 | Send may have reached Telegram, but the response was lost | The job becomes `AMBIGUOUS`; it is never retried automatically. |
-| App Server disappears during a turn | The saved turn is reconciled through `thread/read`; uncertain work becomes visible `UNKNOWN`, not a replacement turn. |
+| App Server disappears during a turn | The saved turn is reconciled through `thread/read`. A proven interruption auto-resumes the same logical operation in the same thread; uncertain work becomes visible `UNKNOWN` and is never retried automatically. |
 | Owner needs to recover delivery | `/failed` and `/ambiguous` expose safe metadata with idempotent retry/resolve/archive actions. |
 
 codex-tg-wire deliberately does not claim impossible end-to-end exactly-once

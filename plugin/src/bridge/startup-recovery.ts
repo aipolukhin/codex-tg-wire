@@ -14,6 +14,7 @@ export interface TurnRecoverySweep {
   failed: number
   interrupted: number
   unknown: number
+  resumed: number
   unblocked: number
 }
 
@@ -34,13 +35,13 @@ function recoveryNotice(
   if (inspection.state === 'FAILED') {
     return [
       `⚠️ Turn ${turn} завершился ошибкой во время перезапуска.`,
-      'Напиши «продолжай»: новый turn продолжит тот же Codex thread с сохранённым контекстом.',
+      'Автовосстановление невозможно без исходного Telegram update. Напиши «продолжай».',
     ].join('\n')
   }
   if (inspection.state === 'INTERRUPTED') {
     return [
       `⏹ Turn ${turn} был прерван во время перезапуска.`,
-      'Напиши «продолжай»: новый turn продолжит тот же Codex thread с сохранённым контекстом.',
+      'Автовосстановление невозможно без исходного Telegram update. Напиши «продолжай».',
     ].join('\n')
   }
   return [
@@ -50,9 +51,23 @@ function recoveryNotice(
   ].join('\n')
 }
 
+function autoResumeNotice(
+  candidate: ActiveTurnRecoveryCandidate,
+  inspection: Extract<AgentTurnInspection, { state: 'FAILED' | 'INTERRUPTED' }>,
+  attemptNumber: number,
+): string {
+  const turn = safeTurnLabel(candidate, inspection.turnId)
+  const outcome = inspection.state === 'INTERRUPTED' ? 'прерван' : 'завершился ошибкой'
+  return [
+    `↻ Turn ${turn} ${outcome} во время перезапуска.`,
+    `Автовосстановление #${attemptNumber}: продолжаю тот же Codex thread. Писать «продолжай» не нужно.`,
+  ].join('\n')
+}
+
 /**
- * Reconciles turns left ACTIVE by a previous bridge process. Inspection is
- * read-only; an uncertain result is never converted into a new turn.
+ * Reconciles turns left ACTIVE by a previous bridge process. Proven terminal
+ * failures are requeued in the same logical operation/thread. An uncertain
+ * result is never converted into a new turn because that could duplicate work.
  */
 export class StartupTurnRecovery {
   private readonly now: () => number
@@ -77,12 +92,21 @@ export class StartupTurnRecovery {
       failed: 0,
       interrupted: 0,
       unknown: 0,
+      resumed: 0,
       unblocked: 0,
     }
     for (const candidate of candidates) {
       const inspection = await this.inspect(candidate)
       const nowMs = this.now()
       if (inspection.state === 'COMPLETED') {
+        if (candidate.binding !== null) {
+          this.sessions.activateRecoveredBinding(
+            candidate.session.id,
+            this.backendName,
+            candidate.binding.threadId,
+            nowMs,
+          )
+        }
         this.sessions.completeRecoveredTurn(candidate.turn.id, inspection.result, nowMs)
         if (candidate.turn.sourceUpdateId !== null) {
           this.inbox.releaseForTurnRecovery(candidate.turn.sourceUpdateId, nowMs)
@@ -94,6 +118,41 @@ export class StartupTurnRecovery {
       const errorName = inspection.state === 'UNKNOWN'
         ? `CodexTurnRecoveryUnknown:${inspection.reason}`
         : `CodexTurnRecovery${inspection.state}`
+      if (
+        (inspection.state === 'FAILED' || inspection.state === 'INTERRUPTED') &&
+        candidate.turn.sourceUpdateId !== null &&
+        this.isReplayableSource(candidate.turn.sourceUpdateId)
+      ) {
+        if (candidate.binding !== null) {
+          this.sessions.activateRecoveredBinding(
+            candidate.session.id,
+            this.backendName,
+            candidate.binding.threadId,
+            nowMs,
+          )
+        }
+        const recovery = this.sessions.requeueRecoveredTurn(
+          candidate.turn.id,
+          candidate.turn.sourceUpdateId,
+          inspection.state,
+          errorName,
+          nowMs,
+          inspection.turnId,
+        )
+        this.outbox.enqueue({
+          sourceKey: `turn:${candidate.turn.id}:auto-resume:${recovery.attempt.attemptNumber}`,
+          sessionId: candidate.session.id,
+          kind: 'send_text',
+          payload: {
+            chatId: candidate.session.chatId,
+            text: autoResumeNotice(candidate, inspection, recovery.attempt.attemptNumber),
+          },
+          createdAtMs: nowMs,
+        })
+        sweep[inspection.state === 'FAILED' ? 'failed' : 'interrupted'] += 1
+        sweep.resumed += 1
+        continue
+      }
       this.sessions.markRecoveredTerminal(
         candidate.turn.id,
         inspection.state,
@@ -140,7 +199,7 @@ export class StartupTurnRecovery {
       return await this.backend.inspectTurn({
         threadId: candidate.binding.threadId,
         turnId: candidate.turn.backendTurnId,
-        operationKey: candidate.turn.operationKey,
+        operationKey: candidate.turn.backendOperationKey,
       })
     } catch {
       // App Server error text may contain paths or provider details and is not
@@ -151,5 +210,10 @@ export class StartupTurnRecovery {
         reason: 'inspection_failed',
       }
     }
+  }
+
+  private isReplayableSource(sourceUpdateId: number): boolean {
+    const source = this.inbox.get(sourceUpdateId)
+    return source !== null && source.state !== 'PROCESSED'
   }
 }

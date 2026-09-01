@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   TELEGRAM_DISCUSS_THEN_EXECUTE_INSTRUCTIONS,
   TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS,
+  TELEGRAM_TASK_WORKSPACE_INSTRUCTIONS,
   withTelegramProgressContract,
 } from '../../src/bridge/telegram-progress-contract.js'
 
@@ -52,7 +53,14 @@ describe('Telegram progress contract', () => {
     expect(once).toStartWith('Keep repository rules.')
     expect(once.match(/TELEGRAM DISCUSS-THEN-EXECUTE CONTRACT/g)).toHaveLength(1)
     expect(once.match(/TELEGRAM PROGRESS CONTRACT/g)).toHaveLength(1)
+    expect(once.match(/TELEGRAM TASK WORKSPACE CONTRACT/g)).toHaveLength(1)
     expect(twice).toBe(once)
+  })
+
+  test('assigns commit and cleanup ownership to the bridge task workspace', () => {
+    expect(TELEGRAM_TASK_WORKSPACE_INSTRUCTIONS).toContain('ephemeral task-scoped Git worktree')
+    expect(TELEGRAM_TASK_WORKSPACE_INSTRUCTIONS).toContain('Do not commit, push')
+    expect(TELEGRAM_TASK_WORKSPACE_INSTRUCTIONS).toContain('discards the task worktree')
   })
 
   test('upgrades an existing progress-only contract with the discussion phase', () => {

@@ -111,6 +111,10 @@ function installationValues(input: InitializeBridgeInstallationInput): {
 
   const configuration = BridgeConfigFileSchema.parse({
     stateDatabase: join(stateDirectory, 'bridge.sqlite3'),
+    taskWorkspaces: {
+      enabled: true,
+      directory: join(stateDirectory, 'task-workspaces'),
+    },
     projects: [{
       id: projectId,
       cwd: projectPath,
@@ -159,6 +163,9 @@ function ensureRuntimeDirectories(
   configuration: ReturnType<typeof BridgeConfigFileSchema.parse>,
 ): void {
   mkdirSync(stateDirectory, { recursive: true, mode: 0o700 })
+  if (configuration.taskWorkspaces.enabled) {
+    mkdirSync(configuration.taskWorkspaces.directory, { recursive: true, mode: 0o700 })
+  }
   mkdirSync(configuration.attachments.directory, { recursive: true, mode: 0o700 })
   mkdirSync(configuration.outboundMedia.directory, { recursive: true, mode: 0o700 })
 }

@@ -41,6 +41,30 @@ Bot token и optional `GROQ_API_KEY` принимаются из environment и�
 `danger-full-access` активен: writable roots, network sandbox и approvals тогда
 не ограничивают Codex.
 
+## Отмена задачи и локальные изменения
+
+`taskWorkspaces.enabled` по умолчанию включён. Для чистого Git-проекта каждый
+turn выполняется в отдельном detached worktree из
+`taskWorkspaces.directory`; зарегистрированный checkout меняется только после
+доказанного успешного завершения backend turn. Bridge применяет получившийся
+diff без commit/push, поэтому обычная Git-шайба по-прежнему предлагает эти
+действия владельцу.
+
+Кнопка отмены требует второго подтверждения: «Отменить и очистить» прерывает
+точный backend turn и удаляет его незавершённый worktree. Durable-флаг отмены
+переживает restart, отменённая работа не попадает в auto-resume. Если restart
+случился на границе успешной интеграции, bridge проверяет уже применённый patch
+и идемпотентно заканчивает transition.
+
+Если зарегистрированный checkout был грязным до начала turn, bridge переносит
+его tracked и non-ignored untracked состояние в baseline капсулы. При успехе в
+canonical checkout применяется только дельта задачи; при отмене baseline и
+чужой черновик остаются нетронутыми. Для non-Git каталогов изоляция невозможна:
+они продолжают работать напрямую и без обещания filesystem rollback. Внешние
+side effects (API, сообщения, удалённые сервисы) автоматически не откатываются.
+Для production укажи `taskWorkspaces.directory` на приватном локальном диске с
+достаточным местом; завершённые metadata rows удаляются общим retention job.
+
 ## Health и systemd watchdog
 
 По умолчанию health слушает только `127.0.0.1:8787`:

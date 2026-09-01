@@ -78,6 +78,10 @@ describe('loadBridgeServiceConfig', () => {
     })
 
     expect(config.stateDatabase).toBe(join(root, 'state', 'runtime.sqlite3'))
+    expect(config.taskWorkspaces).toEqual({
+      enabled: true,
+      directory: join(root, 'state', 'task-workspaces'),
+    })
     expect(config.attachments.directory).toBe(join(root, 'state', 'attachments'))
     expect(config.attachments.maxBytes).toBe(20 * 1024 * 1024)
     expect(config.attachments.allowedMimeTypes).toContain('image/jpeg')

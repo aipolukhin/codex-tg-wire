@@ -540,6 +540,8 @@ export interface FinalTextDelivery {
 export interface FinalArtifactDelivery extends FinalTextDelivery {
   /** Optional delivery that must be proven before the first artifact is sent. */
   dependsOnSourceKey?: string
+  /** Logical durable operation that produced this completion. */
+  operationKey?: string
 }
 
 export interface TurnCompletionReporter {

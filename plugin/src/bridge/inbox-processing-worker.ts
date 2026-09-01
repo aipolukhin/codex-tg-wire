@@ -360,6 +360,7 @@ export class InboxProcessingWorker {
         update,
         message,
         result,
+        operationKey: turnKey,
         sourceKey: `${turnKey}:completion`,
         ...(dependsOnSourceKey === undefined ? {} : { dependsOnSourceKey }),
         nowMs: completedAtMs,

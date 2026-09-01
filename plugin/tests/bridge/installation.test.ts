@@ -41,6 +41,7 @@ describe('initializeBridgeInstallation', () => {
     expect(statSync(result.environmentPath).mode & 0o777).toBe(0o600)
     expect(statSync(result.telegramCredentialPath).mode & 0o777).toBe(0o600)
     expect(statSync(result.stateDirectory).mode & 0o777).toBe(0o700)
+    expect(statSync(join(paths.stateDirectory, 'task-workspaces')).mode & 0o777).toBe(0o700)
     expect(await Bun.file(result.telegramCredentialPath).text()).toBe('')
     const serialized = await Bun.file(result.configPath).text()
     expect(serialized).not.toMatch(/token|apiKey|credential/i)
@@ -57,6 +58,7 @@ describe('initializeBridgeInstallation', () => {
     expect(config.telegramToken).toBe('test-file-token')
     expect(config.projects[0]?.cwd).toBe(paths.project)
     expect(config.stateDatabase).toBe(join(paths.stateDirectory, 'bridge.sqlite3'))
+    expect(config.taskWorkspaces.directory).toBe(join(paths.stateDirectory, 'task-workspaces'))
   })
 
   test('uses the owner-only YOLO execution profile by default', async () => {

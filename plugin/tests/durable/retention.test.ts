@@ -164,6 +164,13 @@ describe('DurableDataRetention', () => {
        VALUES ('route-1', 'bot', '100', 'main', 'thread-1', 99, ?, ?)`,
       [OLD, OLD],
     )
+    database.run(
+      `INSERT INTO turn_task_workspaces
+        (operation_key, project_id, mode, phase, canonical_root, canonical_cwd,
+         created_at_ms, updated_at_ms)
+       VALUES ('old-workspace', 'main', 'PLAIN', 'BYPASSED', '/tmp/project', '/tmp/project', ?, ?)`,
+      [OLD, OLD],
+    )
 
     const outboundPath = join(outbound, 'private.bin')
     writeFileSync(outboundPath, 'private outbound')
@@ -188,6 +195,7 @@ describe('DurableDataRetention', () => {
       attachmentsScrubbed: 1,
       turnDiffsRemoved: 1,
       messageRoutesRemoved: 1,
+      taskWorkspacesRemoved: 1,
       attachmentFilesRemoved: 1,
       outboundFilesRemoved: 1,
     })
@@ -234,6 +242,9 @@ describe('DurableDataRetention', () => {
     ).get()?.count).toBe(0)
     expect(database.query<{ count: number }, []>(
       'SELECT count(*) AS count FROM telegram_message_routes',
+    ).get()?.count).toBe(0)
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM turn_task_workspaces',
     ).get()?.count).toBe(0)
     expect(new SqliteOutboxRepository(database).get('old-delivery')?.payload).toEqual({ scrubbed: true })
     database.close()

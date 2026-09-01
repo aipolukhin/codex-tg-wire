@@ -7,6 +7,7 @@ import {
   SqliteSessionRepository,
   type ActiveTurnRecoveryCandidate,
 } from '../durable/session-repository.js'
+import type { TaskWorkspaceController } from './durable-task-workspaces.js'
 
 export interface TurnRecoverySweep {
   candidates: number
@@ -21,6 +22,10 @@ export interface TurnRecoverySweep {
 export interface StartupTurnRecoveryOptions {
   now?: () => number
   backendName?: string
+  taskWorkspaces?: Pick<
+    TaskWorkspaceController,
+    'isCancellationRequested' | 'complete' | 'abort'
+  >
 }
 
 function safeTurnLabel(candidate: ActiveTurnRecoveryCandidate, backendTurnId: string | null): string {
@@ -64,6 +69,13 @@ function autoResumeNotice(
   ].join('\n')
 }
 
+function workspaceRecoveryNotice(): string {
+  return [
+    '⚠️ После перезапуска не удалось безопасно завершить локальные изменения задачи.',
+    'Повтор не выполнялся. Изменения изолированы; повтори запрос новым сообщением.',
+  ].join('\n')
+}
+
 /**
  * Reconciles turns left ACTIVE by a previous bridge process. Proven terminal
  * failures are requeued in the same logical operation/thread. An uncertain
@@ -72,6 +84,7 @@ function autoResumeNotice(
 export class StartupTurnRecovery {
   private readonly now: () => number
   private readonly backendName: string
+  private readonly taskWorkspaces: StartupTurnRecoveryOptions['taskWorkspaces']
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -82,6 +95,7 @@ export class StartupTurnRecovery {
   ) {
     this.now = options.now ?? Date.now
     this.backendName = options.backendName ?? 'codex'
+    this.taskWorkspaces = options.taskWorkspaces
   }
 
   async run(): Promise<TurnRecoverySweep> {
@@ -96,9 +110,80 @@ export class StartupTurnRecovery {
       unblocked: 0,
     }
     for (const candidate of candidates) {
+      if (this.taskWorkspaces?.isCancellationRequested(candidate.turn.operationKey) === true) {
+        const nowMs = this.now()
+        if (candidate.binding !== null && candidate.turn.backendTurnId !== null) {
+          await this.backend.interruptTurn(
+            candidate.binding.threadId,
+            candidate.turn.backendTurnId,
+          ).catch(() => undefined)
+        }
+        await this.taskWorkspaces.abort(candidate.turn.operationKey, 'INTERRUPTED')
+        this.sessions.markRecoveredTerminal(
+          candidate.turn.id,
+          'INTERRUPTED',
+          'OperatorCancelledTurn',
+          nowMs,
+          candidate.turn.backendTurnId,
+        )
+        if (candidate.turn.sourceUpdateId !== null) {
+          this.inbox.quarantineForTurnRecovery(
+            candidate.turn.sourceUpdateId,
+            'OperatorCancelledTurn',
+            nowMs,
+          )
+        }
+        sweep.interrupted += 1
+        continue
+      }
       const inspection = await this.inspect(candidate)
       const nowMs = this.now()
       if (inspection.state === 'COMPLETED') {
+        try {
+          const completion = await this.taskWorkspaces?.complete(candidate.turn.operationKey)
+          if (completion?.cancelled === true) {
+            this.sessions.markRecoveredTerminal(
+              candidate.turn.id,
+              'INTERRUPTED',
+              'OperatorCancelledTurn',
+              nowMs,
+              inspection.result.turnId,
+            )
+            if (candidate.turn.sourceUpdateId !== null) {
+              this.inbox.quarantineForTurnRecovery(
+                candidate.turn.sourceUpdateId,
+                'OperatorCancelledTurn',
+                nowMs,
+              )
+            }
+            sweep.interrupted += 1
+            continue
+          }
+        } catch {
+          const errorName = 'TaskWorkspaceRecoveryFailed'
+          this.sessions.markRecoveredTerminal(
+            candidate.turn.id,
+            'UNKNOWN',
+            errorName,
+            nowMs,
+            inspection.result.turnId,
+          )
+          if (candidate.turn.sourceUpdateId !== null) {
+            this.inbox.quarantineForTurnRecovery(candidate.turn.sourceUpdateId, errorName, nowMs)
+          }
+          this.outbox.enqueue({
+            sourceKey: `turn:${candidate.turn.id}:workspace-recovery`,
+            sessionId: candidate.session.id,
+            kind: 'send_text',
+            payload: {
+              chatId: candidate.session.chatId,
+              text: workspaceRecoveryNotice(),
+            },
+            createdAtMs: nowMs,
+          })
+          sweep.unknown += 1
+          continue
+        }
         if (candidate.binding !== null) {
           this.sessions.activateRecoveredBinding(
             candidate.session.id,
@@ -118,6 +203,36 @@ export class StartupTurnRecovery {
       const errorName = inspection.state === 'UNKNOWN'
         ? `CodexTurnRecoveryUnknown:${inspection.reason}`
         : `CodexTurnRecovery${inspection.state}`
+      if (inspection.state === 'FAILED' || inspection.state === 'INTERRUPTED') {
+        try {
+          await this.taskWorkspaces?.abort(candidate.turn.operationKey, inspection.state)
+        } catch {
+          const workspaceErrorName = 'TaskWorkspaceRecoveryFailed'
+          this.sessions.markRecoveredTerminal(
+            candidate.turn.id,
+            'UNKNOWN',
+            workspaceErrorName,
+            nowMs,
+            inspection.turnId,
+          )
+          if (candidate.turn.sourceUpdateId !== null) {
+            this.inbox.quarantineForTurnRecovery(
+              candidate.turn.sourceUpdateId,
+              workspaceErrorName,
+              nowMs,
+            )
+          }
+          this.outbox.enqueue({
+            sourceKey: `turn:${candidate.turn.id}:workspace-recovery`,
+            sessionId: candidate.session.id,
+            kind: 'send_text',
+            payload: { chatId: candidate.session.chatId, text: workspaceRecoveryNotice() },
+            createdAtMs: nowMs,
+          })
+          sweep.unknown += 1
+          continue
+        }
+      }
       if (
         (inspection.state === 'FAILED' || inspection.state === 'INTERRUPTED') &&
         candidate.turn.sourceUpdateId !== null &&

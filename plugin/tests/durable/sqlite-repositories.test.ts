@@ -76,6 +76,7 @@ describe('durable database migrations', () => {
       'thread_bindings',
       'thread_registry',
       'turn_recovery_attempts',
+      'turn_task_workspaces',
       'turns',
     ])
 
@@ -84,7 +85,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(24)
+    expect(migrations?.count).toBe(25)
   })
 
   test('migrates cumulative HUD totals without relabelling them as current context', () => {

@@ -22,6 +22,8 @@ let sessions: SqliteSessionRepository
 let outbox: SqliteOutboxRepository
 let nowMs: number
 let interrupts: Array<{ threadId: string; turnId: string }>
+let workspaceCancellationRequests: string[]
+let workspaceCancellationOutcome: 'pending' | 'discarded'
 let cards: DurableTurnPlanCards
 let operation: TextTurnOperation
 
@@ -32,6 +34,8 @@ beforeEach(() => {
   outbox = new SqliteOutboxRepository(database)
   nowMs = NOW
   interrupts = []
+  workspaceCancellationRequests = []
+  workspaceCancellationOutcome = 'pending'
   cards = new DurableTurnPlanCards(
     database,
     outbox,
@@ -42,6 +46,13 @@ beforeEach(() => {
       },
     },
     () => nowMs,
+    {
+      requestCancellation: (operationKey) => {
+        workspaceCancellationRequests.push(operationKey)
+        return 'requested'
+      },
+      cancellationOutcome: () => workspaceCancellationOutcome,
+    },
   )
   const update = new SqliteInboxRepository(database).ingest({
     botId: 'primary', updateId: 701, chatId: '7001', routingClass: 'MESSAGE',
@@ -136,13 +147,14 @@ describe('DurableTurnPlanCards', () => {
     })
     expect(first.toast).toBe('Нужно подтверждение')
     expect(interrupts).toEqual([])
-    expect(JSON.stringify(outbox.get(first.deliveryJobId!)?.payload)).toContain('Подтвердить')
+    expect(JSON.stringify(outbox.get(first.deliveryJobId!)?.payload)).toContain('Отменить и очистить')
 
     nowMs += 1
     const confirmed = await cards.handleAction({
       operationKey: 'callback:2', token: row.token, chatId: '7001', action: 'confirm',
     })
     expect(confirmed.toast).toBe('Отмена запрошена')
+    expect(workspaceCancellationRequests).toEqual([operation.operationKey])
     expect(interrupts).toEqual([{ threadId: 'thread-1', turnId: 'turn-1' }])
 
     await cards.handleAction({
@@ -150,6 +162,7 @@ describe('DurableTurnPlanCards', () => {
     })
     expect(interrupts).toHaveLength(1)
 
+    workspaceCancellationOutcome = 'discarded'
     cards.onTerminal(operation, 'INTERRUPTED', 'CodexTurnInterruptedError')
     const persisted = database.query<{
       phase: string
@@ -159,6 +172,9 @@ describe('DurableTurnPlanCards', () => {
     expect(persisted).toEqual({
       phase: 'INTERRUPTED', cancel_state: 'CLOSED', interrupt_sent_at_ms: nowMs,
     })
+    expect(JSON.stringify(outbox.getBySourceKey(
+      `${operation.operationKey}:plan-progress:edit:3`,
+    )?.payload)).toContain('Незавершённые локальные изменения задачи удалены')
   })
 
   test('edits the same card with live activity but no duplicate elapsed timer', () => {

@@ -51,9 +51,14 @@ export interface GitTurnDiffProvider {
   getLatestDiff(threadId: string): { turnId: string; diff: string } | null
 }
 
+export interface GitTurnMutationProvider {
+  hasIntegratedChanges(operationKey: string): boolean | null
+}
+
 export interface GitWorkspaceControlOptions {
   runner?: GitCommandRunner
   turnDiffProvider?: GitTurnDiffProvider
+  turnMutationProvider?: GitTurnMutationProvider
 }
 
 export function sanitizedGitEnvironment(
@@ -219,6 +224,7 @@ export class GitWorkspaceControl implements GitWorkspaceController {
   private readonly projects: ProjectCatalog
   private readonly runner: GitCommandRunner
   private readonly turnDiffProvider: GitTurnDiffProvider | undefined
+  private readonly turnMutationProvider: GitTurnMutationProvider | undefined
 
   constructor(
     projects: readonly ProjectDefinition[] | ProjectCatalog,
@@ -227,6 +233,7 @@ export class GitWorkspaceControl implements GitWorkspaceController {
     this.projects = 'list' in projects ? projects : new StaticProjectCatalog(projects)
     this.runner = options.runner ?? new ProcessGitCommandRunner()
     this.turnDiffProvider = options.turnDiffProvider
+    this.turnMutationProvider = options.turnMutationProvider
     const initial = this.projects.list()
     if (initial.length === 0 || initial.length > 100) {
       throw new TypeError('git workspace control requires 1 to 100 projects')
@@ -245,12 +252,18 @@ export class GitWorkspaceControl implements GitWorkspaceController {
     input: FinalArtifactDelivery,
   ): Promise<readonly DeliveryJobInput[]> {
     if ((input.result.presentation ?? 'answer') !== 'answer') return []
+    const mutationProof = input.operationKey === undefined
+      ? null
+      : this.turnMutationProvider?.hasIntegratedChanges(input.operationKey) ?? null
+    if (mutationProof === false) return []
     const turnDiff = this.turnDiffProvider?.getLatestDiff(input.result.threadId)
     if (
-      turnDiff === undefined ||
-      turnDiff === null ||
-      turnDiff.turnId !== input.result.turnId ||
-      turnDiff.diff.trim().length === 0
+      mutationProof !== true && (
+        turnDiff === undefined ||
+        turnDiff === null ||
+        turnDiff.turnId !== input.result.turnId ||
+        turnDiff.diff.trim().length === 0
+      )
     ) return []
     let status: GitWorkspaceStatus | null
     try {

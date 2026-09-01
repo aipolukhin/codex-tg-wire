@@ -15,6 +15,7 @@ import {
   type TurnRecord,
 } from '../durable/session-repository.js'
 import { safeErrorSummary } from './retry-policy.js'
+import type { TaskWorkspaceController } from './durable-task-workspaces.js'
 
 export interface ProjectDefinition {
   id: string
@@ -128,6 +129,7 @@ export interface DurableSessionCoordinatorOptions {
   backendName?: string
   settingsProvider?: AgentSettingsProvider
   uxObserver?: AgentTurnUxObserver
+  taskWorkspaces?: TaskWorkspaceController
 }
 
 export class DurableSessionCoordinator implements SessionCoordinator {
@@ -136,6 +138,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
   private readonly backendName: string
   private readonly settingsProvider: AgentSettingsProvider | undefined
   private readonly uxObserver: AgentTurnUxObserver | undefined
+  private readonly taskWorkspaces: TaskWorkspaceController | undefined
 
   constructor(
     private readonly sessions: SqliteSessionRepository,
@@ -147,6 +150,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     this.backendName = options.backendName ?? 'codex'
     this.settingsProvider = options.settingsProvider
     this.uxObserver = options.uxObserver
+    this.taskWorkspaces = options.taskWorkspaces
   }
 
   runTextTurn(operation: TextTurnOperation): Promise<TextTurnResult> {
@@ -232,7 +236,14 @@ export class DurableSessionCoordinator implements SessionCoordinator {
     const backendText = recovery === null
       ? operation.text
       : autoResumeText(operation.text, recovery)
-    const writableRoots = [...new Set([project.cwd, ...(project.writableRoots ?? [])])]
+    const workspace = this.taskWorkspaces === undefined
+      ? { cwd: project.cwd, writableRoot: project.cwd, isolated: false }
+      : await this.taskWorkspaces.prepare(operation, project)
+    const writableRoots = [...new Set([
+      workspace.writableRoot,
+      ...(workspace.isolated ? [] : [project.cwd]),
+      ...(project.writableRoots ?? []),
+    ])]
     this.notifyUx(() => this.uxObserver?.onPreparing(operation, settings))
     try {
       const result = await this.backend.runTextTurn(
@@ -240,7 +251,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           operationKey: prepared.turn.backendOperationKey,
           threadId: prepared.binding?.threadId ?? null,
           projectId: operation.projectId,
-          cwd: project.cwd,
+          cwd: workspace.cwd,
           text: backendText,
           ...(operation.attachments === undefined || operation.attachments.length === 0
             ? {}
@@ -289,6 +300,14 @@ export class DurableSessionCoordinator implements SessionCoordinator {
           `agent result ${result.threadId}/${result.turnId} does not match lifecycle ${readyThreadId}/${startedTurnId}`,
         )
       }
+      const workspaceCompletion = await this.taskWorkspaces?.complete(operation.operationKey)
+      if (workspaceCompletion?.cancelled === true) {
+        const cancelled = new Error('task was cancelled before workspace integration') as Error & DefiniteTurnError
+        cancelled.name = 'TaskWorkspaceCancelledError'
+        cancelled.agentTurnState = 'INTERRUPTED'
+        cancelled.turnId = result.turnId
+        throw cancelled
+      }
       this.sessions.completeTurn(prepared.turn.id, result, this.now())
       this.notifyUx(() => this.uxObserver?.onCompleted(operation, result))
       return result
@@ -296,6 +315,7 @@ export class DurableSessionCoordinator implements SessionCoordinator {
       let uxState: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN' = 'UNKNOWN'
       if (dispatching) {
         uxState = isDefiniteTurnError(error) ? error.agentTurnState : 'UNKNOWN'
+        await this.taskWorkspaces?.abort(operation.operationKey, uxState)
         this.sessions.markTerminal(prepared.turn.id, uxState, safeErrorSummary(error), this.now())
       }
       this.notifyUx(() => this.uxObserver?.onTerminal(

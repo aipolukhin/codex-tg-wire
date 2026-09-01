@@ -14,6 +14,7 @@ import type {
   TextTurnOperation,
   TextTurnResult,
 } from './contracts.js'
+import type { TaskWorkspaceController } from './durable-task-workspaces.js'
 
 type PlanPhase = 'ACTIVE' | 'COMPLETED' | 'FAILED' | 'INTERRUPTED' | 'UNKNOWN'
 type CancelState = 'AVAILABLE' | 'CONFIRMING' | 'REQUESTED' | 'CLOSED'
@@ -163,7 +164,7 @@ function buttons(row: PlanCardRow): { inline_keyboard: Array<Array<{ text: strin
   if (row.cancel_state === 'CONFIRMING') {
     return {
       inline_keyboard: [[
-        { text: '⏹ Подтвердить', callback_data: `dx:t:${row.token}:confirm` },
+        { text: '⏹ Отменить и очистить', callback_data: `dx:t:${row.token}:confirm` },
         { text: '↩ Продолжить', callback_data: `dx:t:${row.token}:keep` },
       ]],
     }
@@ -189,9 +190,11 @@ function richText(row: PlanCardRow): string {
   if (row.phase === 'ACTIVE' && status.activity !== null) {
     lines.push('', `> **Сейчас:** ${escapeRichInline(ACTIVITY_LABELS[status.activity])}`)
     if (status.commentary !== null) lines.push(`> ${escapeRichInline(status.commentary)}`)
+  } else if (row.phase === 'INTERRUPTED' && status.commentary !== null) {
+    lines.push('', `> ${escapeRichInline(status.commentary)}`)
   }
   if (row.cancel_state === 'CONFIRMING') {
-    lines.push('', '> Отменить эту задачу? Подтверди ниже.')
+    lines.push('', '> Отменить задачу и удалить все её незавершённые локальные изменения?')
   } else if (row.cancel_state === 'REQUESTED') {
     lines.push('', '> Отмена запрошена…')
   }
@@ -211,9 +214,11 @@ function fallbackText(row: PlanCardRow): string {
   if (row.phase === 'ACTIVE' && status.activity !== null) {
     lines.push('', `<b>Сейчас:</b> ${escapeHtml(ACTIVITY_LABELS[status.activity])}`)
     if (status.commentary !== null) lines.push(escapeHtml(status.commentary))
+  } else if (row.phase === 'INTERRUPTED' && status.commentary !== null) {
+    lines.push('', escapeHtml(status.commentary))
   }
   if (row.cancel_state === 'CONFIRMING') {
-    lines.push('', 'Отменить эту задачу? Подтверди ниже.')
+    lines.push('', 'Отменить задачу и удалить все её незавершённые локальные изменения?')
   } else if (row.cancel_state === 'REQUESTED') {
     lines.push('', 'Отмена запрошена…')
   }
@@ -251,6 +256,10 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
     private readonly sessions: SqliteSessionRepository,
     private readonly backend: Pick<AgentBackend, 'interruptTurn'>,
     private readonly now: () => number = Date.now,
+    private readonly taskWorkspaces?: Pick<
+      TaskWorkspaceController,
+      'requestCancellation' | 'cancellationOutcome'
+    >,
   ) {}
 
   onPreparing(_operation: TextTurnOperation, _settings: AgentTurnSettings): void {}
@@ -509,6 +518,14 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       }
       let deliveryJobId: string | null = null
       if (row.cancel_state === 'CONFIRMING') {
+        const workspaceCancellation = this.taskWorkspaces?.requestCancellation(row.operation_key)
+        if (workspaceCancellation === 'too_late') {
+          return {
+            row: null,
+            deliveryJobId: null,
+            toast: 'Задача уже завершает применение изменений',
+          }
+        }
         row.cancel_state = 'REQUESTED'
         row.cancel_operation_key = input.operationKey
         row.updated_at_ms = this.now()
@@ -544,6 +561,18 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       if (row === null || row.phase !== 'ACTIVE') return
       row.phase = phase
       row.cancel_state = 'CLOSED'
+      if (phase === 'INTERRUPTED') {
+        const outcome = this.taskWorkspaces?.cancellationOutcome(operationKey)
+        const status = statusFromRow(row)
+        if (outcome === 'discarded') {
+          status.commentary = 'Незавершённые локальные изменения задачи удалены.'
+          status.commentaryAtMs = nowMs
+        } else if (outcome === 'unisolated_changes_preserved') {
+          status.commentary = 'Turn остановлен; проект не был изолирован, локальные изменения сохранены.'
+          status.commentaryAtMs = nowMs
+        }
+        row.status_json = JSON.stringify(status)
+      }
       if (completeSteps) {
         row.steps_json = JSON.stringify(
           stepsFromRow(row).map((step) => ({ ...step, status: 'completed' as const })),

@@ -26,6 +26,7 @@ const NOW = 1_800_000_000_000
 
 class InspectingBackend implements AgentBackend {
   readonly inspections: AgentTurnInspectionInput[] = []
+  readonly interrupts: Array<{ threadId: string; turnId: string }> = []
   readonly results = new Map<string, AgentTurnInspection>()
 
   async inspectTurn(input: AgentTurnInspectionInput): Promise<AgentTurnInspection> {
@@ -42,7 +43,9 @@ class InspectingBackend implements AgentBackend {
   ): Promise<TextTurnResult> {
     throw new Error('startup recovery must not start a turn')
   }
-  async interruptTurn(): Promise<void> {}
+  async interruptTurn(threadId: string, turnId: string): Promise<void> {
+    this.interrupts.push({ threadId, turnId })
+  }
   async steerTurn(): Promise<void> {}
 }
 
@@ -106,6 +109,38 @@ function activeTurn(input: {
 }
 
 describe('startup turn recovery', () => {
+  test('never auto-resumes an owner-cancelled turn after restart', async () => {
+    const active = activeTurn({
+      updateId: 9,
+      chatId: '7001',
+      threadId: 'thread-cancelled',
+      turnId: 'turn-cancelled',
+    })
+    const aborted: string[] = []
+    const sweep = await new StartupTurnRecovery(sessions, inbox, outbox, backend, {
+      now: () => NOW + 1,
+      taskWorkspaces: {
+        isCancellationRequested: (operationKey) => operationKey === active.operationKey,
+        complete: async () => ({ cancelled: false, integrated: true, changed: false }),
+        abort: async (operationKey) => { aborted.push(operationKey) },
+      },
+    }).run()
+
+    expect(sweep).toMatchObject({
+      candidates: 1,
+      interrupted: 1,
+      resumed: 0,
+      unknown: 0,
+    })
+    expect(backend.inspections).toEqual([])
+    expect(backend.interrupts).toEqual([
+      { threadId: 'thread-cancelled', turnId: 'turn-cancelled' },
+    ])
+    expect(aborted).toEqual([active.operationKey])
+    expect(sessions.getTurn(active.turn.id)?.state).toBe('INTERRUPTED')
+    expect(inbox.get(active.update.id)?.state).toBe('FAILED')
+  })
+
   test('replays a proven completed result through the original inbox operation', async () => {
     const active = activeTurn({
       updateId: 10,
@@ -126,8 +161,17 @@ describe('startup turn recovery', () => {
       },
     })
 
+    const completedWorkspaces: string[] = []
     const sweep = await new StartupTurnRecovery(sessions, inbox, outbox, backend, {
       now: () => NOW + 1,
+      taskWorkspaces: {
+        isCancellationRequested: () => false,
+        complete: async (operationKey) => {
+          completedWorkspaces.push(operationKey)
+          return { cancelled: false, integrated: true, changed: true }
+        },
+        abort: async () => undefined,
+      },
     }).run()
 
     expect(sweep).toEqual({
@@ -157,6 +201,7 @@ describe('startup turn recovery', () => {
     expect(database.query<{ count: number }, []>(
       'SELECT count(*) AS count FROM delivery_jobs',
     ).get()?.count).toBe(0)
+    expect(completedWorkspaces).toEqual([active.operationKey])
   })
 
   test('auto-resumes proven terminal turns and quarantines only uncertain work', async () => {
@@ -188,8 +233,16 @@ describe('startup turn recovery', () => {
       reason: 'turn_in_progress',
     })
 
+    const abortedWorkspaces: Array<{ operationKey: string; state: string }> = []
     const sweep = await new StartupTurnRecovery(sessions, inbox, outbox, backend, {
       now: () => NOW + 2,
+      taskWorkspaces: {
+        isCancellationRequested: () => false,
+        complete: async () => ({ cancelled: false, integrated: true, changed: false }),
+        abort: async (operationKey, state) => {
+          abortedWorkspaces.push({ operationKey, state })
+        },
+      },
     }).run()
 
     expect(sweep).toEqual({
@@ -238,6 +291,11 @@ describe('startup turn recovery', () => {
     expect(notices.some((notice) => notice.text.includes('/new force'))).toBe(true)
     expect(notices.filter((notice) => notice.text.includes('Писать «продолжай» не нужно')))
       .toHaveLength(2)
+    expect(abortedWorkspaces).toHaveLength(2)
+    expect(abortedWorkspaces).toEqual(expect.arrayContaining([
+      { operationKey: failed.operationKey, state: 'FAILED' },
+      { operationKey: interrupted.operationKey, state: 'INTERRUPTED' },
+    ]))
   })
 
   test('turn inspection failures become safe UNKNOWN state without error detail', async () => {

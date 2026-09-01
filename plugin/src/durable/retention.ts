@@ -25,6 +25,7 @@ export interface DurableRetentionResult {
   attachmentsScrubbed: number
   turnDiffsRemoved: number
   messageRoutesRemoved: number
+  taskWorkspacesRemoved: number
   attachmentFilesRemoved: number
   outboundFilesRemoved: number
 }
@@ -57,6 +58,7 @@ function emptyResult(): DurableRetentionResult {
     attachmentsScrubbed: 0,
     turnDiffsRemoved: 0,
     messageRoutesRemoved: 0,
+    taskWorkspacesRemoved: 0,
     attachmentFilesRemoved: 0,
     outboundFilesRemoved: 0,
   }
@@ -280,6 +282,11 @@ export class DurableDataRetention {
          WHERE coalesce(delivered_at_ms, created_at_ms) < ?`,
         [cutoffMs],
       ).changes
+      const taskWorkspacesRemoved = this.database.run(
+        `DELETE FROM turn_task_workspaces
+         WHERE phase IN ('INTEGRATED', 'DISCARDED', 'BYPASSED') AND updated_at_ms < ?`,
+        [cutoffMs],
+      ).changes
       const albumsScrubbed = this.database.run(
         `UPDATE telegram_album_groups
          SET last_error = NULL
@@ -296,6 +303,7 @@ export class DurableDataRetention {
         attachmentsScrubbed,
         turnDiffsRemoved,
         messageRoutesRemoved,
+        taskWorkspacesRemoved,
       }
     }).immediate()
 

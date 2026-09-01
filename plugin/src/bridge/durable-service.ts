@@ -247,6 +247,9 @@ export async function bootstrapDurableBridgeService(
       botId: identity.botId,
       bridgeVersion: compatibility.bridgeVersion,
       codexVersion: compatibility.codexCliVersion,
+      ...(config.taskWorkspaces.enabled
+        ? { taskWorkspaces: { directory: config.taskWorkspaces.directory } }
+        : {}),
       projects: config.projects.map((project) => ({
         id: project.id,
         cwd: project.cwd,

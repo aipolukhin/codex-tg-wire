@@ -738,6 +738,33 @@ const MIGRATIONS: readonly Migration[] = [
         ON turn_recovery_attempts (turn_id, attempt_number DESC)`,
     ],
   },
+  {
+    version: 25,
+    name: 'durable_task_workspaces',
+    statements: [
+      `CREATE TABLE turn_task_workspaces (
+        operation_key TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('ISOLATED', 'PLAIN')),
+        phase TEXT NOT NULL CHECK (phase IN
+          ('PREPARING', 'ACTIVE', 'INTEGRATING', 'INTEGRATED', 'DISCARDING',
+           'DISCARDED', 'BYPASSED', 'BLOCKED')),
+        canonical_root TEXT NOT NULL,
+        canonical_cwd TEXT NOT NULL,
+        worktree_path TEXT,
+        base_head TEXT,
+        patch_path TEXT,
+        baseline_tree TEXT,
+        changed INTEGER CHECK (changed IS NULL OR changed IN (0, 1)),
+        cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+        last_error TEXT,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+      )`,
+      `CREATE INDEX turn_task_workspaces_recovery_idx
+        ON turn_task_workspaces (phase, cancel_requested, updated_at_ms)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

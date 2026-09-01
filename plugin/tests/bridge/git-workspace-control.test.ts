@@ -69,6 +69,7 @@ function completionInput(): FinalArtifactDelivery {
     },
     message: { chatId: '7001', projectId: 'workspace', text: 'change it' },
     result: { threadId: 'thread-1', turnId: 'turn-1', finalText: 'done' },
+    operationKey: 'telegram:primary:7:turn',
     sourceKey: 'telegram:primary:7:turn:completion',
     dependsOnSourceKey: 'telegram:primary:7:turn:final',
     nowMs: NOW,
@@ -153,6 +154,27 @@ describe('GitWorkspaceControl', () => {
     })
 
     expect(await answerOnly.buildTurnCompletionDeliveries(completionInput())).toEqual([])
+  })
+
+  test('uses task-workspace mutation proof instead of a baseline-contaminated turn diff', async () => {
+    writeFileSync(join(workspace, 'README.md'), 'older unrelated change\n')
+    const answerOnly = new GitWorkspaceControl([{ id: 'workspace', cwd: workspace }], {
+      turnDiffProvider: {
+        getLatestDiff: (threadId) => ({
+          threadId,
+          turnId: 'turn-1',
+          diff: 'diff from the dirty baseline, not from this task',
+        }),
+      },
+      turnMutationProvider: { hasIntegratedChanges: () => false },
+    })
+    expect(await answerOnly.buildTurnCompletionDeliveries(completionInput())).toEqual([])
+
+    const changedTask = new GitWorkspaceControl([{ id: 'workspace', cwd: workspace }], {
+      turnDiffProvider: { getLatestDiff: () => null },
+      turnMutationProvider: { hasIntegratedChanges: () => true },
+    })
+    expect(await changedTask.buildTurnCompletionDeliveries(completionInput())).toHaveLength(1)
   })
 
   test('does not show a card for a busy presentation that reuses the active turn diff', async () => {

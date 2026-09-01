@@ -29,6 +29,13 @@ const ProjectSchema = z
 export const BridgeConfigFileSchema = z
   .object({
     stateDatabase: z.string().trim().min(1).default('./state/bridge.sqlite3'),
+    taskWorkspaces: z
+      .object({
+        enabled: z.boolean().default(true),
+        directory: z.string().trim().min(1).default('./state/task-workspaces'),
+      })
+      .strict()
+      .default({}),
     projects: z.array(ProjectSchema).min(1),
     defaultProjectId: z.string().trim().min(1),
     telegram: z
@@ -398,6 +405,10 @@ export function loadBridgeRuntimeConfig(
     ...parsed,
     configPath,
     stateDatabase: absoluteFrom(baseDirectory, parsed.stateDatabase),
+    taskWorkspaces: {
+      ...parsed.taskWorkspaces,
+      directory: absoluteFrom(baseDirectory, parsed.taskWorkspaces.directory),
+    },
     attachments: {
       ...parsed.attachments,
       directory: absoluteFrom(baseDirectory, parsed.attachments.directory),

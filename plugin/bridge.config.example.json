@@ -1,5 +1,9 @@
 {
   "stateDatabase": "./state/bridge.sqlite3",
+  "taskWorkspaces": {
+    "enabled": true,
+    "directory": "./state/task-workspaces"
+  },
   "projects": [
     {
       "id": "main",

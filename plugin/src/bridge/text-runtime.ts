@@ -54,6 +54,7 @@ import {
 import { DurableProjectCatalog } from './durable-project-catalog.js'
 import { DurableTurnUxProjector, type DurableTurnUxOptions } from './durable-turn-ux.js'
 import { DurableTurnPlanCards } from './durable-turn-plan-cards.js'
+import { DurableTaskWorkspaces } from './durable-task-workspaces.js'
 import {
   TelegramNativeTurnUx,
   type TelegramNativeTurnUxOptions,
@@ -120,6 +121,9 @@ export interface DurableTextRuntimeOptions {
   productHomeUrl?: string
   bridgeVersion?: string
   codexVersion?: string
+  taskWorkspaces?: {
+    directory: string
+  }
   retention?: {
     enabled: boolean
     payloadMaxAgeMs: number
@@ -166,6 +170,7 @@ export interface DurableTextRuntime {
     turns: TurnRecoverySweep
     interactions: CodexInteractionRecoverySweep
     uxRecovered: number
+    taskWorkspacesRecovered: number
   }>
   close(): void
 }
@@ -374,6 +379,9 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(options.codex?.turnDefaults === undefined ? {} : { turnDefaults: options.codex.turnDefaults }),
   }
   const backend = new CodexAppServerBackend(options.codexClient, backendOptions)
+  const taskWorkspaces = options.taskWorkspaces === undefined
+    ? undefined
+    : new DurableTaskWorkspaces(options.database, options.taskWorkspaces)
   const interactions = new CodexInteractionBroker(
     options.codexClient,
     new SqliteCodexInteractionRepository(options.database),
@@ -387,6 +395,8 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     outbox,
     sessions,
     backend,
+    Date.now,
+    taskWorkspaces,
   )
   const nativeUx = new TelegramNativeTurnUx(
     options.database,
@@ -462,7 +472,11 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     sessions,
     backend,
     projectCatalog,
-    { settingsProvider: settings, uxObserver },
+    {
+      settingsProvider: settings,
+      uxObserver,
+      ...(taskWorkspaces === undefined ? {} : { taskWorkspaces }),
+    },
   )
   const standardCoordinator = new M65SessionCoordinator(
     baseCoordinator,
@@ -489,7 +503,10 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
     ...(options.productHomeUrl === undefined ? {} : { productHomeUrl: options.productHomeUrl }),
   })
-  const gitWorkspace = new GitWorkspaceControl(projectCatalog, { turnDiffProvider: backend })
+  const gitWorkspace = new GitWorkspaceControl(projectCatalog, {
+    turnDiffProvider: backend,
+    ...(taskWorkspaces === undefined ? {} : { turnMutationProvider: taskWorkspaces }),
+  })
   const standardFeatureInteractions = new M65InteractionHandler(
     interactions,
     controls,
@@ -554,7 +571,9 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
           : { outboundMediaDirectory: options.retention.outboundMediaDirectory }),
       })
     : undefined
-  const startupRecovery = new StartupTurnRecovery(sessions, inbox, outbox, backend)
+  const startupRecovery = new StartupTurnRecovery(sessions, inbox, outbox, backend, {
+    ...(taskWorkspaces === undefined ? {} : { taskWorkspaces }),
+  })
   const allowedUsers = new Set(options.telegram.allowedUserIds.map(String))
   const allowedChats = new Set(options.telegram.allowedChatIds.map(String))
   const receivedReaction = options.ux?.enabled !== false &&
@@ -641,9 +660,10 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     },
     async recoverStartup() {
       const interactionSweep = interactions.recoverStartup()
+      const taskWorkspacesRecovered = await taskWorkspaces?.recoverStartup() ?? 0
       const turnSweep = await startupRecovery.run()
       const uxRecovered = ux.recoverStartup() + await planCards.recoverStartup()
-      return { turns: turnSweep, interactions: interactionSweep, uxRecovered }
+      return { turns: turnSweep, interactions: interactionSweep, uxRecovered, taskWorkspacesRecovered }
     },
     close(): void {
       nativeUx.close()

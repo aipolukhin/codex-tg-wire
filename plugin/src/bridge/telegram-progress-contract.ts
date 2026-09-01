@@ -1,5 +1,6 @@
 const CONTRACT_MARKER = 'TELEGRAM PROGRESS CONTRACT'
 const EXECUTION_GATE_MARKER = 'TELEGRAM DISCUSS-THEN-EXECUTE CONTRACT'
+const TASK_WORKSPACE_MARKER = 'TELEGRAM TASK WORKSPACE CONTRACT'
 
 /** A scoped phase transition, not a per-command permission system. */
 export const TELEGRAM_DISCUSS_THEN_EXECUTE_INSTRUCTIONS = [
@@ -35,6 +36,15 @@ export const TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS = [
   'Never claim completion or mark a step completed without evidence.',
 ].join('\n')
 
+export const TELEGRAM_TASK_WORKSPACE_INSTRUCTIONS = [
+  `${TASK_WORKSPACE_MARKER} — REQUIRED.`,
+  'The bridge may run a turn inside an ephemeral task-scoped Git worktree. Treat the provided cwd as the only repository worktree owned by this turn.',
+  'Do not write to the registered canonical checkout by absolute path while the task worktree is active.',
+  'Do not commit, push, alter remotes or integrate branches from the task worktree. The bridge applies the completed filesystem diff to the registered checkout only after a successful turn and then presents the normal Git controls.',
+  'If the owner cancels or the turn fails, the bridge discards the task worktree. External side effects remain governed by their own explicit rollback path.',
+  'In the final answer, refer to files by their registered project paths, never by the ephemeral task-workspace path.',
+].join('\n')
+
 /** Preserve caller-supplied developer instructions and append both contracts once. */
 export function withTelegramProgressContract(
   existing: string | null | undefined,
@@ -43,6 +53,7 @@ export function withTelegramProgressContract(
   for (const [marker, instructions] of [
     [EXECUTION_GATE_MARKER, TELEGRAM_DISCUSS_THEN_EXECUTE_INSTRUCTIONS],
     [CONTRACT_MARKER, TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS],
+    [TASK_WORKSPACE_MARKER, TELEGRAM_TASK_WORKSPACE_INSTRUCTIONS],
   ] as const) {
     if (combined.includes(marker)) continue
     combined = combined.length === 0 ? instructions : `${combined}\n\n${instructions}`

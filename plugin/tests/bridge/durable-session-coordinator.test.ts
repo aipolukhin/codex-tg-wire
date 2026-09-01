@@ -25,6 +25,7 @@ import {
 } from '../../src/bridge/durable-session-coordinator.js'
 import { PersonalAlphaCommands } from '../../src/bridge/personal-alpha-commands.js'
 import { DurableProjectCatalog } from '../../src/bridge/durable-project-catalog.js'
+import type { TaskWorkspaceController } from '../../src/bridge/durable-task-workspaces.js'
 import { openDurableDatabase } from '../../src/durable/database.js'
 import { SqliteAgentSettingsRepository } from '../../src/durable/settings-repository.js'
 import {
@@ -200,6 +201,80 @@ function problemCommand(
 }
 
 describe('DurableSessionCoordinator', () => {
+  test('runs the backend in a task capsule and integrates it before completing the durable turn', async () => {
+    const events: string[] = []
+    const taskWorkspaces: TaskWorkspaceController = {
+      prepare: async () => {
+        events.push('prepare')
+        return {
+          cwd: '/state/tasks/one',
+          writableRoot: '/state/tasks/one',
+          isolated: true,
+          mode: 'ISOLATED',
+        }
+      },
+      complete: async () => {
+        events.push('complete')
+        return { cancelled: false, integrated: true, changed: true }
+      },
+      abort: async () => { events.push('abort') },
+      requestCancellation: () => 'requested',
+      isCancellationRequested: () => false,
+      cancellationOutcome: () => 'not_requested',
+      hasIntegratedChanges: () => true,
+      recoverStartup: async () => 0,
+    }
+    const scoped = new DurableSessionCoordinator(
+      sessions,
+      backend,
+      new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
+      { now: () => nowMs, settingsProvider: settings, taskWorkspaces },
+    )
+
+    const op = operation(600)
+    await scoped.runTextTurn(op)
+
+    expect(events).toEqual(['prepare', 'complete'])
+    expect(backend.calls[0]).toMatchObject({
+      cwd: '/state/tasks/one',
+      executionPolicy: { writableRoots: ['/state/tasks/one'] },
+    })
+    expect(sessions.getTurnByOperationKey(op.operationKey)?.state).toBe('COMPLETED')
+  })
+
+  test('lets confirmed cancellation win before capsule integration', async () => {
+    const events: string[] = []
+    const taskWorkspaces: TaskWorkspaceController = {
+      prepare: async () => ({
+        cwd: '/state/tasks/cancelled',
+        writableRoot: '/state/tasks/cancelled',
+        isolated: true,
+        mode: 'ISOLATED',
+      }),
+      complete: async () => ({ cancelled: true, integrated: false, changed: false }),
+      abort: async (_operationKey, state) => { events.push(`abort:${state}`) },
+      requestCancellation: () => 'requested',
+      isCancellationRequested: () => true,
+      cancellationOutcome: () => 'discarded',
+      hasIntegratedChanges: () => false,
+      recoverStartup: async () => 0,
+    }
+    const scoped = new DurableSessionCoordinator(
+      sessions,
+      backend,
+      new StaticProjectResolver([{ id: 'workspace', cwd: '/srv/workspace' }]),
+      { now: () => nowMs, taskWorkspaces },
+    )
+    const op = operation(599)
+
+    await expect(scoped.runTextTurn(op)).rejects.toMatchObject({
+      name: 'TaskWorkspaceCancelledError',
+      agentTurnState: 'INTERRUPTED',
+    })
+    expect(events).toEqual(['abort:INTERRUPTED'])
+    expect(sessions.getTurnByOperationKey(op.operationKey)?.state).toBe('INTERRUPTED')
+  })
+
   test('persists a new session, activates provisional binding and completes the turn', async () => {
     const op = operation(601)
     expect(await coordinator.runTextTurn(op)).toEqual({

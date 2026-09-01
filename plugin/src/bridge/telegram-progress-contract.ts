@@ -24,6 +24,8 @@ export const TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS = [
   `${CONTRACT_MARKER} — REQUIRED.`,
   'This progress contract applies only after the owner has moved the agreed task from discussion into execution.',
   'For an explicitly authorized execution turn that will mutate state or require more than one substantive implementation action, call update_plan before or with the first mutating tool call.',
+  'To make that execution plan visible in Telegram, prefix the first step with the exact internal marker [telegram-task-progress]. The bridge removes the marker before showing the step.',
+  'Never use [telegram-task-progress] for discussion, clarification, status reporting, answer-only work or read-only inspection. Those turns stay ordinary chat even when tools help answer them.',
   'Use 2–7 concrete, verifiable steps. For genuinely one-step work, include verification as the second step. Do not manufacture a plan for a simple answer-only turn or the Guided Plan drafting gate.',
   'While work remains, keep exactly one step in_progress. Immediately after a step is actually finished, call update_plan: mark it completed and move the next step to in_progress. Do not batch progress updates only at the end.',
   'If scope changes, rewrite the plan so it matches reality. Before the final answer, synchronize every step: completed only when verified, pending when unfinished, and no stale in_progress item.',

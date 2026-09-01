@@ -62,6 +62,7 @@ const MAX_VISIBLE_PLAN_STEPS = 20
 const MAX_VISIBLE_STEP_CHARS = 160
 const MAX_VISIBLE_COMMENTARY_CHARS = 320
 const HEARTBEAT_INTERVAL_MS = 60_000
+const TASK_PROGRESS_MARKER = '[telegram-task-progress]'
 
 const ACTIVITY_LABELS: Record<AgentActivity, string> = {
   starting: 'Запускаю',
@@ -140,11 +141,21 @@ function elapsed(startedAtMs: number | null, nowMs: number): string | null {
   return `${hours} ч ${minutes % 60} мин`
 }
 
-function normalizeSteps(steps: AgentTurnProgress & { kind: 'plan' }): PlanStep[] {
-  return steps.steps.flatMap((item) => {
-    const step = item.step.trim().replace(/\s+/g, ' ').slice(0, MAX_VISIBLE_STEP_CHARS)
+function normalizeSteps(progress: AgentTurnProgress & { kind: 'plan' }): {
+  steps: PlanStep[]
+  explicitlyVisible: boolean
+} {
+  let explicitlyVisible = false
+  const steps = progress.steps.flatMap((item, index) => {
+    let step = item.step.trim().replace(/\s+/g, ' ')
+    if (index === 0 && step.startsWith(TASK_PROGRESS_MARKER)) {
+      explicitlyVisible = true
+      step = step.slice(TASK_PROGRESS_MARKER.length).trimStart()
+    }
+    step = step.slice(0, MAX_VISIBLE_STEP_CHARS)
     return step.length === 0 ? [] : [{ step, status: item.status }]
   }).slice(0, MAX_VISIBLE_PLAN_STEPS)
+  return { steps, explicitlyVisible }
 }
 
 function escapeRichInline(value: string): string {
@@ -247,6 +258,11 @@ function terminalPhase(state: Exclude<TurnState, 'QUEUED' | 'ACTIVE'>): PlanPhas
 
 /** Durable Rich Message projection for native Codex plans and confirmed cancellation. */
 export class DurableTurnPlanCards implements AgentTurnUxObserver {
+  private readonly pendingPlans = new Map<
+    string,
+    { progress: AgentTurnProgress & { kind: 'plan' }; steps: PlanStep[] }
+  >()
+
   constructor(
     private readonly database: Database,
     private readonly outbox: OutboxRepository,
@@ -280,8 +296,20 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
   onProgress(operation: TextTurnOperation, progress: AgentTurnProgress): void {
     const nowMs = this.now()
     this.database.transaction(() => {
-      const existing = this.getByOperation(operation.operationKey)
+      let existing = this.getByOperation(operation.operationKey)
       if (progress.kind !== 'plan') {
+        if (
+          existing === null &&
+          progress.kind === 'activity' &&
+          progress.activity === 'file_change'
+        ) {
+          const pending = this.pendingPlans.get(operation.operationKey)
+          if (pending !== undefined) {
+            this.pendingPlans.delete(operation.operationKey)
+            this.createCard(operation, pending.progress, pending.steps, nowMs, 'file_change')
+            existing = this.getByOperation(operation.operationKey)
+          }
+        }
         if (existing === null || existing.phase !== 'ACTIVE' || existing.turn_id !== progress.turnId) {
           return
         }
@@ -306,45 +334,15 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
         this.enqueueEdit(existing, nowMs)
         return
       }
-      const steps = normalizeSteps(progress)
+      const { steps, explicitlyVisible } = normalizeSteps(progress)
       if (steps.length < MIN_VISIBLE_PLAN_STEPS) return
       if (existing === null) {
-        const rootSourceKey = `${operation.operationKey}:plan-progress`
-        const initialStatus: PlanCardStatus = {
-          ...emptyStatus(),
-          activity: 'planning',
-          activityStartedAtMs: progress.atMs,
+        if (!explicitlyVisible) {
+          this.pendingPlans.set(operation.operationKey, { progress, steps })
+          return
         }
-        const inserted = this.database.run(
-          `INSERT INTO telegram_turn_plan_cards
-            (operation_key, token, bot_id, chat_id, project_id, thread_id, turn_id,
-             root_source_key, tail_source_key, steps_json, status_json,
-             created_at_ms, updated_at_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-          [
-            operation.operationKey,
-            token(),
-            operation.botId,
-            operation.chatId,
-            operation.projectId,
-            progress.threadId,
-            progress.turnId,
-            rootSourceKey,
-            rootSourceKey,
-            JSON.stringify(steps),
-            JSON.stringify(initialStatus),
-            nowMs,
-            nowMs,
-          ],
-        ).changes
-        if (inserted !== 1) return
-        const created = this.requireByOperation(operation.operationKey)
-        this.outbox.enqueue({
-          sourceKey: rootSourceKey,
-          kind: 'send_text',
-          payload: payload(created, nowMs),
-          createdAtMs: nowMs,
-        })
+        this.pendingPlans.delete(operation.operationKey)
+        this.createCard(operation, progress, steps, nowMs, 'planning')
         return
       }
       if (existing.phase !== 'ACTIVE' || existing.turn_id !== progress.turnId) return
@@ -380,6 +378,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
   }
 
   onCompleted(operation: TextTurnOperation, _result: TextTurnResult): void {
+    this.pendingPlans.delete(operation.operationKey)
     this.close(operation.operationKey, 'COMPLETED', true)
   }
 
@@ -388,7 +387,53 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
     state: 'FAILED' | 'INTERRUPTED' | 'UNKNOWN',
     _errorName: string,
   ): void {
+    this.pendingPlans.delete(operation.operationKey)
     this.close(operation.operationKey, state, false)
+  }
+
+  private createCard(
+    operation: TextTurnOperation,
+    progress: AgentTurnProgress & { kind: 'plan' },
+    steps: PlanStep[],
+    nowMs: number,
+    activity: AgentActivity,
+  ): void {
+    const rootSourceKey = `${operation.operationKey}:plan-progress`
+    const initialStatus: PlanCardStatus = {
+      ...emptyStatus(),
+      activity,
+      activityStartedAtMs: progress.atMs,
+    }
+    const inserted = this.database.run(
+      `INSERT INTO telegram_turn_plan_cards
+        (operation_key, token, bot_id, chat_id, project_id, thread_id, turn_id,
+         root_source_key, tail_source_key, steps_json, status_json,
+         created_at_ms, updated_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      [
+        operation.operationKey,
+        token(),
+        operation.botId,
+        operation.chatId,
+        operation.projectId,
+        progress.threadId,
+        progress.turnId,
+        rootSourceKey,
+        rootSourceKey,
+        JSON.stringify(steps),
+        JSON.stringify(initialStatus),
+        nowMs,
+        nowMs,
+      ],
+    ).changes
+    if (inserted !== 1) return
+    const created = this.requireByOperation(operation.operationKey)
+    this.outbox.enqueue({
+      sourceKey: rootSourceKey,
+      kind: 'send_text',
+      payload: payload(created, nowMs),
+      createdAtMs: nowMs,
+    })
   }
 
   async handleAction(input: {

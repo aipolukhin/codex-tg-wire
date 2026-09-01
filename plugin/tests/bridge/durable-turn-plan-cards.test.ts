@@ -71,7 +71,7 @@ describe('DurableTurnPlanCards', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 3,
       steps: [
-        { step: 'Inspect <state>', status: 'in_progress' },
+        { step: '[telegram-task-progress] Inspect <state>', status: 'in_progress' },
         { step: 'Implement durable card', status: 'pending' },
         { step: 'Verify and deploy', status: 'pending' },
       ],
@@ -122,7 +122,7 @@ describe('DurableTurnPlanCards', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
       steps: [
-        { step: 'First', status: 'in_progress' },
+        { step: '[telegram-task-progress] First', status: 'in_progress' },
         { step: 'Second', status: 'pending' },
       ],
       atMs: nowMs,
@@ -165,7 +165,7 @@ describe('DurableTurnPlanCards', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
       steps: [
-        { step: 'Перенести медиатеку', status: 'in_progress' },
+        { step: '[telegram-task-progress] Перенести медиатеку', status: 'in_progress' },
         { step: 'Проверить результат', status: 'pending' },
       ],
       atMs: nowMs,
@@ -201,7 +201,7 @@ describe('DurableTurnPlanCards', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
       steps: [
-        { step: 'First', status: 'completed' },
+        { step: '[telegram-task-progress] First', status: 'completed' },
         { step: 'Second', status: 'in_progress' },
       ],
       atMs: nowMs,
@@ -229,7 +229,7 @@ describe('DurableTurnPlanCards', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
       steps: [
-        { step: 'First', status: 'in_progress' },
+        { step: '[telegram-task-progress] First', status: 'in_progress' },
         { step: 'Second', status: 'pending' },
       ],
       atMs: nowMs,
@@ -257,7 +257,7 @@ describe('DurableTurnPlanCards', () => {
   test('does not create a progress card for a one-step plan', () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 1,
-      steps: [{ step: 'Tiny task', status: 'in_progress' }],
+      steps: [{ step: '[telegram-task-progress] Tiny task', status: 'in_progress' }],
       atMs: nowMs,
     })
     expect(database.query<{ count: number }, []>(
@@ -268,11 +268,53 @@ describe('DurableTurnPlanCards', () => {
     ).get()?.count).toBe(0)
   })
 
+  test('keeps an unmarked read-only plan out of Telegram', () => {
+    cards.onProgress(operation, {
+      kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
+      steps: [
+        { step: 'Проверить реализацию /cwd', status: 'in_progress' },
+        { step: 'Объяснить фактическое поведение', status: 'pending' },
+      ],
+      atMs: nowMs,
+    })
+    cards.onProgress(operation, {
+      kind: 'activity', threadId: 'thread-1', turnId: 'turn-1',
+      activity: 'command', atMs: nowMs + 1,
+    })
+
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM telegram_turn_plan_cards',
+    ).get()?.count).toBe(0)
+    expect(database.query<{ count: number }, []>(
+      'SELECT count(*) AS count FROM delivery_jobs',
+    ).get()?.count).toBe(0)
+  })
+
+  test('reveals an old unmarked execution plan only after file mutation evidence', () => {
+    cards.onProgress(operation, {
+      kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
+      steps: [
+        { step: 'Изменить код', status: 'in_progress' },
+        { step: 'Проверить тесты', status: 'pending' },
+      ],
+      atMs: nowMs,
+    })
+    cards.onProgress(operation, {
+      kind: 'activity', threadId: 'thread-1', turnId: 'turn-1',
+      activity: 'file_change', atMs: nowMs + 1,
+    })
+
+    const rootJob = outbox.getBySourceKey(`${operation.operationKey}:plan-progress`)
+    expect(rootJob?.kind).toBe('send_text')
+    expect(JSON.stringify(rootJob?.payload)).toContain('Изменить код')
+    expect(JSON.stringify(rootJob?.payload)).not.toContain('[telegram-task-progress]')
+  })
+
   test('resumes a persisted cancellation request after restart', async () => {
     cards.onProgress(operation, {
       kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
       steps: [
-        { step: 'First', status: 'in_progress' },
+        { step: '[telegram-task-progress] First', status: 'in_progress' },
         { step: 'Second', status: 'pending' },
       ],
       atMs: nowMs,

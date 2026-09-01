@@ -36,6 +36,10 @@ describe('Telegram progress contract', () => {
 
   test('requires timely plan updates and a final synchronization', () => {
     expect(TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS).toContain('call update_plan')
+    expect(TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS).toContain('[telegram-task-progress]')
+    expect(TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS).toContain(
+      'discussion, clarification, status reporting, answer-only work or read-only inspection',
+    )
     expect(TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS).toContain('exactly one step in_progress')
     expect(TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS).toContain('Immediately after a step')
     expect(TELEGRAM_PROGRESS_DEVELOPER_INSTRUCTIONS).toContain('Before the final answer')

@@ -531,10 +531,15 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
           replyId as number,
         ) ?? null
       : null
+    const sourceMessageId = Number.isSafeInteger(authorized.message.message_id) &&
+      (authorized.message.message_id as number) > 0
+      ? authorized.message.message_id as number
+      : undefined
     return {
       chatId: authorized.chatId,
       projectId: route?.projectId ?? projectId,
       text,
+      ...(sourceMessageId === undefined ? {} : { sourceMessageId }),
       ...(uniqueAttachments.length === 0 ? {} : { attachments: uniqueAttachments }),
       ...(quote === undefined ? {} : { quote }),
       ...(route === null ? {} : { preferredThreadId: route.threadId }),
@@ -710,7 +715,7 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
         }
       }
       const feature = callback.data.match(
-        /^dx:(s|b|p|o|g|t):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
+        /^dx:(s|b|p|o|g|t|d):(?:(?:([a-f0-9]{12}):)?)([A-Za-z0-9:_-]+)$/,
       )
       if (feature !== null && feature[1] !== undefined && feature[3] !== undefined) {
         const featureName = feature[1] === 's'
@@ -723,7 +728,9 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
                 ? 'onboarding'
                 : feature[1] === 'g'
                   ? 'git'
-                  : 'turn'
+                  : feature[1] === 't'
+                    ? 'turn'
+                    : 'decision'
         if (
           featureName !== 'settings' &&
           featureName !== 'onboarding' &&

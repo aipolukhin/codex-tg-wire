@@ -141,6 +141,7 @@ describe('DurableTelegramTextGateway inbound', () => {
   test('accepts only allowlisted private human text and maps the project', () => {
     const update = acceptedUpdate({
       message: {
+        message_id: 91,
         chat: { id: 7001, type: 'private' },
         from: { id: 7001, is_bot: false },
         text: 'проверь проект',
@@ -150,6 +151,7 @@ describe('DurableTelegramTextGateway inbound', () => {
       chatId: '7001',
       projectId: 'workspace',
       text: 'проверь проект',
+      sourceMessageId: 91,
     })
   })
 
@@ -613,6 +615,15 @@ describe('DurableTelegramTextGateway inbound', () => {
     })
     expect(gateway.extractInteractionResponse(turn)).toMatchObject({
       kind: 'feature_action', feature: 'turn', token: '012345abcdef', action: 'confirm',
+    })
+    const decision = acceptedUpdate({
+      callback_query: {
+        id: 'cb-decision', data: 'dx:d:012345abcdef:accept', from: { id: 7001 },
+        message: { message_id: 65, chat: { id: 7001, type: 'private' } },
+      },
+    })
+    expect(gateway.extractInteractionResponse(decision)).toMatchObject({
+      kind: 'feature_action', feature: 'decision', token: '012345abcdef', action: 'accept',
     })
     const revision = acceptedUpdate({
       message: {

@@ -263,6 +263,14 @@ export class DurableDataRetention {
              OR result_json IS NOT NULL OR last_error IS NOT NULL)`,
         [SCRUBBED_PAYLOAD, cutoffMs, SCRUBBED_PAYLOAD],
       ).changes
+      const productDecisionDraftsScrubbed = this.database.run(
+        `UPDATE product_decision_drafts
+         SET brief_json = ?, last_error = NULL
+         WHERE state IN ('SUPERSEDED', 'ACCEPTED', 'REJECTED')
+           AND updated_at_ms < ?
+           AND (brief_json != ? OR last_error IS NOT NULL)`,
+        [SCRUBBED_PAYLOAD, cutoffMs, SCRUBBED_PAYLOAD],
+      ).changes
       const turnDiffsRemoved = this.database.run(
         'DELETE FROM codex_turn_diffs WHERE updated_at_ms < ?',
         [cutoffMs],
@@ -283,7 +291,7 @@ export class DurableDataRetention {
         turnsScrubbed,
         deliveriesScrubbed,
         interactionsScrubbed,
-        controlInteractionsScrubbed: busyScrubbed + plansScrubbed,
+        controlInteractionsScrubbed: busyScrubbed + plansScrubbed + productDecisionDraftsScrubbed,
         albumsScrubbed,
         attachmentsScrubbed,
         turnDiffsRemoved,

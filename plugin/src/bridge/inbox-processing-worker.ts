@@ -237,6 +237,9 @@ export class InboxProcessingWorker {
       projectId: message.projectId,
       text: message.text,
       attachments: [],
+      ...(message.sourceMessageId === undefined
+        ? {}
+        : { sourceMessageId: message.sourceMessageId }),
       ...(message.quote === undefined ? {} : { quote: message.quote }),
       ...(message.preferredThreadId === undefined
         ? {}
@@ -281,6 +284,9 @@ export class InboxProcessingWorker {
         chatId: preparedMessage.chatId,
         projectId: preparedMessage.projectId,
         text: preparedMessage.text,
+        ...(preparedMessage.sourceMessageId === undefined
+          ? {}
+          : { sourceMessageId: preparedMessage.sourceMessageId }),
         ...(preparedMessage.attachments.length === 0
           ? {}
           : { attachments: preparedMessage.attachments }),

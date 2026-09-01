@@ -63,6 +63,12 @@
     "turnTimeoutMs": 0,
     "interactionTimeoutMs": 600000
   },
+  "productDecisions": {
+    "enabled": false,
+    "repositoryPath": "/absolute/path/to/vpn-infra",
+    "remote": "origin",
+    "push": true
+  },
   "ux": {
     "enabled": true,
     "chatStatusMessages": false,

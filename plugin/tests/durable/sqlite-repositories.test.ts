@@ -57,6 +57,8 @@ describe('durable database migrations', () => {
       'delivery_problem_actions',
       'guided_plan_preferences',
       'guided_plans',
+      'product_decision_drafts',
+      'product_decision_flows',
       'registered_projects',
       'schema_migrations',
       'sessions',
@@ -81,7 +83,7 @@ describe('durable database migrations', () => {
     const migrations = database
       .query<{ count: number }, []>('SELECT count(*) AS count FROM schema_migrations')
       .get()
-    expect(migrations?.count).toBe(22)
+    expect(migrations?.count).toBe(23)
   })
 
   test('migrates cumulative HUD totals without relabelling them as current context', () => {

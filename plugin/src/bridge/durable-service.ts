@@ -262,6 +262,15 @@ export async function bootstrapDurableBridgeService(
         allowedSandboxModes: config.codex.allowedSandboxModes,
         turnDefaults: { approvalPolicy: config.codex.approvalPolicy },
       },
+      ...(config.productDecisions.enabled && config.productDecisions.repositoryPath !== undefined
+        ? {
+            productDecisions: {
+              repositoryPath: config.productDecisions.repositoryPath,
+              remote: config.productDecisions.remote,
+              push: config.productDecisions.push,
+            },
+          }
+        : {}),
       inboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       outboxWorker: { leaseDurationMs: config.workers.leaseDurationMs },
       albumFlushMs: config.albums.flushMs,

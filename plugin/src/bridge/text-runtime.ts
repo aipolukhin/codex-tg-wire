@@ -23,6 +23,7 @@ import { SqliteCodexArtifactRepository } from '../durable/codex-artifact-reposit
 import { SqliteControlInteractionRepository } from '../durable/control-interaction-repository.js'
 import { SqliteTelegramMessageRouteRepository } from '../durable/message-route-repository.js'
 import { SqliteCodexInteractionRepository } from '../durable/interaction-repository.js'
+import { SqliteProductDecisionRepository } from '../durable/product-decision-repository.js'
 import { DurableLeaseReaper, type LeaseRecoverySweep } from '../durable/lease-reaper.js'
 import {
   SqliteInboxRepository,
@@ -71,6 +72,13 @@ import { PersonalAlphaCommands } from './personal-alpha-commands.js'
 import { M65SessionCoordinator } from './m65-session-coordinator.js'
 import { M65InteractionHandler } from './m65-interaction-handler.js'
 import { GitWorkspaceControl } from './git-workspace-control.js'
+import { ProductDecisionAcceptanceService } from './product-decision-acceptance.js'
+import { ProductDecisionInteractionHandler } from './product-decision-interaction-handler.js'
+import { ProductDecisionSessionCoordinator } from './product-decision-session-coordinator.js'
+import {
+  GitProductDecisionWriter,
+  type ProductDecisionWriterOptions,
+} from './product-decision-writer.js'
 import { withTelegramProgressContract } from './telegram-progress-contract.js'
 import type {
   AgentApprovalPolicy,
@@ -107,6 +115,7 @@ export interface DurableTextRuntimeOptions {
   albumFlushMs?: number
   voiceTranscriber?: VoiceTranscriber
   voiceCredentials?: VoiceCredentialControl
+  productDecisions?: ProductDecisionWriterOptions
   bridgeVersion?: string
   codexVersion?: string
   retention?: {
@@ -448,7 +457,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     projectCatalog,
     { settingsProvider: settings, uxObserver },
   )
-  const coordinator = new M65SessionCoordinator(
+  const standardCoordinator = new M65SessionCoordinator(
     baseCoordinator,
     sessions,
     settings,
@@ -473,7 +482,7 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     ...(options.voiceCredentials === undefined ? {} : { voiceCredentials: options.voiceCredentials }),
   })
   const gitWorkspace = new GitWorkspaceControl(projectCatalog, { turnDiffProvider: backend })
-  const featureInteractions = new M65InteractionHandler(
+  const standardFeatureInteractions = new M65InteractionHandler(
     interactions,
     controls,
     sessions,
@@ -488,6 +497,31 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
     Date.now,
     planCards,
   )
+  const productDecisionOptions = options.productDecisions
+  const productDecisionRepository = productDecisionOptions === undefined
+    ? undefined
+    : new SqliteProductDecisionRepository(options.database)
+  const productDecisionAcceptance = productDecisionRepository === undefined || productDecisionOptions === undefined
+    ? undefined
+    : new ProductDecisionAcceptanceService(
+        productDecisionRepository,
+        new GitProductDecisionWriter(productDecisionOptions),
+      )
+  const coordinator = productDecisionRepository === undefined || productDecisionAcceptance === undefined
+    ? standardCoordinator
+    : new ProductDecisionSessionCoordinator(
+        standardCoordinator,
+        productDecisionRepository,
+        productDecisionAcceptance,
+      )
+  const featureInteractions = productDecisionRepository === undefined || productDecisionAcceptance === undefined
+    ? standardFeatureInteractions
+    : new ProductDecisionInteractionHandler(
+        standardFeatureInteractions,
+        productDecisionRepository,
+        productDecisionAcceptance,
+        outbox,
+      )
   const inbound = new InboxProcessingWorker(inbox, outbox, coordinator, telegram, {
     ...options.inboxWorker,
     workerId: options.inboxWorker?.workerId ?? 'inbox-1',

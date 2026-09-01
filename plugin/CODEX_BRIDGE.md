@@ -36,6 +36,14 @@ export DASHI_CODEX_BRIDGE_CONFIG=/absolute/path/bridge.config.json
 
 Personal alpha поддерживает обычный текст и команды `/start`, `/new`, `/status`, `/stop`, `/steer <уточнение>`. `/steer` дополняет именно активный turn; обычное сообщение становится отдельным следующим turn. Если session занята, следующие сообщения сохраняются в SQLite и выполняются FIFO, в том числе после restart. Команды, approval-кнопки и ответы на вопросы идут как control updates и не ждут за очередью сообщений — поэтому активный turn можно сразу остановить или скорректировать. Command/file approvals и запросы дополнительных network/filesystem permissions приходят inline-карточками. Permission-карточка позволяет выдать ровно запрошенное подмножество на текущий turn или явно на session; отказ и timeout возвращают пустой grant. На обычные вопросы Codex можно ответить кнопкой; свободный ответ отправляется командой, указанной на карточке: `/answer <id> <номер-вопроса> <текст>`.
 
+Опциональный owner-only поток продуктовых решений включается секцией
+`productDecisions`. Сообщения `Исследуем:`, `Фиксируем:` и `Меняем:` обсуждаются
+в read-only turn, получают версию и SHA-256, а точная карточка попадает в
+канонический STVOR Git только после кнопки принятия или ответа `Принимаю vN.`.
+Повторы и устаревшие кнопки обрабатываются идемпотентно; принятие карточки не
+меняет код и runtime. Полный контракт и эксплуатация:
+[docs/product-decisions.md](docs/product-decisions.md).
+
 MCP elicitation поддерживает стандартные `form` и `url` modes. Boolean/enum/multiselect поля управляются кнопками, строки и числа вводятся через `/elicit <id> <номер-поля> <значение>`, необязательное поле можно пропустить. URL открывается только по credential-free HTTPS-кнопке; полный URL не дублируется в тексте карточки. Ответы и completion markers сохраняются durable, а deny/cancel/timeout/restart закрываются fail-closed. Capability `openai/form` мост не объявляет: несогласованная расширенная форма отменяется до сохранения её произвольной schema. Password-like standard schema также отклоняется.
 
 Семантика permission grant следует [официальной документации Codex App Server](https://developers.openai.com/codex/app-server); точная wire-форма проверяется локальным schema gate против закреплённой версии Codex CLI.

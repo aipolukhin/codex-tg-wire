@@ -105,6 +105,7 @@ describe('loadBridgeServiceConfig', () => {
     expect(config.codex.allowedSandboxModes).toEqual(['read-only', 'workspace-write'])
     expect(config.codex.turnTimeoutMs).toBe(0)
     expect(config.codex.interactionTimeoutMs).toBe(10 * 60_000)
+    expect(config.productDecisions).toEqual({ enabled: false, remote: 'origin', push: true })
     expect(config.ux.chatStatusMessages).toBeFalse()
     expect(config.ux.typingIndicator).toBeTrue()
     expect(config.ux.receivedReaction).toBeTrue()
@@ -248,6 +249,30 @@ describe('loadBridgeServiceConfig', () => {
         },
       }),
     ).toThrow('must be included in codex.allowedSandboxModes')
+  })
+
+  test('requires and resolves the canonical product decision repository when enabled', () => {
+    const valid = fixture({
+      productDecisions: {
+        enabled: true,
+        repositoryPath: './vpn-infra',
+        remote: 'private',
+        push: false,
+      },
+    })
+    expect(loadBridgeRuntimeConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: valid.path },
+    }).productDecisions).toEqual({
+      enabled: true,
+      repositoryPath: join(valid.root, 'vpn-infra'),
+      remote: 'private',
+      push: false,
+    })
+
+    const invalid = fixture({ productDecisions: { enabled: true } })
+    expect(() => loadBridgeRuntimeConfig({
+      env: { DASHI_CODEX_BRIDGE_CONFIG: invalid.path },
+    })).toThrow('is required when productDecisions.enabled is true')
   })
 
   test('resolves and validates per-project execution policy', () => {

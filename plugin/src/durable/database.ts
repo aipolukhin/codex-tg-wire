@@ -657,6 +657,62 @@ const MIGRATIONS: readonly Migration[] = [
         ON telegram_turn_plan_cards (phase, updated_at_ms)`,
     ],
   },
+  {
+    version: 23,
+    name: 'product_decision_r1',
+    statements: [
+      `CREATE TABLE product_decision_flows (
+        id TEXT PRIMARY KEY,
+        source_operation_key TEXT NOT NULL UNIQUE,
+        bot_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('research', 'fix', 'change')),
+        source_update_id TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        last_turn_id TEXT NOT NULL,
+        current_version INTEGER NOT NULL DEFAULT 0 CHECK (current_version >= 0),
+        current_draft_id TEXT,
+        state TEXT NOT NULL DEFAULT 'DISCUSSING'
+          CHECK (state IN ('DISCUSSING', 'AWAITING_ACCEPTANCE', 'ACCEPTING',
+            'ACCEPTED', 'REJECTED')),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        resolved_at_ms INTEGER
+      )`,
+      `CREATE INDEX product_decision_flows_open_idx
+        ON product_decision_flows (bot_id, chat_id, project_id, state, updated_at_ms)`,
+      `CREATE TABLE product_decision_drafts (
+        id TEXT PRIMARY KEY,
+        flow_id TEXT NOT NULL REFERENCES product_decision_flows(id) ON DELETE CASCADE,
+        token TEXT NOT NULL UNIQUE,
+        version INTEGER NOT NULL CHECK (version > 0),
+        turn_id TEXT NOT NULL,
+        brief_json TEXT NOT NULL,
+        brief_sha256 TEXT NOT NULL
+          CHECK (length(brief_sha256) = 64 AND brief_sha256 NOT GLOB '*[^0-9a-f]*'),
+        state TEXT NOT NULL DEFAULT 'ACTIVE'
+          CHECK (state IN ('ACTIVE', 'SUPERSEDED', 'ACCEPTING', 'ACCEPTED', 'REJECTED')),
+        action TEXT CHECK (action IS NULL OR action IN ('edit', 'data', 'reject', 'accept')),
+        action_operation_key TEXT,
+        acceptance_update_id TEXT,
+        acceptance_message_id TEXT,
+        acceptance_callback_query_id TEXT,
+        decision_id TEXT,
+        git_commit TEXT,
+        pushed INTEGER CHECK (pushed IS NULL OR pushed IN (0, 1)),
+        last_error TEXT,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        resolved_at_ms INTEGER,
+        UNIQUE (flow_id, version),
+        UNIQUE (flow_id, turn_id)
+      )`,
+      `CREATE INDEX product_decision_drafts_state_idx
+        ON product_decision_drafts (state, updated_at_ms)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

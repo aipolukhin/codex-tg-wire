@@ -4,6 +4,8 @@ export interface IncomingTextMessage {
   chatId: string
   projectId: string
   text: string
+  /** Telegram message that originated this turn. */
+  sourceMessageId?: number
   attachments?: readonly IncomingTelegramAttachment[]
   /** Telegram-selected excerpt from the replied-to message. */
   quote?: IncomingTextQuote
@@ -42,6 +44,7 @@ export interface PreparedIncomingMessage {
   chatId: string
   projectId: string
   text: string
+  sourceMessageId?: number
   attachments: readonly AgentLocalAttachment[]
   quote?: IncomingTextQuote
   preferredThreadId?: string
@@ -156,7 +159,7 @@ export type IncomingInteractionResponse =
     }
   | {
       kind: 'feature_action'
-      feature: 'settings' | 'busy' | 'plan' | 'onboarding' | 'git' | 'turn'
+      feature: 'settings' | 'busy' | 'plan' | 'onboarding' | 'git' | 'turn' | 'decision'
       chatId: string
       token: string
       action: string
@@ -217,6 +220,7 @@ export interface TextTurnOperation {
   chatId: string
   projectId: string
   text: string
+  sourceMessageId?: number
   attachments?: readonly AgentLocalAttachment[]
   quote?: IncomingTextQuote
   preferredThreadId?: string
@@ -238,7 +242,7 @@ export interface TextTurnResult {
   finalText: string
   artifacts?: readonly AgentTurnArtifact[]
   buttons?: readonly (readonly CommandButton[])[]
-  presentation?: 'answer' | 'busy_choice' | 'guided_plan'
+  presentation?: 'answer' | 'busy_choice' | 'guided_plan' | 'product_decision'
 }
 
 export type AgentApprovalPolicy = 'untrusted' | 'on-request' | 'never'

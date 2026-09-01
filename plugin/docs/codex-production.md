@@ -108,6 +108,13 @@ Restore проверяет manifest/hash/integrity, мигрирует стар�
 
 `retention.payloadMaxAgeDays` по умолчанию равен 30. После срока bridge затирает message/turn/interaction/delivery payloads и error text, удаляет private attachment/media files внутри их spool roots, но сохраняет update ids, operation keys, states и delivery proof для дедупликации. SQLite работает с `secure_delete=ON`. Shared outbound file не удаляется, пока на него ссылается свежий job.
 
+Завершённые черновики продуктовых решений очищаются тем же retention job:
+стираются JSON карточки и тексты ошибок, но остаются version/token state,
+acceptance idempotency key, ID принятого решения и Git proof. Перед первым
+включением `productDecisions` сделай online backup, затем после restart проверь
+`/ready`. Контракт конфигурации и retry Git push описаны в
+[product-decisions.md](product-decisions.md).
+
 Telegram send path использует per-chat FIFO bucket, общий bot bucket и bounded retry по `429 retry_after`. Значения лежат в `telegram.rateLimit`; retry_after и число попыток имеют жёсткие потолки. Non-429 timeout не превращается во внутренний бесконечный retry. Replayed updates схлопываются по `(bot_id, update_id)`, а первый terminal callback response выигрывает транзакционно.
 
 Закреплённый status anchor — best-effort telemetry, а не часть outbox. Во время

@@ -107,6 +107,15 @@ export const BridgeConfigFileSchema = z
       })
       .strict()
       .default({}),
+    productDecisions: z
+      .object({
+        enabled: z.boolean().default(false),
+        repositoryPath: z.string().trim().min(1).optional(),
+        remote: z.string().trim().regex(/^[A-Za-z0-9._-]+$/).default('origin'),
+        push: z.boolean().default(true),
+      })
+      .strict()
+      .default({}),
     ux: z
       .object({
         enabled: z.boolean().default(true),
@@ -198,6 +207,13 @@ export const BridgeConfigFileSchema = z
         code: z.ZodIssueCode.custom,
         path: ['codex', 'sandboxMode'],
         message: 'must be included in codex.allowedSandboxModes',
+      })
+    }
+    if (config.productDecisions.enabled && config.productDecisions.repositoryPath === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['productDecisions', 'repositoryPath'],
+        message: 'is required when productDecisions.enabled is true',
       })
     }
     if (config.ux.heartbeatIntervalMs < config.ux.pollIntervalMs) {
@@ -374,6 +390,12 @@ export function loadBridgeRuntimeConfig(
       ...(parsed.codex.binary === undefined && envCodexBinary
         ? { binary: envCodexBinary }
         : {}),
+    },
+    productDecisions: {
+      ...parsed.productDecisions,
+      ...(parsed.productDecisions.repositoryPath === undefined
+        ? {}
+        : { repositoryPath: absoluteFrom(baseDirectory, parsed.productDecisions.repositoryPath) }),
     },
     projects: parsed.projects.map((project) => ({
       ...project,

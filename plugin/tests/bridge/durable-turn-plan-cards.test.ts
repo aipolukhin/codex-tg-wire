@@ -120,13 +120,21 @@ describe('DurableTurnPlanCards', () => {
     })
     expect(JSON.stringify(edit?.payload)).toContain('- [x] Inspect')
 
-    cards.onCompleted(operation, {
+    nowMs += 91_999
+    const result = {
       threadId: 'thread-1', turnId: 'turn-1', finalText: 'done',
-    })
+    }
+    sessions.completeTurn(
+      sessions.getTurnByOperationKey(operation.operationKey)!.id,
+      result,
+      nowMs,
+    )
+    cards.onCompleted(operation, result)
     const terminal = outbox.getBySourceKey(`${operation.operationKey}:plan-progress:edit:2`)
     expect(JSON.stringify(terminal?.payload)).toContain('## Задача выполнена')
     expect(JSON.stringify(terminal?.payload)).toContain('"inline_keyboard":[]')
     expect(JSON.stringify(terminal?.payload).match(/- \[x\]/g)).toHaveLength(3)
+    expect(JSON.stringify(terminal?.payload)).toContain('Заняло: 1 мин 32 сек')
   })
 
   test('requires a second click and interrupts the exact durable turn once', async () => {
@@ -149,7 +157,7 @@ describe('DurableTurnPlanCards', () => {
     expect(interrupts).toEqual([])
     expect(JSON.stringify(outbox.get(first.deliveryJobId!)?.payload)).toContain('Отменить и очистить')
 
-    nowMs += 1
+    nowMs += 28_000
     const confirmed = await cards.handleAction({
       operationKey: 'callback:2', token: row.token, chatId: '7001', action: 'confirm',
     })
@@ -163,6 +171,12 @@ describe('DurableTurnPlanCards', () => {
     expect(interrupts).toHaveLength(1)
 
     workspaceCancellationOutcome = 'discarded'
+    sessions.markTerminal(
+      sessions.getTurnByOperationKey(operation.operationKey)!.id,
+      'INTERRUPTED',
+      'CodexTurnInterruptedError',
+      nowMs,
+    )
     cards.onTerminal(operation, 'INTERRUPTED', 'CodexTurnInterruptedError')
     const persisted = database.query<{
       phase: string
@@ -175,6 +189,9 @@ describe('DurableTurnPlanCards', () => {
     expect(JSON.stringify(outbox.getBySourceKey(
       `${operation.operationKey}:plan-progress:edit:3`,
     )?.payload)).toContain('Незавершённые локальные изменения задачи удалены')
+    expect(JSON.stringify(outbox.getBySourceKey(
+      `${operation.operationKey}:plan-progress:edit:3`,
+    )?.payload)).toContain('Заняло: 28 сек')
   })
 
   test('edits the same card with live activity but no duplicate elapsed timer', () => {
@@ -338,5 +355,28 @@ describe('DurableTurnPlanCards', () => {
     expect(database.query<{ interrupt_sent_at_ms: number | null }, []>(
       'SELECT interrupt_sent_at_ms FROM telegram_turn_plan_cards',
     ).get()?.interrupt_sent_at_ms).toBe(nowMs)
+  })
+
+  test('renders terminal duration while reconciling a card after restart', async () => {
+    cards.onProgress(operation, {
+      kind: 'plan', threadId: 'thread-1', turnId: 'turn-1', completed: 0, total: 2,
+      steps: [
+        { step: '[telegram-task-progress] First', status: 'in_progress' },
+        { step: 'Second', status: 'pending' },
+      ],
+      atMs: nowMs,
+    })
+    nowMs += 3_665_000
+    sessions.markTerminal(
+      sessions.getTurnByOperationKey(operation.operationKey)!.id,
+      'FAILED',
+      'RecoveredFailure',
+      nowMs,
+    )
+
+    expect(await cards.recoverStartup()).toBe(1)
+    expect(JSON.stringify(outbox.getBySourceKey(
+      `${operation.operationKey}:plan-progress:edit:1`,
+    )?.payload)).toContain('Заняло: 1 ч 1 мин 5 сек')
   })
 })

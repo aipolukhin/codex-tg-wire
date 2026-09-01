@@ -765,6 +765,16 @@ const MIGRATIONS: readonly Migration[] = [
         ON turn_task_workspaces (phase, cancel_requested, updated_at_ms)`,
     ],
   },
+  {
+    version: 26,
+    name: 'turn_plan_terminal_duration',
+    requiredTables: ['telegram_turn_plan_cards'],
+    statements: [
+      `ALTER TABLE telegram_turn_plan_cards
+       ADD COLUMN terminal_duration_ms INTEGER
+         CHECK (terminal_duration_ms IS NULL OR terminal_duration_ms >= 0)`,
+    ],
+  },
 ]
 
 export const LATEST_DURABLE_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0

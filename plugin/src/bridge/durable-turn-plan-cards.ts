@@ -42,6 +42,7 @@ interface PlanCardRow {
   interrupt_sent_at_ms: number | null
   steps_json: string
   status_json: string
+  terminal_duration_ms: number | null
   created_at_ms: number
   updated_at_ms: number
 }
@@ -157,6 +158,18 @@ function title(phase: PlanPhase): string {
   }
 }
 
+function durationText(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000))
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  const parts: string[] = []
+  if (hours > 0) parts.push(`${hours} ч`)
+  if (minutes > 0) parts.push(`${minutes} мин`)
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds} сек`)
+  return parts.join(' ')
+}
+
 function buttons(row: PlanCardRow): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
   if (row.phase !== 'ACTIVE' || row.cancel_state === 'CLOSED' || row.cancel_state === 'REQUESTED') {
     return { inline_keyboard: [] }
@@ -187,6 +200,9 @@ function richText(row: PlanCardRow): string {
     lines.push(`- [${checked}] ${prefix}${escapeRichInline(item.step)}`)
   }
   lines.push('', `**Выполнено: ${completed} / ${steps.length}**`)
+  if (row.terminal_duration_ms !== null) {
+    lines.push(`**Заняло: ${durationText(row.terminal_duration_ms)}**`)
+  }
   if (row.phase === 'ACTIVE' && status.activity !== null) {
     lines.push('', `> **Сейчас:** ${escapeRichInline(ACTIVITY_LABELS[status.activity])}`)
     if (status.commentary !== null) lines.push(`> ${escapeRichInline(status.commentary)}`)
@@ -211,6 +227,9 @@ function fallbackText(row: PlanCardRow): string {
     lines.push(`${mark} ${escapeHtml(item.step)}`)
   }
   lines.push('', `<b>Выполнено: ${completed} / ${steps.length}</b>`)
+  if (row.terminal_duration_ms !== null) {
+    lines.push(`<b>Заняло: ${escapeHtml(durationText(row.terminal_duration_ms))}</b>`)
+  }
   if (row.phase === 'ACTIVE' && status.activity !== null) {
     lines.push('', `<b>Сейчас:</b> ${escapeHtml(ACTIVITY_LABELS[status.activity])}`)
     if (status.commentary !== null) lines.push(escapeHtml(status.commentary))
@@ -561,6 +580,13 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       if (row === null || row.phase !== 'ACTIVE') return
       row.phase = phase
       row.cancel_state = 'CLOSED'
+      const turn = this.sessions.getTurnByOperationKey(operationKey)
+      const startedAtMs = turn?.startedAtMs
+      const finishedAtMs = turn?.finishedAtMs
+      row.terminal_duration_ms = startedAtMs === null || finishedAtMs === null ||
+        startedAtMs === undefined || finishedAtMs === undefined
+        ? null
+        : Math.max(0, finishedAtMs - startedAtMs)
       if (phase === 'INTERRUPTED') {
         const outcome = this.taskWorkspaces?.cancellationOutcome(operationKey)
         const status = statusFromRow(row)
@@ -614,7 +640,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
       `UPDATE telegram_turn_plan_cards SET
          thread_id = ?, turn_id = ?, tail_source_key = ?, revision = ?, phase = ?,
          cancel_state = ?, cancel_operation_key = ?, interrupt_sent_at_ms = ?,
-         steps_json = ?, status_json = ?, updated_at_ms = ?
+         steps_json = ?, status_json = ?, terminal_duration_ms = ?, updated_at_ms = ?
        WHERE operation_key = ?`,
       [
         row.thread_id,
@@ -627,6 +653,7 @@ export class DurableTurnPlanCards implements AgentTurnUxObserver {
         row.interrupt_sent_at_ms,
         row.steps_json,
         row.status_json,
+        row.terminal_duration_ms,
         row.updated_at_ms,
         row.operation_key,
       ],

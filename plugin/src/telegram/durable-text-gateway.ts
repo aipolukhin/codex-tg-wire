@@ -25,6 +25,7 @@ import {
   richErrorClass,
 } from '../format/rich.js'
 import { redactSecrets } from '../safety/redact.js'
+import { embeddedForwardComment } from './forward-comment.js'
 import { validateTelegramHtml } from '../safety/html-validator.js'
 import type {
   InboundAttachmentStore,
@@ -503,7 +504,10 @@ export class DurableTelegramTextGateway implements TelegramGateway<PreparedTextD
     const authorized = envelopes[0]
     if (authorized === null || authorized === undefined) return null
     if (envelopes.some((value) => value?.chatId !== authorized.chatId)) return null
-    const textParts: string[] = []
+    const comment = embeddedForwardComment(update.payload)
+    const textParts: string[] = comment === null
+      ? []
+      : [`[Комментарий пользователя к пересланному сообщению]\n${comment.text}`]
     const attachments = [] as NonNullable<IncomingTextMessage['attachments']>[number][]
     for (const envelope of envelopes) {
       if (envelope === null) continue

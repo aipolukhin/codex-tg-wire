@@ -44,6 +44,15 @@ Claude package version is not the codex-tg-wire release version.
 
 ### Delivery and recovery
 
+- Forwarding a Telegram post with a preceding comment now produces one Codex
+  turn: the short-lived comment candidate is durably coalesced with the
+  forwarded message or album and otherwise resumes normal processing.
+- An unexpected Codex App Server exit now fails the bridge process so systemd
+  restarts the complete runtime. Startup recovery also requeues source updates
+  stranded behind turns that never reached App Server dispatch.
+- Exhausted infrastructure retries no longer acknowledge their source update
+  after merely enqueueing an error notice; the failed source remains available
+  for recovery.
 - A temporary model-capacity failure now continues safely in the same durable
   thread after checking existing state, instead of replaying the original
   request or immediately reporting a terminal failure.

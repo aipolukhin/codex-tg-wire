@@ -109,6 +109,50 @@ function activeTurn(input: {
 }
 
 describe('startup turn recovery', () => {
+  test('requeues a source stranded behind a never-dispatched queued turn', async () => {
+    const update = inbox.ingest({
+      botId: 'primary',
+      updateId: 8,
+      chatId: '7001',
+      routingClass: 'MESSAGE',
+      payload: { update_id: 8, message: { text: 'survive App Server exit' } },
+      receivedAtMs: NOW,
+    }).update
+    inbox.claimNext({ workerId: 'worker-8', nowMs: NOW, leaseDurationMs: 60_000 })
+    const prepared = sessions.prepareTextOperation({
+      operationKey: 'telegram:primary:8:turn',
+      inboxUpdateId: update.id,
+      botId: 'primary',
+      updateId: 8,
+      chatId: '7001',
+      projectId: 'workspace',
+      text: 'survive App Server exit',
+    }, 'codex', NOW)
+    inbox.fail(update.id, 'worker-8', 'AppServerClosedError', NOW + 1)
+
+    const sweep = await new StartupTurnRecovery(sessions, inbox, outbox, backend, {
+      now: () => NOW + 2,
+    }).run()
+
+    expect(sweep).toEqual({
+      candidates: 0,
+      completed: 0,
+      failed: 0,
+      interrupted: 0,
+      unknown: 0,
+      resumed: 0,
+      unblocked: 1,
+    })
+    expect(sessions.getTurn(prepared.turn.id)?.state).toBe('QUEUED')
+    expect(inbox.get(update.id)).toMatchObject({
+      state: 'RETRY_WAIT',
+      routingClass: 'QUEUED_MESSAGE',
+      attemptCount: 0,
+      processedAtMs: null,
+      lastError: 'stranded queued turn recovered after restart',
+    })
+  })
+
   test('never auto-resumes an owner-cancelled turn after restart', async () => {
     const active = activeTurn({
       updateId: 9,

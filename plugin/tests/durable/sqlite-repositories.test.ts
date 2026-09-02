@@ -13,6 +13,7 @@ import {
   SqliteInboxRepository,
   SqliteOutboxRepository,
 } from '../../src/durable/sqlite-repositories.js'
+import { embeddedForwardComment } from '../../src/telegram/forward-comment.js'
 
 const NOW = 1_800_000_000_000
 const LEASE_MS = 30_000
@@ -451,6 +452,114 @@ describe('SqliteCodexEventRepository', () => {
 })
 
 describe('SqliteInboxRepository', () => {
+  test('coalesces an immediate comment with the following forwarded update', () => {
+    const inbox = new SqliteInboxRepository(database)
+    const comment = inbox.ingest({
+      botId: 'primary',
+      updateId: 40,
+      chatId: '7001',
+      routingClass: 'MESSAGE',
+      payload: {
+        update_id: 40,
+        message: {
+          message_id: 400,
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7001, is_bot: false },
+          text: 'Сделай так, брат',
+        },
+      },
+      receivedAtMs: NOW,
+      availableAtMs: NOW + 1_500,
+    })
+    const forwarded = inbox.ingest({
+      botId: 'primary',
+      updateId: 41,
+      chatId: '7001',
+      routingClass: 'MESSAGE',
+      payload: {
+        update_id: 41,
+        message: {
+          message_id: 401,
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7001, is_bot: false },
+          forward_origin: { type: 'channel', chat: { id: -1001 }, message_id: 8 },
+          caption: 'Пересланный пост',
+          photo: [{ file_id: 'photo-1' }],
+        },
+      },
+      receivedAtMs: NOW + 350,
+    })
+
+    expect(inbox.coalesceForwardComment(forwarded.update.id, 1_500, NOW + 350)).toBe(true)
+    expect(inbox.get(comment.update.id)).toMatchObject({
+      state: 'PROCESSED',
+      lastError: 'coalesced with forwarded message',
+    })
+    expect(embeddedForwardComment(inbox.get(forwarded.update.id)?.payload)).toEqual({
+      text: 'Сделай так, брат',
+      sourceUpdateRowId: comment.update.id,
+    })
+    expect(inbox.claimNext({
+      workerId: 'forward', nowMs: NOW + 350, leaseDurationMs: LEASE_MS,
+    })?.id).toBe(forwarded.update.id)
+  })
+
+  test('does not coalesce a forward with another sender or an expired comment window', () => {
+    const inbox = new SqliteInboxRepository(database)
+    inbox.ingest({
+      botId: 'primary', updateId: 50, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {
+        message: {
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7002, is_bot: false },
+          text: 'foreign comment',
+        },
+      },
+      receivedAtMs: NOW,
+      availableAtMs: NOW + 1_500,
+    })
+    const wrongSender = inbox.ingest({
+      botId: 'primary', updateId: 51, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {
+        message: {
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7001, is_bot: false },
+          forward_origin: { type: 'user', sender_user: { id: 8 } },
+          text: 'forward',
+        },
+      },
+      receivedAtMs: NOW + 100,
+    })
+    expect(inbox.coalesceForwardComment(wrongSender.update.id, 1_500, NOW + 100)).toBe(false)
+
+    const oldComment = inbox.ingest({
+      botId: 'primary', updateId: 52, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {
+        message: {
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7001, is_bot: false },
+          text: 'old comment',
+        },
+      },
+      receivedAtMs: NOW + 200,
+      availableAtMs: NOW + 1_700,
+    })
+    const lateForward = inbox.ingest({
+      botId: 'primary', updateId: 53, chatId: '7001', routingClass: 'MESSAGE',
+      payload: {
+        message: {
+          chat: { id: 7001, type: 'private' },
+          from: { id: 7001, is_bot: false },
+          forward_origin: { type: 'hidden_user', sender_user_name: 'Hidden' },
+          text: 'late forward',
+        },
+      },
+      receivedAtMs: NOW + 1_701,
+    })
+    expect(inbox.coalesceForwardComment(lateForward.update.id, 1_500, NOW + 1_701)).toBe(false)
+    expect(inbox.get(oldComment.update.id)?.state).toBe('RECEIVED')
+  })
+
   test('deduplicates before processing and preserves the first accepted payload', () => {
     const inbox = new SqliteInboxRepository(database)
     const first = inbox.ingest({

@@ -298,7 +298,9 @@ export class StartupTurnRecovery {
           ? 'interrupted'
           : 'unknown'] += 1
     }
-    sweep.unblocked = this.inbox.releaseTurnRecoveryBlocked(this.now())
+    sweep.unblocked =
+      this.inbox.releaseTurnRecoveryBlocked(this.now()) +
+      this.inbox.releaseStrandedQueuedSources(this.now())
     return sweep
   }
 

@@ -1,6 +1,13 @@
 import type { Database } from 'bun:sqlite'
 
 import {
+  forwardCommentCandidate,
+  forwardedTelegramIdentity,
+  isForwardedTelegramUpdate,
+  withEmbeddedForwardComment,
+} from '../telegram/forward-comment.js'
+
+import {
   LeaseConflictError,
   type DeliveryJob,
   type DeliveryJobInput,
@@ -148,6 +155,10 @@ export class SqliteInboxRepository implements InboxRepository {
 
   ingest(input: TelegramUpdateInput): IngestResult {
     const receivedAtMs = input.receivedAtMs ?? Date.now()
+    const availableAtMs = input.availableAtMs ?? receivedAtMs
+    if (!Number.isSafeInteger(receivedAtMs) || !Number.isSafeInteger(availableAtMs)) {
+      throw new TypeError('inbox timestamps must be safe integers')
+    }
     const result = this.database.run(
       `INSERT INTO telegram_updates
         (bot_id, update_id, chat_id, routing_class, payload_json, available_at_ms, received_at_ms)
@@ -159,7 +170,7 @@ export class SqliteInboxRepository implements InboxRepository {
         input.chatId ?? null,
         input.routingClass ?? 'OTHER',
         encodePayload(input.payload),
-        receivedAtMs,
+        availableAtMs,
         receivedAtMs,
       ],
     )
@@ -170,6 +181,110 @@ export class SqliteInboxRepository implements InboxRepository {
       .get(input.botId, input.updateId)
     if (row === null) throw new Error('inbox insert did not produce a row')
     return { created: result.changes === 1, update: inboxFromRow(row) }
+  }
+
+  coalesceForwardComment(forwardUpdateRowId: number, windowMs: number, nowMs: number): boolean {
+    if (!Number.isSafeInteger(windowMs) || windowMs <= 0) return false
+    if (!Number.isSafeInteger(nowMs)) throw new TypeError('nowMs must be a safe integer')
+    return this.database.transaction(() => {
+      const forwarded = this.database
+        .query<InboxRow, [number]>('SELECT * FROM telegram_updates WHERE id = ?')
+        .get(forwardUpdateRowId)
+      if (forwarded === null || forwarded.state !== 'RECEIVED') return false
+      const forwardedPayload = JSON.parse(forwarded.payload_json) as unknown
+      if (!isForwardedTelegramUpdate(forwardedPayload)) return false
+      const forwardedIdentity = forwardedTelegramIdentity(forwardedPayload)
+      if (forwardedIdentity === null) return false
+
+      const previous = this.database
+        .query<InboxRow, [string, number]>(
+          `SELECT * FROM telegram_updates
+           WHERE bot_id = ? AND update_id < ?
+           ORDER BY update_id DESC LIMIT 1`,
+        )
+        .get(forwarded.bot_id, forwarded.update_id)
+      if (
+        previous === null ||
+        previous.state !== 'RECEIVED' ||
+        forwarded.received_at_ms - previous.received_at_ms < 0 ||
+        forwarded.received_at_ms - previous.received_at_ms > windowMs
+      ) return false
+      const comment = forwardCommentCandidate(JSON.parse(previous.payload_json) as unknown)
+      if (
+        comment === null ||
+        comment.chatId !== forwardedIdentity.chatId ||
+        comment.senderId !== forwardedIdentity.senderId
+      ) return false
+
+      const consumed = this.database.run(
+        `UPDATE telegram_updates
+         SET state = 'PROCESSED', processed_at_ms = ?, last_error = 'coalesced with forwarded message'
+         WHERE id = ? AND state = 'RECEIVED'
+           AND NOT EXISTS (SELECT 1 FROM turns WHERE source_update_id = telegram_updates.id)`,
+        [nowMs, previous.id],
+      )
+      if (consumed.changes !== 1) return false
+      const tagged = withEmbeddedForwardComment(forwardedPayload, {
+        text: comment.text,
+        sourceUpdateRowId: previous.id,
+      })
+      const attached = this.database.run(
+        `UPDATE telegram_updates SET payload_json = ?
+         WHERE id = ? AND state = 'RECEIVED'`,
+        [encodePayload(tagged), forwarded.id],
+      )
+      if (attached.changes !== 1) throw new Error('forwarded update changed during comment coalescing')
+      return true
+    }).immediate()
+  }
+
+  releaseStrandedQueuedSources(nowMs: number): number {
+    if (!Number.isSafeInteger(nowMs)) throw new TypeError('nowMs must be a safe integer')
+    return this.database.transaction(() => {
+      const candidates = this.database.query<{ source_update_id: number }, []>(
+        `SELECT DISTINCT turns.source_update_id
+         FROM turns
+         JOIN telegram_updates source ON source.id = turns.source_update_id
+         WHERE turns.state = 'QUEUED'
+           AND turns.source_update_id IS NOT NULL
+           AND source.state IN ('FAILED', 'PROCESSED')
+         ORDER BY turns.source_update_id`,
+      ).all()
+      for (const candidate of candidates) {
+        const album = this.albumForLeader(candidate.source_update_id)
+        if (album === null) {
+          this.database.run(
+            `UPDATE telegram_updates
+             SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', attempt_count = 0,
+                 available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
+                 processed_at_ms = NULL, last_error = 'stranded queued turn recovered after restart'
+             WHERE id = ? AND state IN ('FAILED', 'PROCESSED')`,
+            [nowMs, candidate.source_update_id],
+          )
+          continue
+        }
+        this.database.run(
+          `UPDATE telegram_updates
+           SET state = 'RETRY_WAIT',
+               routing_class = CASE WHEN id = ? THEN 'QUEUED_MESSAGE' ELSE routing_class END,
+               attempt_count = 0, available_at_ms = ?, lease_owner = NULL,
+               lease_expires_at_ms = NULL, processed_at_ms = NULL,
+               last_error = 'stranded queued album recovered after restart'
+           WHERE id IN (
+             SELECT update_row_id FROM telegram_album_fragments WHERE group_id = ?
+           ) AND state IN ('FAILED', 'PROCESSED')`,
+          [candidate.source_update_id, nowMs, album.id],
+        )
+        this.database.run(
+          `UPDATE telegram_album_groups
+           SET state = 'COLLECTING', ready_at_ms = ?, processed_at_ms = NULL,
+               updated_at_ms = ?, last_error = 'stranded queued album recovered after restart'
+           WHERE id = ?`,
+          [nowMs, nowMs, album.id],
+        )
+      }
+      return candidates.length
+    }).immediate()
   }
 
   get(id: number): InboxUpdate | null {

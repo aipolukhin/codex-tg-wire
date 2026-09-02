@@ -176,6 +176,7 @@ beforeEach(async () => {
     outboxWorker: { now: () => clockNow },
     ux: { receivedReaction: true },
     albumFlushMs: 100,
+    forwardCommentWindowMs: 0,
     voiceTranscriber: {
       transcribe: async (attachment) => ({
         status: 'ok',

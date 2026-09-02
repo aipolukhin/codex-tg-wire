@@ -389,6 +389,7 @@ export class InboxProcessingWorker {
     const retryAtMs = this.retryPolicy.nextRetryAt(update, failedAtMs)
     const summary = this.errorSummary(error)
     if (retryAtMs === null) {
+      this.inbox.fail(update.id, this.workerId, summary, failedAtMs)
       const message = this.telegram.extractText(update)
       const buildDelivery = this.telegram.buildInboundRejectionDelivery
       if (message !== null && buildDelivery !== undefined) {
@@ -405,14 +406,11 @@ export class InboxProcessingWorker {
             sourceKey: failureKey,
             createdAtMs: failedAtMs,
           })
-          this.inbox.markProcessed(update.id, this.workerId, failedAtMs)
           return { outcome: 'enqueued', updateId: update.id, deliveryJobId: enqueue.job.id }
         } catch {
-          // If even the durable notice cannot be enqueued, preserve FAILED for
-          // operator recovery instead of acknowledging the source update.
+          // FAILED remains recoverable even if the user notice cannot be enqueued.
         }
       }
-      this.inbox.fail(update.id, this.workerId, summary, failedAtMs)
       return { outcome: 'failed', updateId: update.id }
     }
     this.inbox.retry(update.id, this.workerId, summary, retryAtMs)

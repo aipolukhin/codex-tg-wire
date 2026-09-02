@@ -643,7 +643,10 @@ describe('durable text vertical slice', () => {
       updateId: accepted.update.id,
       deliveryJobId: `rejected-${accepted.update.id}`,
     })
-    expect(inbox.get(accepted.update.id)?.state).toBe('PROCESSED')
+    expect(inbox.get(accepted.update.id)).toMatchObject({
+      state: 'FAILED',
+      lastError: 'Error',
+    })
     expect(outbox.getBySourceKey('telegram:primary-bot:509:turn:failed')?.payload).toEqual({
       chatId: '7001',
       text: '⚠️ Мост не смог обработать сообщение после допустимого числа попыток. Автоповтор остановлен; проверь /status перед повторной отправкой.',

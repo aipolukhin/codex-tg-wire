@@ -146,6 +146,8 @@ Planning and revision are forced to `sandbox=read-only` with
 ### Work with real project artifacts
 
 - images and audio reach Codex as native App Server inputs;
+- a comment entered immediately before a forwarded post or album is combined
+  with that forward into one Codex turn;
 - allowlisted documents are verified, stored privately and exposed by safe path;
 - media groups become one atomic Codex turn;
 - `/file --all` sends a project file through the same durable outbox;

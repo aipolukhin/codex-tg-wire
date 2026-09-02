@@ -37,6 +37,11 @@ import {
   type TelegramTextApi,
 } from '../telegram/durable-text-gateway.js'
 import {
+  embeddedForwardComment,
+  forwardCommentCandidate,
+  isForwardedTelegramUpdate,
+} from '../telegram/forward-comment.js'
+import {
   DurableAttachmentStore,
   type DurableAttachmentStoreOptions,
 } from '../telegram/durable-attachment-store.js'
@@ -115,6 +120,7 @@ export interface DurableTextRuntimeOptions {
     allowedRoots?: readonly string[]
   }
   albumFlushMs?: number
+  forwardCommentWindowMs?: number
   voiceTranscriber?: VoiceTranscriber
   voiceCredentials?: VoiceCredentialControl
   productDecisions?: ProductDecisionWriterOptions
@@ -303,6 +309,14 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   const albumFlushMs = options.albumFlushMs ?? 2_000
   if (!Number.isSafeInteger(albumFlushMs) || albumFlushMs < 100 || albumFlushMs > 60_000) {
     throw new TypeError('albumFlushMs must be a safe integer between 100 and 60000')
+  }
+  const forwardCommentWindowMs = options.forwardCommentWindowMs ?? 1_500
+  if (
+    !Number.isSafeInteger(forwardCommentWindowMs) ||
+    forwardCommentWindowMs < 0 ||
+    forwardCommentWindowMs > 10_000
+  ) {
+    throw new TypeError('forwardCommentWindowMs must be a safe integer between 0 and 10000')
   }
 
   const inbox = new SqliteInboxRepository(options.database)
@@ -582,6 +596,8 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
   return {
     ingest(update: unknown, receivedAtMs = Date.now()): IngestResult {
       const route = telegramRoute(update)
+      const delayForPossibleForward = forwardCommentWindowMs > 0 &&
+        forwardCommentCandidate(update) !== null
       const input: TelegramUpdateInput = {
         botId: options.botId,
         updateId: telegramUpdateId(update),
@@ -589,8 +605,18 @@ export function createDurableTextRuntime(options: DurableTextRuntimeOptions): Du
         routingClass: route.routingClass,
         payload: update,
         receivedAtMs,
+        ...(delayForPossibleForward
+          ? { availableAtMs: receivedAtMs + forwardCommentWindowMs }
+          : {}),
       }
       const result = inbox.ingest(input)
+      if (
+        forwardCommentWindowMs > 0 &&
+        isForwardedTelegramUpdate(update) &&
+        embeddedForwardComment(update) === null
+      ) {
+        inbox.coalesceForwardComment(result.update.id, forwardCommentWindowMs, receivedAtMs)
+      }
       if (
         receivedReaction &&
         options.telegramApi.setMessageReaction !== undefined &&

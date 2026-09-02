@@ -8,6 +8,7 @@ export interface TelegramUpdateInput {
   routingClass?: UpdateRoutingClass
   payload: unknown
   receivedAtMs?: number
+  availableAtMs?: number
 }
 
 export interface InboxUpdate {

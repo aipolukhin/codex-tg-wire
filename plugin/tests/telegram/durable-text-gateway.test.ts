@@ -17,6 +17,7 @@ import {
   type TelegramMessageOptions,
   type TelegramRichMessageOptions,
 } from '../../src/telegram/durable-text-gateway.js'
+import { withEmbeddedForwardComment } from '../../src/telegram/forward-comment.js'
 
 const NOW = 1_800_000_000_000
 
@@ -138,6 +139,30 @@ function acceptedUpdate(payload: unknown) {
 }
 
 describe('DurableTelegramTextGateway inbound', () => {
+  test('passes a forwarded post and its preceding comment to Codex as one message', () => {
+    const payload = withEmbeddedForwardComment({
+      message: {
+        message_id: 90,
+        chat: { id: 7001, type: 'private' },
+        from: { id: 7001, is_bot: false },
+        forward_origin: { type: 'channel', chat: { id: -1001 }, message_id: 8 },
+        caption: 'Пересланный пост',
+        photo: [{ file_id: 'large', width: 1280, height: 720 }],
+      },
+    }, {
+      text: 'Сделай так, брат',
+      sourceUpdateRowId: 77,
+    })
+    const message = gateway.extractText(acceptedUpdate(payload))
+
+    expect(message?.chatId).toBe('7001')
+    expect(message?.projectId).toBe('workspace')
+    expect(message?.text).toBe(
+      '[Комментарий пользователя к пересланному сообщению]\nСделай так, брат\n\nПересланный пост',
+    )
+    expect(message?.attachments?.[0]).toMatchObject({ kind: 'image', fileId: 'large' })
+  })
+
   test('accepts only allowlisted private human text and maps the project', () => {
     const update = acceptedUpdate({
       message: {

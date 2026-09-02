@@ -6,6 +6,7 @@ import { Bot } from 'grammy'
 
 import compatibility from '../../codex-app-server.compatibility.json'
 import { CodexAppServerClient } from '../codex/app-server-client.js'
+import type { TransportClose } from '../codex/transport.js'
 import { openDurableDatabase } from '../durable/database.js'
 import { SqlitePollCursorRepository } from '../durable/poll-cursor-repository.js'
 import { DurableTelegramPoller } from '../telegram/durable-poller.js'
@@ -45,6 +46,7 @@ export interface DurableBridgeIdentity {
 
 interface ClosableCodexClient {
   close(): Promise<void>
+  onClose(listener: (close: TransportClose) => void): () => void
 }
 
 interface ClosableDatabase {
@@ -65,9 +67,22 @@ export function productHomeMenuButton(publicUrl: string): {
   return { type: 'web_app', text: 'PH', web_app: { url: publicUrl } }
 }
 
+export class CodexAppServerUnavailableError extends Error {
+  constructor(close: TransportClose) {
+    const detail = close.error !== undefined
+      ? `error ${close.error.name}`
+      : `code ${String(close.code)}, signal ${String(close.signal)}`
+    super(`required Codex App Server subprocess closed unexpectedly (${detail})`)
+    this.name = 'CodexAppServerUnavailableError'
+  }
+}
+
 export class DurableBridgeService {
   private stopPromise: Promise<void> | null = null
   private started = false
+  private stopping = false
+  private readonly dependencyClosed: Promise<never>
+  private readonly unsubscribeCodexClose: () => void
 
   constructor(
     readonly identity: DurableBridgeIdentity,
@@ -76,7 +91,17 @@ export class DurableBridgeService {
     private readonly codexClient: ClosableCodexClient,
     private readonly database: ClosableDatabase,
     private readonly operations: DurableBridgeOperations = {},
-  ) {}
+  ) {
+    let rejectDependency!: (error: Error) => void
+    this.dependencyClosed = new Promise<never>((_resolve, reject) => {
+      rejectDependency = reject
+    })
+    void this.dependencyClosed.catch(() => undefined)
+    this.unsubscribeCodexClose = this.codexClient.onClose((close) => {
+      if (this.stopping) return
+      rejectDependency(new CodexAppServerUnavailableError(close))
+    })
+  }
 
   start(): void {
     if (this.stopPromise !== null) throw new Error('durable bridge service is stopped')
@@ -95,16 +120,18 @@ export class DurableBridgeService {
   }
 
   wait(): Promise<void> {
-    return this.supervisor.wait()
+    return Promise.race([this.supervisor.wait(), this.dependencyClosed])
   }
 
   stop(): Promise<void> {
+    this.stopping = true
     this.stopPromise ??= this.stopResources()
     return this.stopPromise
   }
 
   private async stopResources(): Promise<void> {
     let firstError: unknown
+    this.unsubscribeCodexClose()
     this.operations.health?.markStopping()
     try {
       await this.operations.watchdog?.stop()

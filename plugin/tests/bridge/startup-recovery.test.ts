@@ -128,7 +128,7 @@ describe('startup turn recovery', () => {
       projectId: 'workspace',
       text: 'survive App Server exit',
     }, 'codex', NOW)
-    inbox.fail(update.id, 'worker-8', 'AppServerClosedError', NOW + 1)
+    inbox.markProcessed(update.id, 'worker-8', NOW + 1)
 
     const sweep = await new StartupTurnRecovery(sessions, inbox, outbox, backend, {
       now: () => NOW + 2,

@@ -40,5 +40,12 @@ reader.on('line', (line) => {
         nextCursor: null,
       },
     })
+    return
+  }
+  if (message.method === 'test/large') {
+    send({
+      id: message.id,
+      result: { payload: 'x'.repeat(message.params.bytes) },
+    })
   }
 })

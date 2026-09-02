@@ -36,4 +36,27 @@ describe('StdioAppServerTransport', () => {
     await client.close()
     expect(client.closed).toBe(true)
   })
+
+  test('accepts a legitimate thread-sized JSONL response above the old 8 MiB ceiling', async () => {
+    const client = CodexAppServerClient.spawn({
+      command: process.execPath,
+      args: [FIXTURE],
+      requestTimeoutMs: 5_000,
+    })
+    await client.initialize({
+      clientInfo: {
+        name: 'dashi_codex_bridge_test',
+        title: 'Dashi Codex Bridge Test',
+        version: '0.1.0',
+      },
+      capabilities: null,
+    })
+
+    const bytes = 9 * 1024 * 1024
+    const result = await client.request<{ payload: string }>('test/large', { bytes })
+    expect(Buffer.byteLength(result.payload)).toBe(bytes)
+
+    await client.close()
+    expect(client.closed).toBe(true)
+  })
 })

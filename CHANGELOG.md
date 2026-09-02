@@ -50,6 +50,8 @@ Claude package version is not the codex-tg-wire release version.
 - An unexpected Codex App Server exit now fails the bridge process so systemd
   restarts the complete runtime. Startup recovery also requeues source updates
   stranded behind turns that never reached App Server dispatch.
+- Long `thread/resume` responses, including image-heavy history, are accepted up
+  to 64 MiB instead of killing a healthy App Server at the former 8 MiB limit.
 - Exhausted infrastructure retries no longer acknowledge their source update
   after merely enqueueing an error notice; the failed source remains available
   for recovery.

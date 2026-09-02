@@ -70,7 +70,7 @@ export function productHomeMenuButton(publicUrl: string): {
 export class CodexAppServerUnavailableError extends Error {
   constructor(close: TransportClose) {
     const detail = close.error !== undefined
-      ? `error ${close.error.name}`
+      ? `error ${close.error.name}: ${close.error.message}`
       : `code ${String(close.code)}, signal ${String(close.signal)}`
     super(`required Codex App Server subprocess closed unexpectedly (${detail})`)
     this.name = 'CodexAppServerUnavailableError'

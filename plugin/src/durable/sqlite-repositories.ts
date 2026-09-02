@@ -247,7 +247,7 @@ export class SqliteInboxRepository implements InboxRepository {
          JOIN telegram_updates source ON source.id = turns.source_update_id
          WHERE turns.state = 'QUEUED'
            AND turns.source_update_id IS NOT NULL
-           AND source.state IN ('FAILED', 'PROCESSED')
+           AND source.state = 'PROCESSED'
          ORDER BY turns.source_update_id`,
       ).all()
       for (const candidate of candidates) {
@@ -258,7 +258,7 @@ export class SqliteInboxRepository implements InboxRepository {
              SET state = 'RETRY_WAIT', routing_class = 'QUEUED_MESSAGE', attempt_count = 0,
                  available_at_ms = ?, lease_owner = NULL, lease_expires_at_ms = NULL,
                  processed_at_ms = NULL, last_error = 'stranded queued turn recovered after restart'
-             WHERE id = ? AND state IN ('FAILED', 'PROCESSED')`,
+             WHERE id = ? AND state = 'PROCESSED'`,
             [nowMs, candidate.source_update_id],
           )
           continue
@@ -272,7 +272,7 @@ export class SqliteInboxRepository implements InboxRepository {
                last_error = 'stranded queued album recovered after restart'
            WHERE id IN (
              SELECT update_row_id FROM telegram_album_fragments WHERE group_id = ?
-           ) AND state IN ('FAILED', 'PROCESSED')`,
+           ) AND state = 'PROCESSED'`,
           [candidate.source_update_id, nowMs, album.id],
         )
         this.database.run(

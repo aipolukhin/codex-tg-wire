@@ -34,7 +34,11 @@ export class AppServerTransportError extends Error {
   }
 }
 
-const DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024
+// thread/resume returns the persisted thread as one JSONL record. Long threads
+// with image history legitimately exceed 8 MiB (a live 47k-token thread was
+// 10.5 MiB), so the transport ceiling must cover a full Codex context rather
+// than treating it as malformed protocol output.
+const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 3_000
 
 export class StdioAppServerTransport implements AppServerTransport {
